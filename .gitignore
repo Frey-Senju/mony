@@ -42,3 +42,5 @@ Thumbs.db
 .aiox/logs/
 .aiox/temp/
 .claude/settings.local.json
+
+.vercel
