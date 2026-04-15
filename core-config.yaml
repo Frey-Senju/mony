@@ -1,0 +1,46 @@
+project:
+  name: mony
+  description: Money management application
+  version: 0.1.0
+  language: portuguese
+
+architecture:
+  paradigm: CLI First
+  stack:
+    frontend: Next.js 14
+    backend: FastAPI
+    database: PostgreSQL
+    hosting:
+      web: Vercel
+      api: Render
+      db: Render PostgreSQL
+
+agents:
+  default: dev
+  enabled:
+    - dev
+    - qa
+    - architect
+    - pm
+    - po
+    - sm
+    - analyst
+    - data-engineer
+    - ux-design-expert
+    - devops
+
+stories:
+  location: docs/stories
+  statuses:
+    - draft
+    - active
+    - ready
+    - completed
+
+boundary:
+  frameworkProtection: true
+
+quality:
+  minTestCoverage: 80
+  lintRequired: true
+  typeCheckRequired: true

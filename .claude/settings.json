@@ -1,0 +1,7 @@
+{
+  "language": "portuguese",
+  "toolPreferences": {
+    "preferredShell": "bash",
+    "displayFormat": "concise"
+  }
+}
