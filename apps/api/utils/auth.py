@@ -171,11 +171,9 @@ def generate_totp_secret(user_email: str) -> str:
     Returns:
         Base32-encoded secret (32 chars)
     """
-    # TODO: Implement with pyotp library
-    # import pyotp
-    # totp = pyotp.TOTP()
-    # return totp.secret
-    pass
+    import pyotp
+    totp = pyotp.TOTP()
+    return totp.secret
 
 
 def generate_totp_qr_code(user_email: str, secret: str) -> str:
@@ -189,17 +187,27 @@ def generate_totp_qr_code(user_email: str, secret: str) -> str:
     Returns:
         Data URL for QR code image (data:image/png;base64,...)
     """
-    # TODO: Implement with pyotp + qrcode library
-    # import pyotp
-    # import qrcode
-    # totp = pyotp.TOTP(secret)
-    # uri = totp.provisioning_uri(name=user_email, issuer_name="Mony")
-    # qr = qrcode.QRCode()
-    # qr.add_data(uri)
-    # qr.make()
-    # img = qr.make_image()
-    # ... convert to base64 data URL
-    pass
+    import pyotp
+    import qrcode
+    import io
+    import base64
+
+    totp = pyotp.TOTP(secret)
+    uri = totp.provisioning_uri(name=user_email, issuer_name="Mony")
+
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(uri)
+    qr.make(fit=True)
+
+    img = qr.make_image(fill_color="black", back_color="white")
+
+    # Convert to base64
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    return f"data:image/png;base64,{b64}"
 
 
 def generate_backup_codes(count: int = 10) -> list[str]:
@@ -214,11 +222,9 @@ def generate_backup_codes(count: int = 10) -> list[str]:
     Returns:
         List of backup codes
     """
-    # TODO: Implement
-    # import secrets
-    # codes = [secrets.token_hex(4).upper() for _ in range(count)]
-    # return codes
-    pass
+    import secrets
+    codes = [secrets.token_hex(4).upper() for _ in range(count)]
+    return codes
 
 
 def verify_totp_code(secret: str, code: str, window: int = 1) -> bool:
@@ -235,11 +241,9 @@ def verify_totp_code(secret: str, code: str, window: int = 1) -> bool:
     Returns:
         True if code is valid
     """
-    # TODO: Implement with pyotp
-    # import pyotp
-    # totp = pyotp.TOTP(secret)
-    # return totp.verify(code, valid_window=window)
-    pass
+    import pyotp
+    totp = pyotp.TOTP(secret)
+    return totp.verify(code, valid_window=window)
 
 
 def verify_backup_code(backup_code: str, stored_codes: list[str]) -> bool:
@@ -256,3 +260,71 @@ def verify_backup_code(backup_code: str, stored_codes: list[str]) -> bool:
     # TODO: Check if backup code matches any stored code
     # Mark as used (update database)
     pass
+
+
+# ============ Password Reset Token ============
+
+
+def create_password_reset_token(user_id: int, expires_delta: Optional[timedelta] = None) -> str:
+    """
+    Create password reset token (24 hours validity).
+
+    Args:
+        user_id: User identifier
+        expires_delta: Custom expiration time (defaults to 24h)
+
+    Returns:
+        Encoded JWT token
+    """
+    if expires_delta is None:
+        expires_delta = timedelta(hours=24)
+
+    expire = datetime.now(timezone.utc) + expires_delta
+    to_encode = {
+        "sub": str(user_id),
+        "type": "password_reset",
+        "exp": expire
+    }
+
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt
+
+
+def verify_password_reset_token(token: str) -> int:
+    """
+    Verify password reset token and extract user ID.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        User ID extracted from token
+
+    Raises:
+        HTTPException: If token is invalid/expired
+    """
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+
+        if user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+
+        # Verify token type
+        token_type_claim = payload.get("type")
+        if token_type_claim != "password_reset":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token type"
+            )
+
+        return int(user_id)
+
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid token: {str(e)}"
+        )

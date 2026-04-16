@@ -19,7 +19,13 @@ from utils.auth import (
     create_access_token,
     create_refresh_token,
     verify_token,
+    create_password_reset_token,
+    verify_password_reset_token,
 )
+
+# In-memory store for password reset tokens (24h TTL)
+# TODO: Move to Redis for production
+password_reset_tokens = {}
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -318,13 +324,20 @@ async def setup_2fa(
             detail="User not found"
         )
 
-    # TODO: Generate TOTP secret + QR code + backup codes
-    # Use: pyotp, qrcode libraries
+    # Generate TOTP secret + QR code + backup codes
+    from utils.auth import generate_totp_secret, generate_totp_qr_code, generate_backup_codes
+
+    secret = generate_totp_secret(user.email)
+    qr_code = generate_totp_qr_code(user.email, secret)
+    backup_codes = generate_backup_codes(count=10)
+
+    # TODO: Store secret + backup codes in database (encrypted)
+    # User must confirm with TOTP code before 2FA is actually enabled
 
     return TwoFASetupResponse(
-        qr_code="data:image/png;base64,...",
-        secret="JBSWY3DPEBLW64TMMQ======",
-        backup_codes=["code1", "code2", ...]
+        qr_code=qr_code,
+        secret=secret,
+        backup_codes=backup_codes
     )
 
 
@@ -345,10 +358,20 @@ async def request_password_reset(
     user = db.query(User).filter(User.email == payload.email).first()
 
     if user:
-        # TODO: Generate reset token + send email
-        # Token stored in memory/cache with 24h TTL
-        pass
+        # Generate reset token
+        reset_token = create_password_reset_token(user.id)
+        password_reset_tokens[reset_token] = {
+            "user_id": user.id,
+            "created_at": datetime.now(timezone.utc),
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=24)
+        }
 
+        # TODO: Send email with reset token
+        # Email template: https://app.example.com/reset-password?token={reset_token}
+        # Use: Resend, SendGrid, or other email service
+        print(f"[DEV MODE] Password reset token for {user.email}: {reset_token}")
+
+    # Return 202 regardless of whether user exists (no user enumeration)
     return {"message": "Check your email for password reset instructions"}
 
 
@@ -364,7 +387,47 @@ async def confirm_password_reset(
     - New password must meet security policy
     - Old refresh tokens invalidated (logout all sessions)
     """
-    # TODO: Verify reset token validity
-    # TODO: Update password + invalidate sessions
+    # Verify reset token
+    try:
+        user_id = verify_password_reset_token(payload.token)
+    except HTTPException:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    # Check if token still exists in our store (not already used)
+    if payload.token not in password_reset_tokens:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token"
+        )
+
+    # Check token expiration
+    token_data = password_reset_tokens[payload.token]
+    if datetime.now(timezone.utc) > token_data["expires_at"]:
+        del password_reset_tokens[payload.token]
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Reset token expired"
+        )
+
+    # Get user
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Update password
+    user.password_hash = hash_password(payload.new_password)
+    db.commit()
+
+    # Invalidate token (mark as used)
+    del password_reset_tokens[payload.token]
+
+    # TODO: Invalidate all refresh tokens (logout all sessions)
+    # Approach: Add blacklist entry for all tokens issued before now
 
     return {"message": "Password reset successfully"}
