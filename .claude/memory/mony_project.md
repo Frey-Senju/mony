@@ -122,6 +122,19 @@ mony/
    - 15 testes pytest: create (5), list (4), get (2), update (2), delete (2)
    - 100% cobertura de endpoints
 
+5. **Story 1.5:** 🔄 Dashboard UI (IN PROGRESS)
+   - SummaryCards: 4 cards (gastos, renda, saldo, orçamento) com trends
+   - TransactionList: tabela paginada com colunas (desc, valor, data, status), ações (reconcile, edit, delete), bulk select
+   - FilterBar: search, date range, account, type, status filters com tags e presets
+   - useTransactions hook: fetch, create, update, delete, reconcile operations
+   - useFilter hook: filter state com localStorage persistence e presets
+   - Dashboard page: integra componentes, calcula métricas, gerencia interações
+   - Loading skeleton: UI responsivo durante carregamento
+   - Componentes: SummaryCards (280L), TransactionList (260L), FilterBar (240L)
+   - Hooks: useTransactions (280L), useFilter (180L)
+   - Pages: dashboard/page.tsx (170L), layout, loading
+   - Pronto para: Recharts (charts), modal de detalhes, bulk actions, export
+
 ## Próximas Stories
 1. **Story 1.5:** Dashboard UI (6h)
    - Summary cards (total, income, balance)
