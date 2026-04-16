@@ -6,9 +6,9 @@
   },
   "mcpServers": {
     "obsidian": {
-      "command": "npx",
-      "args": ["-y", "obsidian-mcp"],
+      "command": "obsidian-mcp",
       "env": {
+        "OBSIDIAN_VAULT_PATH": "/c/Users/cristofer.schwartzer/Desktop/Obsidian",
         "OBSIDIAN_API_KEY": "d8edac1e2822cb0e6afc8e9883c49a6116c4e1572bf10815af83966f3ae20049"
       }
     }
