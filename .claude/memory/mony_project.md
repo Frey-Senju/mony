@@ -86,13 +86,24 @@ mony/
 - **Subscription:** BASIC (free), PRO (R$29.90/mo), PREMIUM (R$99.90/mo)
 - **Open Finance:** Central Bank API integration (50+ institutions)
 
-## Próximas Stories
-1. **Story 1.2b:** Complete TOTP + Password Reset (2h)
-   - Implementar generate_totp_secret(), generate_totp_qr_code(), verify_totp_code()
-   - Completar password reset flow com email
-   - Adicionar testes pytest
+## Stories Completas
+1. **Story 1.2b:** ✅ Complete TOTP + Password Reset
+   - Implementado generate_totp_secret(), generate_totp_qr_code(), verify_totp_code()
+   - Password reset flow com email (in-memory token store, 24h TTL)
+   - 20+ testes pytest (Story 1.2b)
    
-2. **Story 1.3:** Frontend Auth UI (4-6h)
+2. **Story 1.3:** ✅ Frontend Auth UI (LoginForm, SignupForm, TwoFASetup, PrivateRoute)
+   - useAuth hook completo (token storage, refresh, logout)
+   - 4 páginas de auth (/login, /signup, /forgot-password, /verify-2fa)
+   - Validação completa + error handling
+   
+3. **Story 1.3b:** ✅ Frontend Auth Tests
+   - 28 testes de integração (React Testing Library + Jest)
+   - jest.config.js + jest.setup.js + 6 devDependencies
+   - >80% cobertura em todos componentes
+
+## Próximas Stories
+1. **Story 1.4:** Transaction CRUD API (8h)
    - Login/signup forms
    - Password reset flow
    - 2FA activation
