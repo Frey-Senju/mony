@@ -42,13 +42,47 @@ export const useAuth = () => {
     error: null,
   })
 
+  // Fetch current user from backend
+  const fetchUser = useCallback(
+    async (accessToken: string) => {
+      try {
+        const response = await fetch(`${API_URL}/auth/users/me`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch user')
+        }
+
+        const user = (await response.json()) as User
+        setState(prev => ({ ...prev, user }))
+        return user
+      } catch (error) {
+        console.error('Failed to fetch user:', error)
+        // Don't throw, allow app to continue even if user fetch fails
+        return null
+      }
+    },
+    []
+  )
+
   // Load tokens from localStorage on mount
   useEffect(() => {
     const stored = localStorage.getItem('mony_tokens')
     if (stored) {
       try {
         const tokens = JSON.parse(stored)
-        setState(prev => ({ ...prev, tokens, loading: false }))
+        setState(prev => ({ ...prev, tokens }))
+        // Fetch user data from backend
+        fetchUser(tokens.access_token).then(() => {
+          setState(prev => ({ ...prev, loading: false }))
+        }).catch(() => {
+          setState(prev => ({ ...prev, loading: false }))
+        })
       } catch {
         localStorage.removeItem('mony_tokens')
         setState(prev => ({ ...prev, loading: false }))
@@ -56,7 +90,7 @@ export const useAuth = () => {
     } else {
       setState(prev => ({ ...prev, loading: false }))
     }
-  }, [])
+  }, [fetchUser])
 
   // Register user
   const register = useCallback(
@@ -80,7 +114,11 @@ export const useAuth = () => {
 
         const tokens = (await response.json()) as AuthTokens
         localStorage.setItem('mony_tokens', JSON.stringify(tokens))
-        setState(prev => ({ ...prev, tokens, user: { id: 0, email, full_name: fullName, is_email_verified: false, plan: 'BASIC', created_at: new Date().toISOString() } }))
+        setState(prev => ({ ...prev, tokens }))
+
+        // Fetch user data from backend
+        await fetchUser(tokens.access_token)
+
         router.push('/dashboard')
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Registration failed'
@@ -90,7 +128,7 @@ export const useAuth = () => {
         setState(prev => ({ ...prev, loading: false }))
       }
     },
-    [router]
+    [router, fetchUser]
   )
 
   // Login user
@@ -112,6 +150,10 @@ export const useAuth = () => {
         const tokens = (await response.json()) as AuthTokens
         localStorage.setItem('mony_tokens', JSON.stringify(tokens))
         setState(prev => ({ ...prev, tokens }))
+
+        // Fetch user data from backend
+        await fetchUser(tokens.access_token)
+
         router.push('/dashboard')
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Login failed'
@@ -121,7 +163,7 @@ export const useAuth = () => {
         setState(prev => ({ ...prev, loading: false }))
       }
     },
-    [router]
+    [router, fetchUser]
   )
 
   // Refresh access token
