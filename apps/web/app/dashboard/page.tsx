@@ -5,7 +5,10 @@ import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { SummaryCards } from '@/components/dashboard/SummaryCards'
 import { TransactionList } from '@/components/dashboard/TransactionList'
 import { FilterBar } from '@/components/dashboard/FilterBar'
-import { useTransactions, type FilterState } from '@/hooks/useTransactions'
+import { Charts } from '@/components/dashboard/Charts'
+import { TransactionModal } from '@/components/dashboard/TransactionModal'
+import { BulkActions } from '@/components/dashboard/BulkActions'
+import { useTransactions, type FilterState, type Transaction } from '@/hooks/useTransactions'
 import { useFilter } from '@/hooks/useFilter'
 import { useAuth } from '@/stores/auth/useAuth'
 
@@ -24,10 +27,13 @@ export default function DashboardPage() {
 
 function DashboardContent() {
   const { user } = useAuth()
-  const { transactions, loading, pagination, fetchTransactions, deleteTransaction, reconcileTransaction, changePage } = useTransactions()
+  const { transactions, loading, pagination, fetchTransactions, deleteTransaction, reconcileTransaction, changePage, updateTransaction } = useTransactions()
   const { filters, updateMultipleFilters, resetFilters, hasActiveFilters } = useFilter()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountsLoading, setAccountsLoading] = useState(false)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | undefined>()
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
 
   // Fetch accounts
   useEffect(() => {
@@ -95,8 +101,23 @@ function DashboardContent() {
   const budgetProgress = 45 // Placeholder, should come from budget API
 
   const handleEdit = (id: string) => {
-    console.log('Edit transaction:', id)
-    // TODO: Open edit modal
+    const tx = transactions.find((t) => t.id === id)
+    if (tx) {
+      setSelectedTransaction(tx)
+      setIsModalOpen(true)
+    }
+  }
+
+  const handleModalSave = async (data: Partial<Transaction>) => {
+    if (selectedTransaction) {
+      try {
+        await updateTransaction(selectedTransaction.id, data)
+        setIsModalOpen(false)
+        setSelectedTransaction(undefined)
+      } catch (error) {
+        console.error('Failed to save transaction:', error)
+      }
+    }
   }
 
   const handleDelete = async (id: string) => {
@@ -155,6 +176,14 @@ function DashboardContent() {
           />
         </section>
 
+        {/* Charts */}
+        <section>
+          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">
+            Análise Financeira
+          </h2>
+          <Charts transactions={transactions} loading={loading} />
+        </section>
+
         {/* Filters */}
         <section>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4">
@@ -193,6 +222,29 @@ function DashboardContent() {
           </div>
         )}
       </div>
+
+      {/* Transaction Modal */}
+      <TransactionModal
+        transaction={selectedTransaction}
+        isOpen={isModalOpen}
+        onClose={() => {
+          setIsModalOpen(false)
+          setSelectedTransaction(undefined)
+        }}
+        onSave={handleModalSave}
+        loading={loading}
+      />
+
+      {/* Bulk Actions Bar */}
+      <BulkActions
+        selectedCount={selectedIds.size}
+        onArchive={() => console.log('Archive')}
+        onCategorize={() => console.log('Categorize')}
+        onDelete={() => console.log('Delete')}
+        onExport={() => console.log('Export')}
+        onClearSelection={() => setSelectedIds(new Set())}
+        loading={loading}
+      />
     </div>
   )
 }
