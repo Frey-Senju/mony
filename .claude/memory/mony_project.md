@@ -45,7 +45,7 @@ mony/
 - ✅ Responsive design (Tailwind mobile-first)
 - ✅ TypeScript strict, no any types
 
-### Backend (Story 1.2 + 1.2b COMPLETE)
+### Backend (Story 1.2 + 1.2b + 1.4 COMPLETE)
 - ✅ 6 auth endpoints fully implemented + tested
   - POST /auth/register (with duplicate email check)
   - POST /auth/login (with 5-attempt lockout → 24h freeze)
@@ -53,6 +53,12 @@ mony/
   - POST /auth/logout (placeholder for Redis blacklist)
   - POST /auth/2fa/setup (generates TOTP secret + QR + 10 backup codes)
   - POST /auth/password-reset/{request,confirm} (2-step flow, 24h token TTL)
+- ✅ 5 transaction CRUD endpoints
+  - POST /transactions (201) — Create with plan limit check
+  - GET /transactions (200) — List with filtering + pagination
+  - GET /transactions/{id} (200) — Retrieve single
+  - PUT /transactions/{id} (200) — Update partial
+  - DELETE /transactions/{id} (204) — Soft delete
 - ✅ JWT utilities (15min access, 7d refresh, password reset tokens)
 - ✅ Password hashing (bcrypt cost 12)
 - ✅ Account lockout logic (5 attempts → 24h)
@@ -62,8 +68,8 @@ mony/
   - generate_backup_codes() — 10 recovery codes
   - verify_totp_code() — TOTP validation ±30s window
 - ✅ Password reset: in-memory token store (24h TTL)
-- ✅ Test suite: 20+ test cases, all endpoints covered
-- ✅ Database models + enums
+- ✅ Test suites: 20+ auth tests + 15 transaction tests
+- ✅ Database models + enums + relationships
 
 ## Deployment
 - **GitHub:** https://github.com/Frey-Senju/mony
@@ -102,28 +108,42 @@ mony/
    - jest.config.js + jest.setup.js + 6 devDependencies
    - >80% cobertura em todos componentes
 
+## Stories Completas (cont.)
+
+4. **Story 1.4:** ✅ Transaction CRUD API
+   - Implementado 5 endpoints: POST, GET, GET/{id}, PUT, DELETE
+   - Validação de propriedade de conta (user_id + account_id)
+   - Limites de plano: BASIC 100 tx/mês, retorna 403 se limite atingido
+   - Validação de amount > 0, retorna 422 se inválido
+   - Soft delete com timestamp deleted_at
+   - Filtering: account_id, type, start_date/end_date
+   - Pagination: offset/limit (default 0, 20; max limit 100)
+   - Sorting: configurable com "-" prefix para desc
+   - 15 testes pytest: create (5), list (4), get (2), update (2), delete (2)
+   - 100% cobertura de endpoints
+
 ## Próximas Stories
-1. **Story 1.4:** Transaction CRUD API (8h)
-   - Login/signup forms
-   - Password reset flow
-   - 2FA activation
-   - Protected routes
+1. **Story 1.5:** Dashboard UI (6h)
+   - Summary cards (total, income, balance)
+   - Transaction list com paginação
+   - Filter UI (date range, type, account)
+   - Charts (spending by category, monthly trends)
 
-3. **Story 1.4:** Transaction API (8h)
-   - CRUD endpoints
-   - Filtering + pagination
-   - Category assignment
-   - RLS enforcement
-
-4. **Story 1.5:** Dashboard UI (6h)
-   - Summary cards
-   - Transaction list
-   - Charts (Chart.js/Recharts)
-
-5. **Story 1.6:** Open Finance Integration (12h)
+2. **Story 1.6:** Open Finance Integration (12h)
    - Bank selection modal
    - OAuth flow per institution
    - Account sync + import
+   - Auto-categorization
+
+3. **Story 1.7:** Category Management (4h)
+   - CRUD para categorias customizadas
+   - Default categories
+   - Category assignment na criação/edição
+
+4. **Story 1.8:** Spending Limits & Alerts (5h)
+   - Create/update spending limits per category
+   - Alert thresholds
+   - Notification engine
 
 ## Padrões Código
 - **Componentes React:** PascalCase (TransactionList.tsx)
