@@ -17,9 +17,10 @@ COPY . .
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
 
 # Expose port
-EXPOSE $PORT
+EXPOSE 8000
 
-# Run application
-CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "${PORT}"]
+# Run application using shell format to expand PORT variable
+CMD python -m uvicorn main:app --host 0.0.0.0 --port ${PORT}
