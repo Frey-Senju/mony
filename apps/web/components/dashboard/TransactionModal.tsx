@@ -3,6 +3,13 @@
 import React, { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 
+interface Category {
+  id: string
+  name: string
+  color: string
+  icon?: string
+}
+
 interface Transaction {
   id: string
   description: string
@@ -13,6 +20,7 @@ interface Transaction {
   is_reconciled: boolean
   currency: string
   notes?: string
+  category_id?: string
 }
 
 interface TransactionModalProps {
@@ -21,6 +29,7 @@ interface TransactionModalProps {
   onClose: () => void
   onSave: (data: Partial<Transaction>) => Promise<void>
   loading?: boolean
+  categories?: Category[]
 }
 
 export function TransactionModal({
@@ -29,6 +38,7 @@ export function TransactionModal({
   onClose,
   onSave,
   loading = false,
+  categories = [],
 }: TransactionModalProps) {
   const [formData, setFormData] = useState<Partial<Transaction>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -206,6 +216,37 @@ export function TransactionModal({
               <option value="income">Receita</option>
             </select>
           </div>
+
+          {/* Category */}
+          {categories.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                Categoria (Opcional)
+              </label>
+              <div className="space-y-2">
+                {categories.map((cat) => (
+                  <label
+                    key={cat.id}
+                    className="flex items-center gap-3 p-2 rounded cursor-pointer hover:bg-slate-100 dark:hover:bg-slate-800"
+                  >
+                    <input
+                      type="radio"
+                      name="category_id"
+                      value={cat.id}
+                      checked={formData.category_id === cat.id}
+                      onChange={handleChange}
+                      className="rounded-full"
+                      disabled={isSaving}
+                    />
+                    <span className="text-lg">{cat.icon}</span>
+                    <span className="text-sm text-slate-700 dark:text-slate-300">
+                      {cat.name}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Transaction Date */}
           <div>

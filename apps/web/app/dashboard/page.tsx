@@ -10,6 +10,8 @@ import { TransactionModal } from '@/components/dashboard/TransactionModal'
 import { BulkActions } from '@/components/dashboard/BulkActions'
 import { useTransactions, type FilterState, type Transaction } from '@/hooks/useTransactions'
 import { useFilter } from '@/hooks/useFilter'
+import { useCategories, type Category } from '@/hooks/useCategories'
+import { exportToCSV, exportToJSON, exportToHTML } from '@/utils/export'
 import { useAuth } from '@/stores/auth/useAuth'
 
 interface Account {
@@ -29,11 +31,13 @@ function DashboardContent() {
   const { user } = useAuth()
   const { transactions, loading, pagination, fetchTransactions, deleteTransaction, reconcileTransaction, changePage, updateTransaction } = useTransactions()
   const { filters, updateMultipleFilters, resetFilters, hasActiveFilters } = useFilter()
+  const { categories } = useCategories()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountsLoading, setAccountsLoading] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | undefined>()
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [isBulkLoading, setIsBulkLoading] = useState(false)
 
   // Fetch accounts
   useEffect(() => {
@@ -118,6 +122,60 @@ function DashboardContent() {
         console.error('Failed to save transaction:', error)
       }
     }
+  }
+
+  const handleBulkDelete = async () => {
+    if (!confirm(`Tem certeza que deseja deletar ${selectedIds.size} transação(ões)?`)) {
+      return
+    }
+
+    setIsBulkLoading(true)
+    try {
+      for (const id of Array.from(selectedIds)) {
+        await deleteTransaction(id)
+      }
+      setSelectedIds(new Set())
+    } catch (error) {
+      console.error('Failed to delete transactions:', error)
+    } finally {
+      setIsBulkLoading(false)
+    }
+  }
+
+  const handleBulkCategorize = () => {
+    if (selectedIds.size === 0) return
+
+    // Show category selector modal or side panel
+    const selectedTransactions = transactions.filter((t) => selectedIds.has(t.id))
+    console.log('Categorize:', selectedTransactions)
+    // TODO: Implement category assignment modal
+  }
+
+  const handleBulkExport = () => {
+    if (selectedIds.size === 0) return
+
+    const selectedTransactions = transactions.filter((t) => selectedIds.has(t.id))
+
+    // Show export format selection
+    const format = prompt('Escolha formato:\n1. CSV\n2. JSON\n3. HTML')
+
+    switch (format) {
+      case '1':
+        exportToCSV(selectedTransactions, `transacoes-${new Date().toISOString().split('T')[0]}.csv`)
+        break
+      case '2':
+        exportToJSON(selectedTransactions, `transacoes-${new Date().toISOString().split('T')[0]}.json`)
+        break
+      case '3':
+        exportToHTML(selectedTransactions, `relatorio-${new Date().toISOString().split('T')[0]}.html`)
+        break
+    }
+  }
+
+  const handleBulkArchive = async () => {
+    if (selectedIds.size === 0) return
+    console.log('Archive:', Array.from(selectedIds))
+    // TODO: Implement archive functionality (if needed)
   }
 
   const handleDelete = async (id: string) => {
@@ -233,17 +291,18 @@ function DashboardContent() {
         }}
         onSave={handleModalSave}
         loading={loading}
+        categories={categories as Category[]}
       />
 
       {/* Bulk Actions Bar */}
       <BulkActions
         selectedCount={selectedIds.size}
-        onArchive={() => console.log('Archive')}
-        onCategorize={() => console.log('Categorize')}
-        onDelete={() => console.log('Delete')}
-        onExport={() => console.log('Export')}
+        onArchive={handleBulkArchive}
+        onCategorize={handleBulkCategorize}
+        onDelete={handleBulkDelete}
+        onExport={handleBulkExport}
         onClearSelection={() => setSelectedIds(new Set())}
-        loading={loading}
+        loading={isBulkLoading}
       />
     </div>
   )
