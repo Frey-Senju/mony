@@ -36,14 +36,25 @@ mony/
 - ✅ Home page (Vercel health check)
 - 🔄 Auth UI components (pendente)
 
-### Backend (Story 1.2 skeleton done)
-- ✅ 6 auth endpoints (register, login, refresh, logout, 2fa/setup, password-reset request+confirm)
-- ✅ JWT utilities (15min access, 7d refresh)
+### Backend (Story 1.2 + 1.2b COMPLETE)
+- ✅ 6 auth endpoints fully implemented + tested
+  - POST /auth/register (with duplicate email check)
+  - POST /auth/login (with 5-attempt lockout → 24h freeze)
+  - POST /auth/refresh (new access + refresh tokens)
+  - POST /auth/logout (placeholder for Redis blacklist)
+  - POST /auth/2fa/setup (generates TOTP secret + QR + 10 backup codes)
+  - POST /auth/password-reset/{request,confirm} (2-step flow, 24h token TTL)
+- ✅ JWT utilities (15min access, 7d refresh, password reset tokens)
 - ✅ Password hashing (bcrypt cost 12)
 - ✅ Account lockout logic (5 attempts → 24h)
-- 🔄 TOTP implementation (skeleton with pyotp/qrcode)
-- 🔄 Password reset business logic
-- ✅ Database models + enums preparados
+- ✅ TOTP complete:
+  - generate_totp_secret() — pyotp base32
+  - generate_totp_qr_code() — QR code data:image/png;base64
+  - generate_backup_codes() — 10 recovery codes
+  - verify_totp_code() — TOTP validation ±30s window
+- ✅ Password reset: in-memory token store (24h TTL)
+- ✅ Test suite: 20+ test cases, all endpoints covered
+- ✅ Database models + enums
 
 ## Deployment
 - **GitHub:** https://github.com/Frey-Senju/mony
