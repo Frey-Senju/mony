@@ -30,11 +30,20 @@ mony/
 - ✅ RLS structure para LGPD compliance
 - ✅ Hybrid properties para computed fields (is_plan_active, percentage_achieved)
 
-### Frontend (Story 1.3 pendente)
+### Frontend (Story 1.3 COMPLETE)
 - ✅ Next.js 14 App Router
 - ✅ Layout.tsx + globals.css
 - ✅ Home page (Vercel health check)
-- 🔄 Auth UI components (pendente)
+- ✅ Auth UI complete:
+  - LoginForm (email/password validation)
+  - SignupForm (password strength + terms)
+  - ForgotPasswordForm (2-step password reset)
+  - TwoFASetup (TOTP QR + backup codes)
+  - PrivateRoute (protected route wrapper)
+- ✅ useAuth hook (token management, localStorage)
+- ✅ 4 auth pages (/login, /signup, /forgot-password, /verify-2fa)
+- ✅ Responsive design (Tailwind mobile-first)
+- ✅ TypeScript strict, no any types
 
 ### Backend (Story 1.2 + 1.2b COMPLETE)
 - ✅ 6 auth endpoints fully implemented + tested
