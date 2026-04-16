@@ -1,9 +1,9 @@
 # Sessions Log — Mony Financial Dashboard
 
-## Session: Story 1.5 Dashboard UI Initialization
+## Session: Story 1.5 Dashboard UI Completion
 **Date:** 2026-04-16  
-**Status:** 🔄 IN PROGRESS  
-**Duration:** Approx 30 minutes
+**Status:** 🔄 IN PROGRESS (Advanced Phase)  
+**Duration:** 2+ hours (cumulative)
 
 ### Completed Tasks
 
@@ -167,6 +167,142 @@ apps/web/app/dashboard/loading.tsx
 - Timestamps in UTC, converted to user timezone for display
 - Soft-deleted transactions excluded from all views
 - Page ready for visual testing on browser dev server
+
+---
+
+## Phase 2: Advanced Dashboard Features ✅ COMPLETED
+
+✅ **Installed Recharts Library**
+- `npm install recharts` — Chart library for React
+- Version 2.x with TypeScript support
+- Includes LineChart, BarChart, PieChart components
+
+✅ **Charts Component Created** (Charts.tsx - 320 lines)
+- Monthly spending trend (last 12 months)
+  - LineChart with expense and income lines
+  - Custom tooltips with currency formatting
+  - Hover states and smooth animations
+
+- Income vs Expense comparison
+  - BarChart showing side-by-side comparison
+  - Month-over-month analysis
+  - Color-coded (red/green)
+
+- Category breakdown
+  - PieChart showing spending by category
+  - Dummy categories with random assignment
+  - Color palette (5 distinct colors)
+
+- Financial summary card
+  - Total expenses (red background)
+  - Total income (green background)
+  - Balance calculation (blue background)
+
+- Responsive containers with dark mode support
+
+✅ **Transaction Modal Created** (TransactionModal.tsx - 260 lines)
+- Modal for editing/viewing transaction details
+- Form fields:
+  - Description (required)
+  - Amount (required, >0)
+  - Type selector (income/expense)
+  - Transaction date (required)
+  - Merchant name (optional)
+  - Notes (optional, textarea)
+
+- Form validation:
+  - Required field checking
+  - Amount validation (> 0)
+  - Error display under fields
+  - Submit button disabled during save
+
+- Modal features:
+  - Close button (X)
+  - Cancel button
+  - Save button with loading state
+  - Error banner
+  - Overlay backdrop
+
+✅ **Bulk Actions Bar Created** (BulkActions.tsx - 140 lines)
+- Fixed bottom bar for bulk operations
+- Shows selected count
+- Action buttons:
+  - Archive (placeholder)
+  - Categorize (placeholder)
+  - Export (placeholder)
+  - Delete (red styling)
+
+- Additional features:
+  - Clear selection button
+  - Deselect all link
+  - Loading indicator
+  - Progress bar during operations
+
+✅ **Dashboard Page Updated** (page.tsx)
+- Integrated Charts component
+- Added Charts section before transaction list
+- TransactionModal integration:
+  - State management (isModalOpen, selectedTransaction)
+  - Handle edit action → open modal
+  - Handle modal save → updateTransaction API
+
+- BulkActions integration:
+  - Selected IDs state management
+  - Display bulk actions bar when selected > 0
+  - Handler methods (placeholder implementations)
+
+✅ **Export Utilities Created** (utils/export.ts - 270 lines)
+- CSV export:
+  - Headers: ID, Data, Descrição, Comerciante, Tipo, Valor, Moeda, Reconciliado, Notas
+  - UTF-8 BOM for Excel compatibility
+  - Proper quote escaping
+  - Date formatting (pt-BR locale)
+  - Amount formatting with comma decimal
+
+- JSON export:
+  - Structured format with metadata
+  - Export date timestamp
+  - Transaction count
+  - Proper date formatting
+
+- HTML export:
+  - Styled HTML report
+  - Summary cards (income, expense, balance)
+  - Transaction table with all details
+  - Professional formatting
+  - Footer with metadata
+
+- Helper function (downloadFile):
+  - Creates blob and download link
+  - Cross-browser compatible
+  - Proper cleanup (URL.revokeObjectURL)
+
+- Summary report generation:
+  - Total calculations (income, expense, balance)
+  - Monthly breakdown
+  - Reconciliation status count
+
+✅ **Dashboard Types Created** (types/dashboard.ts - 150 lines)
+- Centralized type definitions
+- Transaction interface (complete)
+- Account interface
+- FilterState interface
+- PaginationState interface
+- Component props interfaces (all components)
+- CategoryData, ChartData, SummaryReport types
+- Type-safe component integration
+
+✅ **Dashboard Component Index** (components/dashboard/index.ts)
+- Central export point for all components
+- Enables cleaner imports
+- Type exports for prop interfaces
+
+### Commits
+
+1. `0bb1b0a` — feat: initialize dashboard UI with components and hooks [Story 1.5]
+2. `f67f6b7` — docs: update Story 1.5 memory and session log
+3. `2f7e6cb` — feat: add charts, modals, and bulk actions to dashboard [Story 1.5]
+4. `4c49079` — feat: add export utilities and dashboard types
 
 ### Next Steps
 
