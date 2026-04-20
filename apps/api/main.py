@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from routes.auth import router as auth_router
+from routes.transactions import router as transactions_router
+from routes.accounts import router as accounts_router
 
 app = FastAPI(
     title="Mony API",
@@ -10,11 +13,20 @@ app = FastAPI(
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "https://web-flame-alpha-37.vercel.app",
+        # Add production Vercel URL when ready
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
+
+# Register routers
+app.include_router(auth_router)
+app.include_router(transactions_router)
+app.include_router(accounts_router)
 
 @app.get("/")
 async def root():

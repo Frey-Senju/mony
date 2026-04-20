@@ -2,14 +2,18 @@
 Database configuration and session management for Mony API.
 """
 
+import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from .models import Base
 
-# Database connection
-DATABASE_URL = "postgresql://user:password@localhost:5432/mony_dev"
+# Database connection - read from environment or use default PostgreSQL
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://user:password@localhost:5432/mony_dev"
+)
 
 # Create engine with connection pooling
 engine = create_engine(
