@@ -4,7 +4,7 @@ Authentication endpoints for Mony API.
 Provides user registration, login, token refresh, logout, 2FA, password reset.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone as dt_timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -19,6 +19,7 @@ from utils.auth import (
     create_access_token,
     create_refresh_token,
     verify_token,
+    get_current_user_from_header,
     create_password_reset_token,
     verify_password_reset_token,
 )
@@ -157,7 +158,7 @@ async def register(
         password_hash=hash_password(payload.password),
         full_name=payload.full_name,
         is_email_verified=False,  # TODO: email verification flow in Story 1.2b
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.utcnow()
     )
     db.add(user)
     db.commit()
@@ -200,7 +201,7 @@ async def login(
 
     # Check if account is locked
     if user.is_locked:
-        if datetime.now(timezone.utc) < user.locked_until:
+        if datetime.utcnow() < user.locked_until:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Account is locked. Try again later."
@@ -217,7 +218,7 @@ async def login(
         # Lock account after 5 failed attempts
         if user.failed_login_attempts >= 5:
             user.is_locked = True
-            user.locked_until = datetime.now(timezone.utc) + timedelta(hours=24)
+            user.locked_until = datetime.utcnow() + timedelta(hours=24)
 
         db.commit()
         raise HTTPException(
@@ -227,7 +228,7 @@ async def login(
 
     # Reset failed attempts on success
     user.failed_login_attempts = 0
-    user.last_login_at = datetime.now(timezone.utc)
+    user.last_login_at = datetime.utcnow()
     db.commit()
 
     # Generate tokens
@@ -288,7 +289,7 @@ async def refresh_token(
 
 @router.post("/logout", status_code=204)
 async def logout(
-    access_token: str = Depends(verify_token)
+    user_id: str = Depends(get_current_user_from_header)
 ):
     """
     Invalidate user session.
@@ -305,7 +306,7 @@ async def logout(
 
 @router.post("/2fa/setup", response_model=TwoFASetupResponse)
 async def setup_2fa(
-    user_id: int = Depends(verify_token),
+    user_id: str = Depends(get_current_user_from_header),
     db: Session = Depends(get_db)
 ):
     """
@@ -317,7 +318,8 @@ async def setup_2fa(
 
     Backup codes: 1-time use, can disable 2FA if TOTP device lost.
     """
-    user = db.query(User).filter(User.id == user_id).first()
+    from uuid import UUID
+    user = db.query(User).filter(User.id == UUID(user_id)).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -362,8 +364,8 @@ async def request_password_reset(
         reset_token = create_password_reset_token(user.id)
         password_reset_tokens[reset_token] = {
             "user_id": user.id,
-            "created_at": datetime.now(timezone.utc),
-            "expires_at": datetime.now(timezone.utc) + timedelta(hours=24)
+            "created_at": datetime.utcnow(),
+            "expires_at": datetime.utcnow() + timedelta(hours=24)
         }
 
         # TODO: Send email with reset token
@@ -405,7 +407,7 @@ async def confirm_password_reset(
 
     # Check token expiration
     token_data = password_reset_tokens[payload.token]
-    if datetime.now(timezone.utc) > token_data["expires_at"]:
+    if datetime.utcnow() > token_data["expires_at"]:
         del password_reset_tokens[payload.token]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

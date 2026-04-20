@@ -3,6 +3,11 @@
 import React, { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 
+interface Account {
+  id: string
+  name: string
+}
+
 interface Category {
   id: string
   name: string
@@ -12,6 +17,7 @@ interface Category {
 
 interface Transaction {
   id: string
+  account_id: string
   description: string
   amount: number
   type: 'income' | 'expense'
@@ -28,6 +34,7 @@ interface TransactionModalProps {
   isOpen: boolean
   onClose: () => void
   onSave: (data: Partial<Transaction>) => Promise<void>
+  accounts: Account[]
   loading?: boolean
   categories?: Category[]
 }
@@ -37,6 +44,7 @@ export function TransactionModal({
   isOpen,
   onClose,
   onSave,
+  accounts,
   loading = false,
   categories = [],
 }: TransactionModalProps) {
@@ -49,12 +57,13 @@ export function TransactionModal({
       setFormData(transaction)
     } else {
       setFormData({
+        account_id: accounts.length > 0 ? accounts[0].id : '',
         type: 'expense',
         currency: 'BRL',
       })
     }
     setErrors({})
-  }, [transaction, isOpen])
+  }, [transaction, isOpen, accounts])
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -74,6 +83,10 @@ export function TransactionModal({
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {}
+
+    if (!formData.account_id) {
+      newErrors.account_id = 'Conta é obrigatória'
+    }
 
     if (!formData.description?.trim()) {
       newErrors.description = 'Descrição é obrigatória'
@@ -101,12 +114,15 @@ export function TransactionModal({
     setIsSaving(true)
     try {
       const dataToSave: Partial<Transaction> = {
+        account_id: formData.account_id,
         description: formData.description,
         amount: formData.amount,
         type: formData.type,
         transaction_date: formData.transaction_date,
         merchant_name: formData.merchant_name,
         notes: formData.notes,
+        currency: formData.currency,
+        category_id: formData.category_id,
       }
 
       await onSave(dataToSave)
@@ -147,6 +163,36 @@ export function TransactionModal({
               {errors.submit}
             </div>
           )}
+
+          {/* Account */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              Conta *
+            </label>
+            <select
+              name="account_id"
+              value={formData.account_id || ''}
+              onChange={handleChange}
+              className={`w-full px-4 py-2 rounded border ${
+                errors.account_id
+                  ? 'border-red-500 bg-red-50 dark:bg-red-900/20'
+                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800'
+              } text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500`}
+              disabled={isSaving}
+            >
+              <option value="">Selecione uma conta</option>
+              {accounts.map((account) => (
+                <option key={account.id} value={account.id}>
+                  {account.name}
+                </option>
+              ))}
+            </select>
+            {errors.account_id && (
+              <p className="text-red-600 dark:text-red-400 text-sm mt-1">
+                {errors.account_id}
+              </p>
+            )}
+          </div>
 
           {/* Description */}
           <div>

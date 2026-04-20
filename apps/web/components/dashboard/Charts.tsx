@@ -22,6 +22,7 @@ interface Transaction {
   amount: number
   type: 'income' | 'expense'
   transaction_date: string
+  category_id?: string
 }
 
 interface ChartsProps {
@@ -62,24 +63,26 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
     }))
   }, [transactions])
 
-  // Calculate category breakdown (dummy categories for now)
+  // Calculate category breakdown (by category_id)
   const categoryBreakdownData = useMemo(() => {
-    const categories: { [key: string]: number } = {
-      'Alimentação': 0,
-      'Transporte': 0,
-      'Saúde': 0,
-      'Lazer': 0,
-      'Outros': 0,
+    const categories: { [key: string]: number } = {}
+    const categoryMap: { [key: string]: string } = {
+      '1': 'Alimentação',
+      '2': 'Transporte',
+      '3': 'Saúde',
+      '4': 'Lazer',
+      '5': 'Educação',
+      '6': 'Trabalho',
+      '7': 'Casa',
+      '8': 'Outros',
     }
 
-    // In real app, this would use actual category data from transactions
+    // Aggregate expenses by category
     transactions
       .filter((tx) => tx.type === 'expense')
       .forEach((tx) => {
-        // Random category assignment for demo
-        const categoryKeys = Object.keys(categories)
-        const randomCategory = categoryKeys[Math.floor(Math.random() * categoryKeys.length)]
-        categories[randomCategory] += tx.amount
+        const categoryName = tx.category_id ? (categoryMap[tx.category_id] || 'Outros') : 'Sem categoria'
+        categories[categoryName] = (categories[categoryName] || 0) + tx.amount
       })
 
     return Object.entries(categories)

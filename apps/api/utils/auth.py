@@ -7,7 +7,7 @@ Includes password hashing, JWT token generation/verification, and TOTP.
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import HTTPException, status
+from fastapi import HTTPException, status, Depends, Header
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import os
@@ -21,8 +21,8 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7
 # Get JWT secret from environment
 SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
 
-# Password hashing context (bcrypt, cost factor 12)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto", bcrypt__rounds=12)
+# Password hashing context (argon2)
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
 # ============ Password Hashing ============
@@ -111,7 +111,7 @@ def create_refresh_token(user_id: int, expires_delta: Optional[timedelta] = None
 # ============ JWT Token Verification ============
 
 
-def verify_token(token: str, token_type: str = "access") -> int:
+def verify_token(token: str, token_type: str = "access") -> str:
     """
     Verify JWT token and extract user ID.
 
@@ -145,7 +145,7 @@ def verify_token(token: str, token_type: str = "access") -> int:
                 headers={"WWW-Authenticate": "Bearer"}
             )
 
-        return int(user_id)
+        return user_id
 
     except JWTError as e:
         raise HTTPException(
@@ -153,6 +153,37 @@ def verify_token(token: str, token_type: str = "access") -> int:
             detail=f"Invalid token: {str(e)}",
             headers={"WWW-Authenticate": "Bearer"}
         )
+
+
+# ============ FastAPI Dependency ============
+
+
+def get_current_user_from_header(authorization: str = Header(None)) -> str:
+    """
+    FastAPI dependency to extract and verify JWT token from Authorization header.
+
+    Usage in endpoints:
+        async def get_endpoint(user_id: int = Depends(get_current_user_from_header)):
+            ...
+
+    Args:
+        authorization: Authorization header (Bearer <token>)
+
+    Returns:
+        User ID
+
+    Raises:
+        HTTPException: If token is missing or invalid
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = authorization.replace("Bearer ", "").strip()
+    return verify_token(token, token_type="access")
 
 
 # ============ TOTP (2FA) ============

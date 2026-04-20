@@ -1,14 +1,14 @@
 'use client'
 
-import React from 'react'
-import { Archive, Tag, Trash2, Download, X } from 'lucide-react'
+import React, { useState } from 'react'
+import { Archive, Tag, Trash2, Download, X, ChevronDown } from 'lucide-react'
 
 interface BulkActionsProps {
   selectedCount: number
   onArchive: () => void
   onCategorize: () => void
   onDelete: () => void
-  onExport: () => void
+  onExport: (format: 'csv' | 'json' | 'html') => void
   onClearSelection: () => void
   loading?: boolean
 }
@@ -22,6 +22,13 @@ export function BulkActions({
   onClearSelection,
   loading = false,
 }: BulkActionsProps) {
+  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false)
+
+  const handleExportClick = (format: 'csv' | 'json' | 'html') => {
+    onExport(format)
+    setIsExportMenuOpen(false)
+  }
+
   if (selectedCount === 0) {
     return null
   }
@@ -63,15 +70,41 @@ export function BulkActions({
               Categorizar
             </button>
 
-            <button
-              onClick={onExport}
-              disabled={loading}
-              className="flex items-center gap-2 px-4 py-2 rounded border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-              title="Exportar selecionados"
-            >
-              <Download className="w-4 h-4" />
-              Exportar
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+                disabled={loading}
+                className="flex items-center gap-2 px-4 py-2 rounded border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                title="Exportar selecionados"
+              >
+                <Download className="w-4 h-4" />
+                Exportar
+                <ChevronDown className="w-3 h-3" />
+              </button>
+
+              {isExportMenuOpen && (
+                <div className="absolute right-0 mt-2 w-40 bg-white dark:bg-slate-800 rounded border border-slate-200 dark:border-slate-700 shadow-lg z-10">
+                  <button
+                    onClick={() => handleExportClick('csv')}
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm text-slate-700 dark:text-slate-300 first:rounded-t last:rounded-b transition-colors"
+                  >
+                    📄 CSV
+                  </button>
+                  <button
+                    onClick={() => handleExportClick('json')}
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm text-slate-700 dark:text-slate-300 first:rounded-t last:rounded-b transition-colors border-t border-slate-200 dark:border-slate-700"
+                  >
+                    🔷 JSON
+                  </button>
+                  <button
+                    onClick={() => handleExportClick('html')}
+                    className="w-full text-left px-4 py-2 hover:bg-slate-50 dark:hover:bg-slate-700 text-sm text-slate-700 dark:text-slate-300 first:rounded-t last:rounded-b transition-colors border-t border-slate-200 dark:border-slate-700"
+                  >
+                    🌐 HTML
+                  </button>
+                </div>
+              )}
+            </div>
 
             <div className="w-px h-6 bg-slate-200 dark:bg-slate-800" />
 

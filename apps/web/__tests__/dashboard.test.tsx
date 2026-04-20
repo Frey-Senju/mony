@@ -29,6 +29,7 @@ const mockTransactions = [
     description: 'Coffee at Starbucks',
     transaction_date: '2026-04-15',
     merchant_name: 'Starbucks',
+    category_id: '1',
     is_recurring: false,
     is_reconciled: false,
     created_at: '2026-04-15T10:00:00Z',
@@ -43,6 +44,7 @@ const mockTransactions = [
     currency: 'BRL',
     description: 'Monthly salary',
     transaction_date: '2026-04-01',
+    category_id: '6',
     is_recurring: false,
     is_reconciled: true,
     created_at: '2026-04-01T09:00:00Z',
@@ -94,6 +96,11 @@ describe('Dashboard Components', () => {
           totalIncome={3000}
           currentBalance={2500}
           loading={false}
+          previousMonthData={{
+            totalSpent: 450,
+            totalIncome: 2800,
+            currentBalance: 2400,
+          }}
         />
       )
 
@@ -108,11 +115,13 @@ describe('Dashboard Components', () => {
         onEdit: jest.fn(),
         onDelete: jest.fn(),
         onReconcile: jest.fn(),
+        onSelectionChange: jest.fn(),
       }
 
       render(
         <TransactionList
           transactions={mockTransactions}
+          selectedIds={new Set()}
           {...mockHandlers}
           pagination={{ offset: 0, limit: 20, total: 2 }}
         />
@@ -129,11 +138,13 @@ describe('Dashboard Components', () => {
         onEdit: jest.fn(),
         onDelete: jest.fn(),
         onReconcile: jest.fn(),
+        onSelectionChange: jest.fn(),
       }
 
       render(
         <TransactionList
           transactions={mockTransactions}
+          selectedIds={new Set()}
           {...mockHandlers}
         />
       )
@@ -148,11 +159,13 @@ describe('Dashboard Components', () => {
         onEdit,
         onDelete: jest.fn(),
         onReconcile: jest.fn(),
+        onSelectionChange: jest.fn(),
       }
 
       render(
         <TransactionList
           transactions={mockTransactions}
+          selectedIds={new Set()}
           {...mockHandlers}
         />
       )
@@ -169,11 +182,13 @@ describe('Dashboard Components', () => {
         onEdit: jest.fn(),
         onDelete: jest.fn(),
         onReconcile: jest.fn(),
+        onSelectionChange: jest.fn(),
       }
 
       render(
         <TransactionList
           transactions={mockTransactions}
+          selectedIds={new Set()}
           {...mockHandlers}
           pagination={{ offset: 0, limit: 20, total: 50 }}
           onPaginationChange={onPaginationChange}
@@ -191,11 +206,13 @@ describe('Dashboard Components', () => {
         onEdit: jest.fn(),
         onDelete: jest.fn(),
         onReconcile: jest.fn(),
+        onSelectionChange: jest.fn(),
       }
 
       render(
         <TransactionList
           transactions={[]}
+          selectedIds={new Set()}
           {...mockHandlers}
         />
       )
@@ -279,6 +296,11 @@ describe('Dashboard Components', () => {
   })
 
   describe('TransactionModal', () => {
+    const mockAccounts = [
+      { id: 'acc-1', name: 'Conta Corrente' },
+      { id: 'acc-2', name: 'Poupança' },
+    ]
+
     it('renders modal form when open', () => {
       const onSave = jest.fn()
 
@@ -287,6 +309,7 @@ describe('Dashboard Components', () => {
           isOpen={true}
           onClose={jest.fn()}
           onSave={onSave}
+          accounts={mockAccounts}
           categories={[]}
         />
       )
@@ -304,6 +327,7 @@ describe('Dashboard Components', () => {
           isOpen={false}
           onClose={jest.fn()}
           onSave={onSave}
+          accounts={mockAccounts}
           categories={[]}
         />
       )
@@ -319,6 +343,7 @@ describe('Dashboard Components', () => {
           isOpen={true}
           onClose={jest.fn()}
           onSave={onSave}
+          accounts={mockAccounts}
           categories={[]}
         />
       )
@@ -339,6 +364,7 @@ describe('Dashboard Components', () => {
           isOpen={true}
           onClose={onClose}
           onSave={onSave}
+          accounts={mockAccounts}
           categories={[]}
         />
       )
@@ -375,6 +401,7 @@ describe('Dashboard Components', () => {
           isOpen={true}
           onClose={jest.fn()}
           onSave={jest.fn()}
+          accounts={mockAccounts}
           categories={mockCategories}
         />
       )

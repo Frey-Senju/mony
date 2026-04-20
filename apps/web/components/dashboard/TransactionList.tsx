@@ -1,7 +1,7 @@
 'use client'
 
-import React, { useState } from 'react'
-import { Trash2, Edit2, Check, X } from 'lucide-react'
+import React from 'react'
+import { Trash2, Edit2, Check, X, TrendingUp, TrendingDown } from 'lucide-react'
 
 interface Transaction {
   id: string
@@ -12,10 +12,13 @@ interface Transaction {
   merchant_name?: string
   is_reconciled: boolean
   currency: string
+  category_id?: string
 }
 
 interface TransactionListProps {
   transactions: Transaction[]
+  selectedIds: Set<string>
+  onSelectionChange: (ids: Set<string>) => void
   onEdit: (id: string) => void
   onDelete: (id: string) => void
   onReconcile: (id: string, reconciled: boolean) => void
@@ -28,8 +31,32 @@ interface TransactionListProps {
   onPaginationChange?: (offset: number) => void
 }
 
+const CATEGORY_MAP: { [key: string]: string } = {
+  '1': 'Alimentação',
+  '2': 'Transporte',
+  '3': 'Saúde',
+  '4': 'Lazer',
+  '5': 'Educação',
+  '6': 'Trabalho',
+  '7': 'Casa',
+  '8': 'Outros',
+}
+
+const CATEGORY_COLORS: { [key: string]: string } = {
+  '1': 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
+  '2': 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
+  '3': 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300',
+  '4': 'bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300',
+  '5': 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300',
+  '6': 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300',
+  '7': 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
+  '8': 'bg-slate-100 dark:bg-slate-900/30 text-slate-700 dark:text-slate-300',
+}
+
 export function TransactionList({
   transactions,
+  selectedIds,
+  onSelectionChange,
   onEdit,
   onDelete,
   onReconcile,
@@ -37,13 +64,11 @@ export function TransactionList({
   pagination,
   onPaginationChange,
 }: TransactionListProps) {
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-
   const toggleSelectAll = () => {
     if (selectedIds.size === transactions.length) {
-      setSelectedIds(new Set())
+      onSelectionChange(new Set())
     } else {
-      setSelectedIds(new Set(transactions.map((t) => t.id)))
+      onSelectionChange(new Set(transactions.map((t) => t.id)))
     }
   }
 
@@ -54,7 +79,7 @@ export function TransactionList({
     } else {
       newSelected.add(id)
     }
-    setSelectedIds(newSelected)
+    onSelectionChange(newSelected)
   }
 
   const formatCurrency = (amount: number, currency: string) => {
@@ -107,7 +132,7 @@ export function TransactionList({
             {selectedIds.size} selecionado(s)
           </span>
           <button
-            onClick={() => setSelectedIds(new Set())}
+            onClick={() => onSelectionChange(new Set())}
             className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
           >
             Desselecionar tudo
@@ -138,6 +163,9 @@ export function TransactionList({
               </th>
               <th className="px-4 py-3 text-right font-medium text-slate-900 dark:text-slate-100">
                 Valor
+              </th>
+              <th className="px-4 py-3 text-left font-medium text-slate-900 dark:text-slate-100">
+                Categoria
               </th>
               <th className="px-4 py-3 text-left font-medium text-slate-900 dark:text-slate-100">
                 Data
@@ -183,10 +211,29 @@ export function TransactionList({
                       : 'text-red-600 dark:text-red-400'
                   }`}
                 >
-                  {transaction.type === 'income' ? '+' : '-'}
-                  {formatCurrency(
-                    Math.abs(transaction.amount),
-                    transaction.currency
+                  <div className="flex items-center justify-end gap-2">
+                    {transaction.type === 'income' ? (
+                      <TrendingUp className="w-4 h-4" />
+                    ) : (
+                      <TrendingDown className="w-4 h-4" />
+                    )}
+                    {formatCurrency(
+                      Math.abs(transaction.amount),
+                      transaction.currency
+                    )}
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  {transaction.category_id && CATEGORY_MAP[transaction.category_id] ? (
+                    <span
+                      className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium ${
+                        CATEGORY_COLORS[transaction.category_id]
+                      }`}
+                    >
+                      {CATEGORY_MAP[transaction.category_id]}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-400">Sem categoria</span>
                   )}
                 </td>
                 <td className="px-4 py-3 text-slate-600 dark:text-slate-400">

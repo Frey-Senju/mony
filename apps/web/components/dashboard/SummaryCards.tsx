@@ -18,6 +18,11 @@ interface SummaryCardsProps {
   currentBalance: number
   budgetProgress?: number
   loading?: boolean
+  previousMonthData?: {
+    totalSpent: number
+    totalIncome: number
+    currentBalance?: number
+  }
 }
 
 export function SummaryCards({
@@ -26,6 +31,7 @@ export function SummaryCards({
   currentBalance,
   budgetProgress = 0,
   loading = false,
+  previousMonthData,
 }: SummaryCardsProps) {
   const colorClasses = {
     blue: 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800',
@@ -42,27 +48,39 @@ export function SummaryCards({
     purple: 'text-purple-600 dark:text-purple-400',
   }
 
+  // Calculate trend percentages based on previous month data
+  const calculateTrend = (current: number, previous: number): number | undefined => {
+    if (!previousMonthData || previous === 0) return undefined
+    return Math.round(((current - previous) / previous) * 100)
+  }
+
+  const spentTrend = calculateTrend(totalSpent, previousMonthData?.totalSpent || 0)
+  const incomeTrend = calculateTrend(totalIncome, previousMonthData?.totalIncome || 0)
+  const balanceTrend = previousMonthData?.currentBalance
+    ? calculateTrend(currentBalance, previousMonthData.currentBalance)
+    : undefined
+
   const cards: SummaryCard[] = [
     {
       title: 'Gastos este mês',
       value: `-R$ ${Math.abs(totalSpent).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-      trend: -5,
+      trend: spentTrend,
       icon: <TrendingDown className="w-6 h-6" />,
       color: 'red',
-      subtitle: 'Despesas totais',
+      subtitle: previousMonthData ? 'Despesas totais' : 'Primeiro mês de dados',
     },
     {
       title: 'Renda este mês',
       value: `R$ ${totalIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-      trend: 8,
+      trend: incomeTrend,
       icon: <TrendingUp className="w-6 h-6" />,
       color: 'green',
-      subtitle: 'Receitas totais',
+      subtitle: previousMonthData ? 'Receitas totais' : 'Primeiro mês de dados',
     },
     {
       title: 'Saldo disponível',
       value: `R$ ${currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
-      trend: 2,
+      trend: balanceTrend,
       icon: <Wallet className="w-6 h-6" />,
       color: 'blue',
       subtitle: 'Conta corrente',

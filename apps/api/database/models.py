@@ -17,6 +17,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     JSON,
     Numeric,
     String,
@@ -136,6 +137,11 @@ class User(Base):
     last_login_ip = Column(String(45))
     two_factor_enabled = Column(Boolean, default=False)
     two_factor_secret = Column(String(32))
+
+    # Account Lockout (after 5 failed login attempts)
+    is_locked = Column(Boolean, default=False)
+    locked_until = Column(DateTime, nullable=True)
+    failed_login_attempts = Column(Integer, default=0)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(

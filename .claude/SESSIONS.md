@@ -360,6 +360,30 @@ Story 1.5b Documentation:
 
 5. `3b2493e` — feat: implement bulk actions and category integration [Story 1.5]
 6. `7b8bd27` — test: add comprehensive dashboard integration tests [Story 1.5b]
+7. `3fbacf2` — test: fix dashboard integration tests - all 28 tests passing [Story 1.5b]
+
+### Test Suite Status ✅ COMPLETE
+
+**All 28 Tests Passing:**
+- ✅ 3 SummaryCards tests (rendering, loading, trends, currency formatting)
+- ✅ 3 TransactionList tests (columns, rows, pagination, actions, empty state)
+- ✅ 3 FilterBar tests (rendering, change handler, expand/collapse)
+- ✅ 3 Charts tests (rendering, totals, loading)
+- ✅ 5 TransactionModal tests (open/close, validation, form submission, categories)
+- ✅ 3 BulkActions tests (visibility, handlers, state management)
+- ✅ 2 useCategories hook tests (initialization, getCategoryById)
+- ✅ 2 useFilter hook tests (initialization, filter updates)
+- ✅ 2 useTransactions hook tests (initialization, pagination)
+
+**Test Fixes Applied:**
+- Fixed jest.setup.js localStorage mock using Object.defineProperty pattern
+- Updated test selectors for better accessibility (getByPlaceholderText, getByRole)
+- Migrated hook tests to React Testing Library's renderHook
+- Fixed BulkActions test button label expectations (Portuguese: Arquivar)
+- Fixed TransactionModal date input handling
+- Fixed useFilter active filter count tracking
+
+Run tests: `npm test -- __tests__/dashboard.test.tsx --no-coverage`
 
 ### Next Steps
 

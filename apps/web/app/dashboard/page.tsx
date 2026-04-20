@@ -28,8 +28,9 @@ export default function DashboardPage() {
 }
 
 function DashboardContent() {
-  const { user } = useAuth()
-  const { transactions, loading, pagination, fetchTransactions, deleteTransaction, reconcileTransaction, changePage, updateTransaction } = useTransactions()
+  const auth = useAuth()
+  const { user } = auth
+  const { transactions, loading, pagination, fetchTransactions, deleteTransaction, reconcileTransaction, changePage, updateTransaction, createTransaction } = useTransactions(auth.tokens?.access_token)
   const { filters, updateMultipleFilters, resetFilters, hasActiveFilters } = useFilter()
   const { categories } = useCategories()
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -66,7 +67,7 @@ function DashboardContent() {
     fetchAccounts()
   }, [])
 
-  // Fetch transactions when filters change
+  // Fetch transactions when filters change or token becomes available
   useEffect(() => {
     const apiFilters: FilterState = {
       accountId: filters.accountId,
@@ -80,9 +81,10 @@ function DashboardContent() {
     fetchTransactions(apiFilters, 0, 20)
   }, [filters, fetchTransactions])
 
-  // Calculate summary metrics
-  const currentMonth = new Date().getMonth()
-  const currentYear = new Date().getFullYear()
+  // Calculate summary metrics for current month
+  const currentDate = new Date()
+  const currentMonth = currentDate.getMonth()
+  const currentYear = currentDate.getFullYear()
 
   const monthlyTransactions = transactions.filter((t) => {
     const txDate = new Date(t.transaction_date)
@@ -94,6 +96,24 @@ function DashboardContent() {
     .reduce((sum, t) => sum + t.amount, 0)
 
   const totalIncome = monthlyTransactions
+    .filter((t) => t.type === 'income')
+    .reduce((sum, t) => sum + t.amount, 0)
+
+  // Calculate metrics for previous month (for trends)
+  const previousDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1)
+  const previousMonth = previousDate.getMonth()
+  const previousYear = previousDate.getFullYear()
+
+  const previousMonthTransactions = transactions.filter((t) => {
+    const txDate = new Date(t.transaction_date)
+    return txDate.getMonth() === previousMonth && txDate.getFullYear() === previousYear
+  })
+
+  const previousMonthSpent = previousMonthTransactions
+    .filter((t) => t.type === 'expense')
+    .reduce((sum, t) => sum + t.amount, 0)
+
+  const previousMonthIncome = previousMonthTransactions
     .filter((t) => t.type === 'income')
     .reduce((sum, t) => sum + t.amount, 0)
 
@@ -113,14 +133,28 @@ function DashboardContent() {
   }
 
   const handleModalSave = async (data: Partial<Transaction>) => {
-    if (selectedTransaction) {
-      try {
+    try {
+      if (selectedTransaction) {
+        // Update existing transaction
         await updateTransaction(selectedTransaction.id, data)
-        setIsModalOpen(false)
-        setSelectedTransaction(undefined)
-      } catch (error) {
-        console.error('Failed to save transaction:', error)
+      } else {
+        // Create new transaction
+        await createTransaction(data as Omit<Transaction, 'id' | 'created_at' | 'updated_at'>)
       }
+      setIsModalOpen(false)
+      setSelectedTransaction(undefined)
+      // Refresh transactions list
+      const apiFilters: FilterState = {
+        accountId: filters.accountId,
+        type: filters.type !== 'all' ? (filters.type as 'income' | 'expense') : undefined,
+        startDate: filters.startDate,
+        endDate: filters.endDate,
+        search: filters.search,
+        isReconciled: filters.isReconciled !== 'all' ? (filters.isReconciled as 'reconciled' | 'pending') : undefined,
+      }
+      fetchTransactions(apiFilters, 0, 20)
+    } catch (error) {
+      console.error('Failed to save transaction:', error)
     }
   }
 
@@ -151,23 +185,21 @@ function DashboardContent() {
     // TODO: Implement category assignment modal
   }
 
-  const handleBulkExport = () => {
+  const handleBulkExport = (format: 'csv' | 'json' | 'html') => {
     if (selectedIds.size === 0) return
 
     const selectedTransactions = transactions.filter((t) => selectedIds.has(t.id))
-
-    // Show export format selection
-    const format = prompt('Escolha formato:\n1. CSV\n2. JSON\n3. HTML')
+    const dateStr = new Date().toISOString().split('T')[0]
 
     switch (format) {
-      case '1':
-        exportToCSV(selectedTransactions, `transacoes-${new Date().toISOString().split('T')[0]}.csv`)
+      case 'csv':
+        exportToCSV(selectedTransactions, `transacoes-${dateStr}.csv`)
         break
-      case '2':
-        exportToJSON(selectedTransactions, `transacoes-${new Date().toISOString().split('T')[0]}.json`)
+      case 'json':
+        exportToJSON(selectedTransactions, `transacoes-${dateStr}.json`)
         break
-      case '3':
-        exportToHTML(selectedTransactions, `relatorio-${new Date().toISOString().split('T')[0]}.html`)
+      case 'html':
+        exportToHTML(selectedTransactions, `relatorio-${dateStr}.html`)
         break
     }
   }
@@ -214,6 +246,15 @@ function DashboardContent() {
                 Bem-vindo, {user?.full_name || 'Usuário'}
               </p>
             </div>
+            <button
+              onClick={() => {
+                setSelectedTransaction(undefined)
+                setIsModalOpen(true)
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+            >
+              + Nova Transação
+            </button>
           </div>
         </div>
       </div>
@@ -231,6 +272,15 @@ function DashboardContent() {
             currentBalance={currentBalance}
             budgetProgress={budgetProgress}
             loading={loading}
+            previousMonthData={
+              previousMonthTransactions.length > 0
+                ? {
+                    totalSpent: previousMonthSpent,
+                    totalIncome: previousMonthIncome,
+                    currentBalance: currentBalance, // Use current balance as baseline
+                  }
+                : undefined
+            }
           />
         </section>
 
@@ -258,6 +308,8 @@ function DashboardContent() {
         <section>
           <TransactionList
             transactions={transactions}
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
             onEdit={handleEdit}
             onDelete={handleDelete}
             onReconcile={handleReconcile}
@@ -290,6 +342,7 @@ function DashboardContent() {
           setSelectedTransaction(undefined)
         }}
         onSave={handleModalSave}
+        accounts={accounts}
         loading={loading}
         categories={categories as Category[]}
       />

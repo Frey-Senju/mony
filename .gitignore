@@ -44,3 +44,12 @@ Thumbs.db
 .claude/settings.local.json
 
 .vercel
+
+# E2E test artifacts
+apps/api/mony_test.db
+apps/web/playwright-report/
+apps/web/test-results/
+apps/web/e2e-test-results.log
+
+# Next.js auto-generated
+apps/web/next-env.d.ts

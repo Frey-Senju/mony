@@ -49,17 +49,21 @@ export function useTransactions(token?: string) {
 
   const getAuthHeaders = useCallback(() => {
     const authToken = token || (typeof window !== 'undefined' ? localStorage.getItem('mony_tokens') : null)
+    console.log('[DEBUG] useTransactions.getAuthHeaders - token param:', token ? 'PROVIDED' : 'NONE', ', authToken:', authToken ? 'EXISTS' : 'MISSING')
     if (!authToken) {
+      console.log('[DEBUG] useTransactions.getAuthHeaders - returning empty headers')
       return {}
     }
 
     try {
       const tokens = JSON.parse(authToken)
+      console.log('[DEBUG] useTransactions.getAuthHeaders - parsed JSON successfully')
       return {
         'Authorization': `Bearer ${tokens.access_token}`,
         'Content-Type': 'application/json',
       }
     } catch {
+      console.log('[DEBUG] useTransactions.getAuthHeaders - JSON parse failed, using token as-is')
       return {
         'Authorization': `Bearer ${authToken}`,
         'Content-Type': 'application/json',
@@ -73,6 +77,13 @@ export function useTransactions(token?: string) {
       customOffset?: number,
       customLimit?: number
     ) => {
+      const headers = getAuthHeaders()
+      if (Object.keys(headers).length === 0) {
+        console.log('[DEBUG] useTransactions - skipping fetch, no auth headers')
+        setTransactions([])
+        return
+      }
+
       setLoading(true)
       setError(null)
 
@@ -97,12 +108,20 @@ export function useTransactions(token?: string) {
         if (filters?.endDate) {
           queryParams.append('end_date', filters.endDate)
         }
+        if (filters?.search) {
+          queryParams.append('search', filters.search)
+        }
+        if (filters?.isReconciled === 'reconciled') {
+          queryParams.append('is_reconciled', 'true')
+        } else if (filters?.isReconciled === 'pending') {
+          queryParams.append('is_reconciled', 'false')
+        }
 
         const response = await fetch(
           `${API_URL}/transactions?${queryParams.toString()}`,
           {
             method: 'GET',
-            headers: getAuthHeaders(),
+            headers: headers,
           }
         )
 
@@ -111,24 +130,7 @@ export function useTransactions(token?: string) {
         }
 
         const data = await response.json()
-
-        // Filter by search and reconciliation locally if needed
-        let filtered = data.items
-        if (filters?.search) {
-          const searchLower = filters.search.toLowerCase()
-          filtered = filtered.filter(
-            (t: Transaction) =>
-              t.description.toLowerCase().includes(searchLower) ||
-              (t.merchant_name?.toLowerCase().includes(searchLower) ?? false)
-          )
-        }
-        if (filters?.isReconciled === 'reconciled') {
-          filtered = filtered.filter((t: Transaction) => t.is_reconciled)
-        } else if (filters?.isReconciled === 'pending') {
-          filtered = filtered.filter((t: Transaction) => !t.is_reconciled)
-        }
-
-        setTransactions(filtered)
+        setTransactions(data.items)
         setPagination({
           offset,
           limit,
@@ -145,6 +147,14 @@ export function useTransactions(token?: string) {
     },
     [pagination.offset, pagination.limit, API_URL, getAuthHeaders]
   )
+
+  // Auto-fetch transactions when token becomes available
+  useEffect(() => {
+    if (token) {
+      console.log('[DEBUG] useTransactions - token available, fetching...')
+      fetchTransactions({}, 0, 20)
+    }
+  }, [token])
 
   const createTransaction = useCallback(
     async (transactionData: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>) => {

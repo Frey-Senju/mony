@@ -53,6 +53,11 @@ export function FilterBar({
     filters.endDate ||
     (filters.isReconciled && filters.isReconciled !== 'all')
 
+  const getAccountName = (accountId: string) => {
+    const account = accounts.find((a) => a.id === accountId)
+    return account?.name || accountId
+  }
+
   return (
     <div className="space-y-4">
       {/* Search Bar */}
@@ -196,7 +201,7 @@ export function FilterBar({
           )}
           {filters.accountId && (
             <span className="px-3 py-1 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-sm flex items-center gap-2">
-              Conta: {filters.accountId}
+              Conta: {getAccountName(filters.accountId)}
               <button
                 onClick={() => handleFilterChange('accountId', undefined)}
                 className="hover:opacity-70"
