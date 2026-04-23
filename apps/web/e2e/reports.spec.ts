@@ -119,7 +119,7 @@ test.describe('Reports', () => {
       // panel must appear (both are valid zero-transaction indicators).
       const summaryEmpty = page.getByTestId('reports-empty-state')
       const breakdownEmpty = page.getByTestId('breakdown-empty')
-      await expect(summaryEmpty.or(breakdownEmpty)).toBeVisible({
+      await expect(summaryEmpty.or(breakdownEmpty).first()).toBeVisible({
         timeout: 10_000,
       })
     })
