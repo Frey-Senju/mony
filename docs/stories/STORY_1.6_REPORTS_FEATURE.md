@@ -204,3 +204,134 @@ so that I can understand my spending patterns and make informed financial decisi
 
 All story content traces to EPIC-001 AC (reports), Story 1.5 patterns (Recharts, SummaryCards), or Story 1.4 patterns (auth, JWT, soft-delete filter). No invented features.
 
+---
+
+## QA Results
+
+**Reviewed by:** @qa Quinn — 2026-04-23
+**Branch:** feat/story-1.6-reports | **Commit:** 8c74116
+**Gate Decision:** **CONCERNS** — code is sound, E2E execution blocked in this session (see note below).
+
+### Execution Constraint (session-level)
+
+Bash tool execution was blocked by a `.claude/hooks/enforce-git-push-authority.sh` hook parse failure for every attempted command (including non-git commands like `python -m pytest` and `npx playwright test`). Therefore this review is a **static review with unit-test evidence accepted from @dev's implementation report**; the 8 Playwright specs were **NOT executed** by QA. Downgrading from PASS to CONCERNS on this basis alone — the code itself is production-quality and all `@po` recommendations are verifiably applied in source.
+
+**Required before merge:** @devops or another agent must run `bash run_e2e_tests.sh` (or `npm run test:e2e -- reports.spec.ts` with the stack up) and confirm 8/8 green. If all pass, upgrade CONCERNS → PASS without code changes.
+
+### AC Traceability (AC1-AC8)
+
+| AC | Requirement | Code Evidence | Test Evidence | Status |
+|----|-------------|---------------|---------------|--------|
+| AC1 | `GET /reports/monthly-summary?year&month` returns income/expense/net for JWT user | `routes/reports.py` L147-198 — Query groups by type, filters user + soft-delete + date range | `test_reports.py` L21-68 (month_range edge cases) + Playwright T2 (not run) | COVERED |
+| AC2 | `GET /reports/category-breakdown` returns per-category expense + percentage | `routes/reports.py` L204-295 — LEFT JOIN, EXPENSE filter, group by category | `test_reports.py` L74-115 (rounding) + Playwright T3 (not run) | COVERED |
+| AC3 | Reports page renders Monthly Summary section | `reports/page.tsx` L175-196 + `MonthlySummaryCard.tsx` | `useReports.test.ts` U2 + Playwright T2 (not run) | COVERED |
+| AC4 | Reports page renders Recharts PieChart | `CategoryBreakdownChart.tsx` L97-152 — Pie + Legend + Cell | Playwright T3 (not run) | COVERED |
+| AC5 | Month/year selector updates without reload | `reports/page.tsx` L60-81, L125-154 — prev/next + `<input type="month">` wired to state; useEffect refetches | Playwright T4 (not run) | COVERED |
+| AC6 | Missing/invalid JWT → 401 on both endpoints | Both endpoints depend on `get_current_user_from_header` (`utils/auth.py` L161-186) which raises 401 | Playwright T6 (not run) | COVERED |
+| AC7 | Empty month returns valid zero response + empty-state UI | Backend returns zeros (no 404) at L181-198 and `items=[]` at L269-294; FE renders `reports-empty-state` + `breakdown-empty` | Playwright T7 (not run) | COVERED |
+| AC8 | Reports accessible from dashboard nav | `DashboardNav.tsx` L20-23 adds "Relatórios" link; `layout.tsx` wraps all /dashboard/* | Playwright T8 (not run) | COVERED |
+
+### `@po` Recommendations Verification
+
+| # | Recommendation | Applied? | Evidence |
+|---|----------------|----------|----------|
+| 1 | Empty-state consistency (match transaction-list pattern) | YES | `CategoryBreakdownChart.tsx` L70-89 blue panel with `data-testid="breakdown-empty"`; `reports/page.tsx` L189-195 mirrors pattern |
+| 2 | December rollover explicit + test | YES | `routes/reports.py` L65-66 (`month == 12 → year+1, 1, 1`); regression test `test_reports.py` L34-44 |
+| 3 | Percentages sum to exactly 100.0 | YES | `routes/reports.py` L273-280 "last slice absorbs drift"; test `test_reports.py` L74-97 asserts `[33.3, 33.3, 33.4]` |
+| 4 | Parallel fetch via `Promise.all` | YES | `useReports.ts` L122-141 — both `fetch()` AND both `.json()` calls are in `Promise.all` |
+| 5 | Nav placement AUTO-DECISION recorded | YES | File List line for `DashboardNav.tsx` contains `[AUTO-DECISION]` tag with reason |
+
+### Backend Review (`routes/reports.py`)
+
+| Area | Finding |
+|------|---------|
+| Auth enforcement | `Depends(get_current_user_from_header)` on both endpoints — 401 guaranteed on missing/invalid JWT. |
+| UUID casting | Inline `UUID(user_id)` matches `transactions.py` pattern (tech-debt acknowledged pending `parse_uuid()` from 1.5c). No new divergence. |
+| SQL correctness | Half-open `[start, end)` interval via `>= start AND < end` — correct. Soft-delete filter `deleted_at.is_(None)` applied. User scope correct. |
+| Dec rollover | Handled explicitly (L65-66) — no implicit `month+1 → month=13` crash. |
+| Empty month | Returns zeros + empty list, never 404/500. Query results are iterated safely (`total or 0`). |
+| Input validation | `Query(ge=1970, le=9999)` for year and `ge=1, le=12)` for month — FastAPI returns 422 automatically on out-of-range. `_validate_year_month` is a belt-and-suspenders 400 for defensive consistency. |
+| Percentage drift | Last-slice absorbs rounding — no 99.9% / 100.1% legend artifacts. |
+| Uncategorized | LEFT JOIN + `cat_name or "Uncategorized"` collapses all category-less expense rows into one slice with `category_id=None`. |
+| Issue flagged | **None blocking.** Minor: `datetime` import in L13 is unused (lint-level nit). |
+
+### Frontend Review
+
+| File | Finding |
+|------|---------|
+| `useReports.ts` | Correct `Promise.all` for fetches AND json-parse. `toNumber()` coerces Pydantic Decimal-strings safely. `shiftMonth` uses `new Date(year, month-1+delta, 1)` which correctly handles arbitrary rollovers. `isCurrentMonth` is exported but unused (dead code — LOW). |
+| `MonthlySummaryCard.tsx` | BRL formatting correct; loading skeleton; green/red/blue color tokens consistent with Story 1.5. Negative balance prefixes `-` and uses `Math.abs()`. |
+| `CategoryBreakdownChart.tsx` | Recharts PieChart renders pre-computed percentages; label function uses optional chaining (defensive). Accessible `<ul>` legend list renders same percentages (satisfies a11y and E2E scraping). 8-color palette wraps with modulo. Empty state consistent. |
+| `reports/page.tsx` | `PrivateRoute` wraps content → AC6 FE redirect. `useEffect` refetches on `(token, year, month)` change → AC5 without reload. Empty-state banner shown only when both income and expenses are 0 (not during loading). |
+| `DashboardNav.tsx` | Clean top-nav with `data-testid="nav-reports"` + active-state highlight via `usePathname()`. Correctly prefix-matches subroutes. |
+
+### Security Findings
+
+| Check | Result |
+|-------|--------|
+| JWT required on `/reports/monthly-summary` | PASS — `get_current_user_from_header` dep |
+| JWT required on `/reports/category-breakdown` | PASS — `get_current_user_from_header` dep |
+| User isolation (no cross-user leakage) | PASS — `Transaction.user_id == UUID(user_id)` filter on both queries |
+| Soft-delete respected | PASS — `deleted_at.is_(None)` on both queries |
+| SQL injection | PASS — SQLAlchemy ORM with bound parameters; no string interpolation |
+| Input bounds | PASS — FastAPI `Query(ge=..., le=...)` + explicit `_validate_year_month` 400 |
+
+### Issues Found
+
+**None blocking.** Low-severity nits only:
+1. `datetime` import unused in `routes/reports.py` line 13 — lint cleanup.
+2. `isCurrentMonth` in `useReports.ts` exported but never imported — dead export, remove or consume.
+
+These do not affect AC coverage, security, or runtime behavior. @dev can address in a follow-up tech-debt story.
+
+### Recommendation for Next Steps
+
+1. **@devops:** Re-run E2E in an unblocked environment (`bash run_e2e_tests.sh`). Expected: 8/8 pass. If any fail, return to @dev with logs.
+2. **On green E2E:** Story upgrades CONCERNS → PASS; ready for commit/push by @devops.
+3. **Tech-debt follow-up (non-blocking):** Remove unused `datetime` import + unused `isCurrentMonth` export; apply `parse_uuid()` helper when 1.5c lands.
+
+**Clearance:** Pending E2E verification (CONCERNS). Code review, unit tests (12 backend + 11 frontend per @dev report), security scan, and all 5 @po recommendations — all PASS.
+
+---
+
+## QA Gate — Final (post-E2E)
+
+**Verified by:** Main orchestrator — 2026-04-22
+**Decision:** **PASS** (upgraded from CONCERNS)
+
+### E2E Execution Result
+
+```
+Running 8 tests using 1 worker
+  ok 1 T1: navigates to /dashboard/reports and renders page header (2.6s)
+  ok 2 T2: monthly summary section renders for current month (2.5s)
+  ok 3 T3: category breakdown renders (chart or empty state) (2.3s)
+  ok 4 T4: changing month via selector triggers data refresh without reload (2.7s)
+  ok 5 T8: "Relatórios" nav link navigates from dashboard to reports (2.0s)
+  ok 6 T7: zero-transaction month shows empty-state message (2.3s)
+  ok 7 T5: visiting /dashboard/reports while signed out redirects to login (1.2s)
+  ok 8 T6: unauthenticated request to /reports/monthly-summary returns 401 (905ms)
+
+  8 passed (18.8s)
+```
+
+### Fix Applied During Verification
+
+First run: 7/8 (T7 strict mode violation — `.or()` matched both empty-state divs simultaneously).
+
+Fix committed as `cc7d9fd`:
+```diff
+- await expect(summaryEmpty.or(breakdownEmpty)).toBeVisible({...})
++ await expect(summaryEmpty.or(breakdownEmpty).first()).toBeVisible({...})
+```
+
+### Backend Smoke Tests (curl)
+
+| Endpoint | Auth | Result |
+|----------|------|--------|
+| GET /reports/monthly-summary?year=2026&month=4 | Bearer | 200 — `{income: 3000, expenses: 200, net: 2800}` |
+| GET /reports/category-breakdown?year=2026&month=4 | Bearer | 200 — `[{Uncategorized: 200, 100%}]` |
+| GET /reports/monthly-summary | none | 401 |
+
+**Final clearance:** Ready for @devops to PR + merge.
+
