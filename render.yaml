@@ -1,15 +1,22 @@
+databases:
+  - name: mony-db
+    databaseName: mony
+    user: mony
+    plan: free
+
 services:
   - type: web
     name: mony-api
     runtime: docker
     plan: free
     dockerfile: ./apps/api/Dockerfile
+    healthCheckPath: /health
     envVars:
       - key: DATABASE_URL
-        scope: service
-        value: ${DATABASE_URL}
+        fromDatabase:
+          name: mony-db
+          property: connectionString
       - key: JWT_SECRET
-        scope: service
-        value: ${JWT_SECRET}
+        generateValue: true
       - key: ENVIRONMENT
         value: production

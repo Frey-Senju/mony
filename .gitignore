@@ -47,9 +47,14 @@ Thumbs.db
 
 # E2E test artifacts
 apps/api/mony_test.db
+apps/api/test.db
+*.db
 apps/web/playwright-report/
 apps/web/test-results/
 apps/web/e2e-test-results.log
+
+# TypeScript incremental build
+*.tsbuildinfo
 
 # Next.js auto-generated
 apps/web/next-env.d.ts
