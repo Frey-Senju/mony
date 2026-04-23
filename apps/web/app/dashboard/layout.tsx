@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import { DashboardNav } from '@/components/dashboard/DashboardNav'
 
 export const metadata: Metadata = {
   title: 'Dashboard | Mony',
@@ -10,5 +11,10 @@ export default function DashboardLayout({
 }: {
   children: React.ReactNode
 }) {
-  return <>{children}</>
+  return (
+    <>
+      <DashboardNav />
+      {children}
+    </>
+  )
 }
