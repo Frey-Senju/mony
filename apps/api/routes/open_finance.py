@@ -301,10 +301,9 @@ async def consent_callback(
     try:
         consent.access_token_encrypted = encrypt_token(access_token) if access_token else None
         consent.refresh_token_encrypted = encrypt_token(refresh_token_val) if refresh_token_val else None
-    except RuntimeError:
-        # ENCRYPTION_KEY not set — store plaintext in sandbox only (log warning)
-        consent.access_token_encrypted = access_token
-        consent.refresh_token_encrypted = refresh_token_val
+    except RuntimeError as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Token encryption unavailable — ENCRYPTION_KEY not configured") from exc
 
     consent.token_expires_at = datetime.utcnow() + timedelta(seconds=expires_in)
     consent.status = ConsentStatus.AUTHORIZED

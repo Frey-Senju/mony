@@ -5,6 +5,14 @@
 
 ---
 
+## Tech Debt — Story 2.1 (Open Finance)
+
+- **TEST-002 (deferred):** Specs E2E Playwright para Open Finance ausentes.
+  Requer mock bank server ou Playwright route interception.
+  Registrado como Story 2.1b ou tarefa de preparação para Story 2.2.
+
+---
+
 ## 🔥 AÇÃO IMEDIATA NECESSÁRIA
 
 ### 1. Fazer Manual Deploy no Render
@@ -18,7 +26,7 @@ O backend foi atualizado no código, mas Render precisa de um re-deploy:
 
 **Verificar sucesso:**
 ```bash
-curl https://api-mony.onrender.com/health
+curl https://mony-api.onrender.com/health
 # Esperado: {"status":"healthy"}
 ```
 
@@ -151,7 +159,7 @@ curl https://api-mony.onrender.com/health
 
 - **GitHub:** https://github.com/Frey-Senju/mony
 - **Vercel (web):** https://web-flame-alpha-37.vercel.app
-- **Render (api):** https://api-mony.onrender.com
+- **Render (api):** https://mony-api.onrender.com
 - **Obsidian vault:** `C:/Users/cristofer.schwartzer/Desktop/Obsidian/Mony`
 - **Local:** `c:/Users/cristofer.schwartzer/mony`
 
@@ -182,7 +190,7 @@ ENVIRONMENT=production
 
 **Frontend (Vercel):**
 ```
-NEXT_PUBLIC_API_URL=https://api-mony.onrender.com
+NEXT_PUBLIC_API_URL=https://mony-api.onrender.com
 ```
 
 ---

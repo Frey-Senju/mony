@@ -263,6 +263,82 @@ def test_callback_expired_consent(client, user, institution, db):
     assert "consent_expired" in resp.headers.get("location", "")
 
 
+def test_callback_success(client, user, institution, db):
+    """Happy path: code exchange + accounts fetch + linked account persisted."""
+    state = secrets.token_hex(32)
+    consent = OFConsent(
+        user_id=user.id,
+        institution_id=institution.id,
+        status=ConsentStatus.PENDING,
+        permissions=["openid", "accounts", "transactions"],
+        state_token=state,
+        authorization_url="http://example.com",
+        expires_at=datetime.utcnow() + timedelta(minutes=30),
+    )
+    db.add(consent)
+    db.commit()
+    db.refresh(consent)
+    consent_id = consent.id
+
+    # Mock the token exchange response (POST to token_endpoint)
+    token_resp = MagicMock()
+    token_resp.raise_for_status = MagicMock()
+    token_resp.json = MagicMock(return_value={
+        "access_token": "tok",
+        "refresh_token": "ref",
+        "expires_in": 3600,
+    })
+
+    # Mock the accounts response (GET to accounts_endpoint)
+    accounts_resp = MagicMock()
+    accounts_resp.raise_for_status = MagicMock()
+    accounts_resp.json = MagicMock(return_value={
+        "data": [
+            {
+                "accountId": "acc-001",
+                "accountType": "CACC",
+                "number": "****1234",
+                "ownerName": "Test User",
+            }
+        ]
+    })
+
+    with patch("routes.open_finance.httpx.AsyncClient") as mock_client_cls, \
+         patch("routes.open_finance.encrypt_token", return_value="encrypted_tok"):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=token_resp)
+        mock_client.get = AsyncMock(return_value=accounts_resp)
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+
+        resp = client.get(
+            f"/open-finance/consent/callback?code=authcode&state={state}",
+            headers=auth_header(user),
+            follow_redirects=False,
+        )
+
+    # Should redirect on success (3xx) or return 200
+    assert resp.status_code in (200, 302, 307)
+
+    # Consent should be AUTHORIZED
+    db.expire_all()
+    updated_consent = db.query(OFConsent).filter(OFConsent.id == consent_id).first()
+    assert updated_consent is not None
+    assert updated_consent.status == ConsentStatus.AUTHORIZED
+
+    # Linked account should be persisted with external_account_id == "acc-001"
+    linked = (
+        db.query(OFLinkedAccount)
+        .filter(
+            OFLinkedAccount.user_id == user.id,
+            OFLinkedAccount.external_account_id == "acc-001",
+        )
+        .first()
+    )
+    assert linked is not None
+    assert linked.institution_id == institution.id
+    assert linked.consent_id == consent_id
+
+
 # ============ Test: List Linked Accounts ============
 
 
