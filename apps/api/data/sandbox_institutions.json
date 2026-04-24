@@ -1,0 +1,42 @@
+[
+  {
+    "external_id": "sandbox-bb-001",
+    "name": "Banco do Brasil (Sandbox)",
+    "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3c/Banco_do_Brasil_logo.svg/240px-Banco_do_Brasil_logo.svg.png",
+    "authorization_server_url": "http://localhost:9000/bb/authorize",
+    "token_endpoint": "http://localhost:9000/bb/token",
+    "accounts_endpoint": "http://localhost:9000/bb/accounts",
+    "is_sandbox": true,
+    "is_active": true
+  },
+  {
+    "external_id": "sandbox-bradesco-001",
+    "name": "Bradesco (Sandbox)",
+    "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/9/94/Bradesco_logo.svg/240px-Bradesco_logo.svg.png",
+    "authorization_server_url": "http://localhost:9000/bradesco/authorize",
+    "token_endpoint": "http://localhost:9000/bradesco/token",
+    "accounts_endpoint": "http://localhost:9000/bradesco/accounts",
+    "is_sandbox": true,
+    "is_active": true
+  },
+  {
+    "external_id": "sandbox-itau-001",
+    "name": "Itaú Unibanco (Sandbox)",
+    "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8a/Itau_Unibanco_logo.svg/240px-Itau_Unibanco_logo.svg.png",
+    "authorization_server_url": "http://localhost:9000/itau/authorize",
+    "token_endpoint": "http://localhost:9000/itau/token",
+    "accounts_endpoint": "http://localhost:9000/itau/accounts",
+    "is_sandbox": true,
+    "is_active": true
+  },
+  {
+    "external_id": "sandbox-nubank-001",
+    "name": "Nubank (Sandbox)",
+    "logo_url": "https://upload.wikimedia.org/wikipedia/commons/thumb/b/bf/Nubank_logo_2021.svg/240px-Nubank_logo_2021.svg.png",
+    "authorization_server_url": "http://localhost:9000/nubank/authorize",
+    "token_endpoint": "http://localhost:9000/nubank/token",
+    "accounts_endpoint": "http://localhost:9000/nubank/accounts",
+    "is_sandbox": true,
+    "is_active": true
+  }
+]
