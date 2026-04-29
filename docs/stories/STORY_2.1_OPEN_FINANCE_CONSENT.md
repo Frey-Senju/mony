@@ -450,3 +450,87 @@ E2E (TEST-002) e ARCH-001 podem ser deferidos para stories subsequentes com tick
 
 **Não autorizo** merge para `main` enquanto SEC-001 (plaintext fallback) não for endereçado — é um foot-gun de segurança que mascararia um misconfig catastrófico em produção.
 
+---
+
+## QA Results — Final Gate (Re-review)
+
+**Reviewer:** @qa (Quinn — Guardian)
+**Re-review Date:** 2026-04-24
+**Commit Reviewed:** `4813eb4` (fix-blockers on top of `80d0cba`)
+**Branch:** `feature/2.1-open-finance-consent`
+**Verdict:** **APPROVED** (PASS)
+
+### Blocker Resolution Verification
+
+| ID | Severity | Status | Verification Evidence |
+|----|----------|--------|------------------------|
+| SEC-001 | HIGH | ✅ RESOLVED | `apps/api/routes/open_finance.py:300-306` — plaintext fallback removido. `encrypt_token()` é chamado dentro de try/except `RuntimeError`; em ausência de `ENCRYPTION_KEY` o consent é rollbacked e HTTPException(500) é levantado ("Token encryption unavailable — ENCRYPTION_KEY not configured"). Adicional: `utils/encryption.py:14-18` — `_get_fernet()` levanta RuntimeError explicita se `ENCRYPTION_KEY` ausente. Fail-fast end-to-end confirmado. |
+| TEST-001 | HIGH | ✅ RESOLVED | `apps/api/tests/test_open_finance.py:266-339` — `test_callback_success` implementado. Happy-path com `httpx.AsyncClient` mockado (token exchange + accounts fetch), `encrypt_token` mockado para evitar dependência de ENCRYPTION_KEY em CI. Asserts críticos: `consent.status == AUTHORIZED`, `linked_account` persistido com `external_account_id == "acc-001"`, `consent_id` correto, `institution_id` correto. Cobertura do branch principal do callback agora presente. |
+| DOC-001 | MEDIUM | ✅ RESOLVED | `apps/api/.env.example:5-8` — seção "Open Finance" adicionada com as 3 variáveis: `ENCRYPTION_KEY` (com comando de geração Fernet inline), `OPEN_FINANCE_CALLBACK_URL` (default localhost:8000), `FRONTEND_URL` (default localhost:3000). DoD linha 266 satisfeito. |
+| TEST-002 | HIGH | ✅ DEFERRED (documented) | `NEXT_STEPS.md:8-12` — registrado como tech debt explícito sob "Tech Debt — Story 2.1 (Open Finance)". Justificativa aceita: requer mock bank server (infra fora do escopo da 2.1). Aceitável como deferred para Story 2.1b ou preparação da 2.2. |
+| TEST-003 | LOW | ⚠️ NOT ADDRESSED | `test_callback_invalid_state` continua apenas validando status code (302/307). Baixa prioridade — não bloqueia. Recomendado strengthen em próxima iteração de testes. |
+| ARCH-001 | MEDIUM | ⚠️ OPEN | Legado `openfinance_connections` vs `of_*` tables ainda coexistem. Requer decisão @architect em DECISIONS.md. Não bloqueia 2.1 — carrega para backlog 2.2. |
+| CODE-001 | LOW | ⚠️ NOT ADDRESSED | `__init__.py` re-exports. Não bloqueia. |
+
+### AC Traceability (Post-Fix)
+
+| AC | Status | Notes |
+|----|--------|-------|
+| AC-1 | ✅ PASS | Sem regressão — listagem e filtro mantidos |
+| AC-2 | ✅ PASS | Sem regressão — initiate/state/TTL intactos |
+| AC-3 | ✅ PASS **(promovido de CONCERNS)** | Fail-fast em ENCRYPTION_KEY ausente; test_callback_success cobre o happy path. Tokens nunca mais persistidos em plaintext. |
+| AC-4 | ✅ PASS | Sem regressão |
+| AC-5 | ✅ PASS | Sem regressão |
+| AC-6 | ⚠️ ACCEPTED AS-IS | Desvio intencional 410 Gone → redirect com `?error=consent_expired` mantido. UX superior. Recomendação: atualizar a spec do AC-6 na próxima revisão do Epic 2 — documentado mas não bloqueante. |
+| AC-7 | ✅ PASS | Sem regressão |
+
+### 7 Quality Checks (Final)
+
+| # | Check | Status | Notes |
+|---|-------|--------|-------|
+| 1 | Code review | ✅ PASS | Patterns preservados, fail-fast correto |
+| 2 | Unit tests | ✅ PASS | 14/14 funções cobertas (13 iniciais + test_callback_success), happy path agora coberto |
+| 3 | Acceptance criteria | ✅ PASS | 6/7 PASS, 1/7 AC-6 com desvio documentado e aceito |
+| 4 | No regressions | ✅ PASS | Imports, rotas e schemas existentes intactos |
+| 5 | Performance | ✅ PASS | Sem mudanças (httpx timeout 10s mantido) |
+| 6 | Security | ✅ PASS **(promovido de CONCERNS)** | Plaintext fallback eliminado; `.env.example` documenta 3 env vars; CSRF + IDOR + rate limit + timeout OK |
+| 7 | Documentation | ✅ PASS **(promovido de CONCERNS)** | `.env.example` atualizado; tech debt registrado em NEXT_STEPS.md |
+
+### Regression Check
+
+- ✅ Rotas legadas preservadas
+- ✅ Testes existentes não modificados (apenas `test_callback_success` adicionado)
+- ✅ Schema DB não alterado pelo fix
+- ✅ Imports em `open_finance.py` consistentes (`HTTPException` já disponível; nenhuma dependência nova)
+- ✅ Contrato HTTP preservado (fail-fast em 500 para misconfig é comportamento correto — não afeta consumidores legítimos)
+
+### Final Gate Record
+
+```yaml
+storyId: 2.1
+verdict: PASS
+iterations: 2
+commit_reviewed: 4813eb4
+blockers_resolved:
+  - SEC-001 (HIGH/security): plaintext fallback eliminated; fail-fast via HTTPException(500)
+  - TEST-001 (HIGH/tests): test_callback_success implemented with httpx + encrypt_token mocks
+  - DOC-001 (MEDIUM/docs): .env.example updated with ENCRYPTION_KEY, OPEN_FINANCE_CALLBACK_URL, FRONTEND_URL
+deferred_to_backlog:
+  - TEST-002 (HIGH/tests → tech-debt): E2E Playwright for Open Finance — requires mock bank server
+  - ARCH-001 (MEDIUM/code → Story 2.2): consolidate openfinance_connections vs of_* tables
+  - TEST-003 (LOW/tests): strengthen invalid_state assertion
+  - CODE-001 (LOW/code): __init__.py re-exports
+remaining_risk: LOW
+production_ready: sandbox-yes, prod-requires-real-certs (out of scope MVP)
+```
+
+### Decision
+
+**APPROVED for merge.** Os 3 bloqueadores HIGH/MEDIUM foram correta e cirurgicamente resolvidos no commit `4813eb4`. O fail-fast em `encrypt_token` é defensivo e correto (rollback explícito antes do raise, mensagem de erro clara para operador). O novo teste happy-path cobre o branch mais crítico do callback (token exchange + accounts fetch + linked_account persist). `.env.example` agora satisfaz a DoD linha 266.
+
+Os findings remanescentes (TEST-002, ARCH-001, TEST-003, CODE-001) são **non-blocking** e corretamente classificados como tech debt / backlog de stories futuras.
+
+**Próximo passo recomendado:** @devops pode pushar o branch e abrir PR para `main`. Sem restrições de merge pelo QA.
+
+— Quinn, guardião da qualidade 🛡️
+

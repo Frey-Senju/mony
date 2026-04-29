@@ -124,4 +124,4 @@ jobs:
 
       - run: npm run build
         env:
-          NEXT_PUBLIC_API_URL: https://api-mony.onrender.com
+          NEXT_PUBLIC_API_URL: https://mony-api.onrender.com
