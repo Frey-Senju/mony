@@ -28,7 +28,7 @@ Arquitetura: `CLI First → Observability Second → UI Third`
 | Estado | Zustand | — | — |
 | Charts | Recharts | 3.8+ | — |
 
-URLs: Vercel `https://web-flame-alpha-37.vercel.app` | Render `https://api-mony.onrender.com`
+URLs: Vercel `https://web-flame-alpha-37.vercel.app` | Render `https://mony-api.onrender.com`
 GitHub: `https://github.com/Frey-Senju/mony`
 
 ---

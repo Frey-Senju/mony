@@ -8,26 +8,22 @@
     "obsidian": {
       "command": "obsidian-mcp",
       "env": {
-        "OBSIDIAN_VAULT_PATH": "/c/Users/cristofer.schwartzer/Desktop/Obsidian",
+        "OBSIDIAN_VAULT_PATH": "/c/Users/Crist/Desktop/Mony",
         "OBSIDIAN_API_KEY": "d8edac1e2822cb0e6afc8e9883c49a6116c4e1572bf10815af83966f3ae20049"
       }
     }
   },
   "hooks": {
-    "PostCompact": [
+    "UserPromptSubmit": [
       {
-        "matcher": "manual",
         "hooks": [
           {
             "type": "command",
-            "command": "jq -r '.summary // empty' | { read -r summary; if [ -n \"$summary\" ]; then echo \"## Session $(date +%Y-%m-%d\\ %H:%M:%S)\\n\\n$summary\" >> /c/Users/cristofer.schwartzer/Desktop/Obsidian/Mony/SESSIONS.md; fi; }",
-            "timeout": 10,
-            "statusMessage": "Salvando sumário em Obsidian..."
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/synapse-wrapper.cjs\"",
+            "timeout": 10
           }
         ]
-      }
-    ],
-    "UserPromptSubmit": [
+      },
       {
         "matcher": "UserPromptSubmit",
         "hooks": [
@@ -35,6 +31,30 @@
             "type": "command",
             "command": "echo '{\"systemMessage\": \"📚 Consultando Obsidian vault...\"}'",
             "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/precompact-wrapper.cjs\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "matcher": "manual",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.summary // empty' | { read -r summary; if [ -n \"$summary\" ]; then echo \"## Session $(date +%Y-%m-%d\\ %H:%M:%S)\\n\\n$summary\" >> /c/Users/Crist/Desktop/Mony/SESSIONS.md; fi; }",
+            "timeout": 10,
+            "statusMessage": "Salvando sumário em Obsidian..."
           }
         ]
       }

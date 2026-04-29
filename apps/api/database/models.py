@@ -553,6 +553,116 @@ class OpenFinanceConnection(Base):
         return f"<OpenFinanceConnection {self.institution_name} ({self.status.value})>"
 
 
+class OFInstitution(Base):
+    """
+    Open Finance sandbox institutions available for account linking.
+    Seeded at startup from data/sandbox_institutions.json.
+    """
+
+    __tablename__ = "of_institutions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    external_id = Column(String(50), unique=True, nullable=False)
+    name = Column(String(200), nullable=False)
+    logo_url = Column(Text)
+    authorization_server_url = Column(Text, nullable=False)
+    token_endpoint = Column(Text, nullable=False)
+    accounts_endpoint = Column(Text, nullable=False)
+    is_sandbox = Column(Boolean, default=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Relationships
+    consents = relationship("OFConsent", back_populates="institution")
+    linked_accounts = relationship("OFLinkedAccount", back_populates="institution")
+
+    def __repr__(self):
+        return f"<OFInstitution {self.name}>"
+
+
+class ConsentStatus(str, Enum):
+    """Status of an Open Finance consent request."""
+
+    PENDING = "PENDING"
+    AUTHORIZED = "AUTHORIZED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+    REVOKED = "REVOKED"
+
+
+class OFConsent(Base):
+    """
+    Open Finance consent request tracking.
+    Represents one OAuth2 authorization flow attempt.
+    """
+
+    __tablename__ = "of_consents"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    institution_id = Column(PG_UUID(as_uuid=True), ForeignKey("of_institutions.id"), nullable=False)
+    external_consent_id = Column(String(200))
+    status = Column(SQLEnum(ConsentStatus), default=ConsentStatus.PENDING, nullable=False)
+    permissions = Column(JSON, default=list)
+    state_token = Column(String(64), nullable=False)
+    authorization_url = Column(Text, nullable=False)
+    access_token_encrypted = Column(Text)
+    refresh_token_encrypted = Column(Text)
+    token_expires_at = Column(DateTime)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_of_consents_user_id", "user_id"),
+        Index("idx_of_consents_state_token", "state_token"),
+        Index("idx_of_consents_status", "status"),
+    )
+
+    # Relationships
+    user = relationship("User")
+    institution = relationship("OFInstitution", back_populates="consents")
+    linked_account = relationship("OFLinkedAccount", back_populates="consent", uselist=False)
+
+    def __repr__(self):
+        return f"<OFConsent {self.status.value}>"
+
+
+class OFLinkedAccount(Base):
+    """
+    Bank account linked via Open Finance consent flow.
+    Created after a consent is authorized and accounts fetched.
+    """
+
+    __tablename__ = "of_linked_accounts"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    consent_id = Column(PG_UUID(as_uuid=True), ForeignKey("of_consents.id"), nullable=False)
+    institution_id = Column(PG_UUID(as_uuid=True), ForeignKey("of_institutions.id"), nullable=False)
+    external_account_id = Column(String(200), nullable=False)
+    account_type = Column(String(50))
+    account_number_last4 = Column(String(4))
+    owner_name = Column(String(200))
+    currency = Column(String(3), default="BRL")
+    is_active = Column(Boolean, default=True)
+    last_sync_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_of_linked_accounts_user_id", "user_id"),
+        UniqueConstraint("user_id", "institution_id", "external_account_id", name="uq_of_linked_accounts"),
+    )
+
+    # Relationships
+    user = relationship("User")
+    consent = relationship("OFConsent", back_populates="linked_account")
+    institution = relationship("OFInstitution", back_populates="linked_accounts")
+
+    def __repr__(self):
+        return f"<OFLinkedAccount {self.account_number_last4} ({self.account_type})>"
+
+
 class SubscriptionHistory(Base):
     """Track subscription plan changes for billing and analytics."""
 

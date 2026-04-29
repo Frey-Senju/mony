@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+*.db
+.git/
+.gitignore
+README.md
+build.sh
+run_test_server.py
+seed_test_data.py

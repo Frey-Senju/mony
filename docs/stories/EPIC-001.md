@@ -1,8 +1,9 @@
 # EPIC-001: MVP Mony - Money Management Foundation
 
-**Status**: Draft  
+**Status**: ✅ DONE  
 **Priority**: P0  
 **Created**: 2026-04-15  
+**Completed**: 2026-04-24  
 **Assigned**: @pm (Morgan)
 
 ## Overview
@@ -24,12 +25,12 @@ Build the foundational MVP for Mony - a money management application allowing us
 
 ## Acceptance Criteria
 
-- [ ] Users can register and login securely
-- [ ] Users can create transactions (income/expense)
-- [ ] Dashboard shows current balance and recent transactions
-- [ ] Basic reports available (monthly summary, category breakdown)
-- [ ] API and frontend fully functional
-- [ ] Deployed to Vercel (frontend) and Render (backend)
+- [x] Users can register and login securely
+- [x] Users can create transactions (income/expense)
+- [x] Dashboard shows current balance and recent transactions
+- [x] Basic reports available (monthly summary, category breakdown)
+- [x] API and frontend fully functional
+- [x] Deployed to Vercel (frontend) and Render (backend)
 
 ## Technical Requirements
 
@@ -41,13 +42,13 @@ Build the foundational MVP for Mony - a money management application allowing us
 
 ## Stories
 
-- [ ] Story 1.1: Database Schema Design
-- [ ] Story 1.2: User Authentication (Backend)
-- [ ] Story 1.3: User Authentication (Frontend)
-- [ ] Story 1.4: Transaction API Endpoints
-- [ ] Story 1.5: Dashboard UI
-- [ ] Story 1.6: Reports Feature
-- [ ] Story 1.7: Deployment Configuration
+- [x] Story 1.1: Database Schema Design
+- [x] Story 1.2: User Authentication (Backend)
+- [x] Story 1.3: User Authentication (Frontend)
+- [x] Story 1.4: Transaction API Endpoints
+- [x] Story 1.5: Dashboard UI
+- [x] Story 1.6: Reports Feature
+- [x] Story 1.7: Deployment Configuration
 
 ## Dependencies
 
@@ -62,4 +63,4 @@ None (greenfield project)
 
 ---
 
-**Next Step**: @sm creates Story 1.1 from this epic
+**Completed**: Todas as 7 stories implementadas, CI verde, deploy ativo. Próximo: EPIC-002.
