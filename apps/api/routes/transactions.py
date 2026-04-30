@@ -96,6 +96,8 @@ class TransactionResponse(BaseModel):
     is_recurring: bool
     recurring_pattern: Optional[str]
     is_reconciled: bool
+    source: str = "manual"
+    external_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
