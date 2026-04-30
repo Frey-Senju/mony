@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { Trash2, Edit2, Check, X, TrendingUp, TrendingDown } from 'lucide-react'
+import { Trash2, Edit2, Check, X, TrendingUp, TrendingDown, Landmark } from 'lucide-react'
 
 interface Transaction {
   id: string
@@ -13,6 +13,8 @@ interface Transaction {
   is_reconciled: boolean
   currency: string
   category_id?: string
+  source?: 'manual' | 'open_finance'
+  external_id?: string | null
 }
 
 interface TransactionListProps {
@@ -194,9 +196,21 @@ export function TransactionList({
                 </td>
                 <td className="px-4 py-3">
                   <div>
-                    <p className="font-medium text-slate-900 dark:text-slate-100">
-                      {transaction.description}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium text-slate-900 dark:text-slate-100">
+                        {transaction.description}
+                      </p>
+                      {transaction.source === 'open_finance' && (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                          data-testid="open-finance-badge"
+                          title="Importada via Open Finance"
+                        >
+                          <Landmark className="w-3 h-3" />
+                          Open Finance
+                        </span>
+                      )}
+                    </div>
                     {transaction.merchant_name && (
                       <p className="text-xs text-slate-500 dark:text-slate-400">
                         {transaction.merchant_name}

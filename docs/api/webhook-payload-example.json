@@ -1,0 +1,24 @@
+{
+  "_comment": "Example payload sent by an Open Finance partner bank to POST /open-finance/webhook. The signature must be sent in the X-Webhook-Signature header as 'sha256=<hex>'. The X-Consent-Id header carries the Mony-side consent UUID (from /open-finance/consent/initiate).",
+  "accountId": "acc-001",
+  "transactions": [
+    {
+      "transactionId": "tx-9f1b3c4d-0001",
+      "amount": 47.5,
+      "currency": "BRL",
+      "type": "debit",
+      "transactionDate": "2026-04-29T10:32:00Z",
+      "description": "Coffee at Starbucks",
+      "merchantName": "Starbucks Coffee"
+    },
+    {
+      "transactionId": "tx-9f1b3c4d-0002",
+      "amount": 2500.0,
+      "currency": "BRL",
+      "type": "credit",
+      "transactionDate": "2026-04-28T08:00:00Z",
+      "description": "Salary deposit",
+      "merchantName": "Acme Inc."
+    }
+  ]
+}
