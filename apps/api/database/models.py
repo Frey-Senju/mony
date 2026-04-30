@@ -57,6 +57,30 @@ class TransactionType(str, Enum):
     REFUND = "refund"
 
 
+class TransactionSource(str, Enum):
+    """Origin of a transaction record."""
+
+    MANUAL = "manual"
+    OPEN_FINANCE = "open_finance"
+
+
+class LinkedAccountSyncStatus(str, Enum):
+    """Sync status of an Open Finance linked account."""
+
+    IDLE = "idle"
+    SYNCING = "syncing"
+    ERROR = "error"
+
+
+class SyncJobStatus(str, Enum):
+    """Status of a transaction sync job."""
+
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class LimitType(str, Enum):
     """Spending limit types."""
 
@@ -91,16 +115,6 @@ class UserPlan(str, Enum):
     PREMIUM = "premium"  # Enterprise
 
 
-class OpenFinanceStatus(str, Enum):
-    """Status of Open Finance integration."""
-
-    NOT_CONNECTED = "not_connected"
-    CONNECTING = "connecting"
-    CONNECTED = "connected"
-    FAILED = "failed"
-    EXPIRED = "expired"
-
-
 # ============================================================================
 # Models
 # ============================================================================
@@ -124,13 +138,6 @@ class User(Base):
     plan = Column(SQLEnum(UserPlan), default=UserPlan.BASIC)
     plan_started_at = Column(DateTime, default=datetime.utcnow)
     plan_expires_at = Column(DateTime)  # NULL = no expiration
-
-    # Open Finance Integration (Pierre Finance feature)
-    openfinance_status = Column(SQLEnum(OpenFinanceStatus), default=OpenFinanceStatus.NOT_CONNECTED)
-    openfinance_token = Column(String(500))  # Encrypted OAuth token
-    openfinance_institutions = Column(Float, default=0)  # Count of connected institutions
-    openfinance_last_sync = Column(DateTime)
-    openfinance_next_sync = Column(DateTime)
 
     # Security
     last_login_at = Column(DateTime)
@@ -158,7 +165,6 @@ class User(Base):
     receipts = relationship("Receipt", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("Notification", back_populates="user", cascade="all, delete-orphan")
     audit_log = relationship("AuditLog", back_populates="user", cascade="all, delete-orphan")
-    openfinance_connections = relationship("OpenFinanceConnection", back_populates="user", cascade="all, delete-orphan")
     subscription_history = relationship("SubscriptionHistory", back_populates="user", cascade="all, delete-orphan")
 
     @hybrid_property
@@ -264,6 +270,12 @@ class Transaction(Base):
     is_recurring = Column(Boolean, default=False)
     recurring_pattern = Column(String(50))
     is_reconciled = Column(Boolean, default=False)
+
+    # Origin tracking — `manual` for user-entered, `open_finance` for synced via OF API.
+    # external_id is the bank-side transaction ID; populated only when source != manual.
+    source = Column(String(20), nullable=False, default=TransactionSource.MANUAL.value)
+    external_id = Column(String(200), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -271,11 +283,15 @@ class Transaction(Base):
     deleted_at = Column(DateTime, nullable=True)
 
     # Constraints
+    # Note: The dedup uniqueness on (user_id, external_id, source) WHERE external_id IS NOT NULL
+    # is enforced via a partial unique index created in the Alembic migration — partial indexes
+    # cannot be expressed via SQLAlchemy's UniqueConstraint declaratively in a portable way.
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_transaction_amount_positive"),
         Index("idx_transactions_user_date", "user_id", "transaction_date"),
         Index("idx_transactions_account_date", "account_id", "transaction_date"),
         Index("idx_transactions_type", "type"),
+        Index("idx_transactions_source", "source"),
     )
 
     # Relationships
@@ -498,61 +514,6 @@ class AuditLog(Base):
         return f"<AuditLog {self.entity_type} {self.action}>"
 
 
-class OpenFinanceConnection(Base):
-    """
-    Open Finance integration with Brazilian banks (like Pierre Finance).
-
-    Stores connections to institutions via Central Bank Open Finance API.
-    Supports automatic transaction synchronization.
-    """
-
-    __tablename__ = "openfinance_connections"
-
-    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
-    # Institution details
-    institution_code = Column(String(50), nullable=False)  # ISPB code (e.g., "00000000")
-    institution_name = Column(String(255), nullable=False)  # e.g., "Itaú Unibanco"
-
-    # Authentication
-    ofbank_id = Column(String(100))  # Open Finance user ID at institution
-    consent_id = Column(String(100))  # Consent ID for data access
-
-    # Status tracking
-    status = Column(SQLEnum(OpenFinanceStatus), default=OpenFinanceStatus.CONNECTING)
-    connected_at = Column(DateTime)
-    last_synced_at = Column(DateTime)
-    next_sync_at = Column(DateTime)
-
-    # Data sync counters
-    synced_accounts = Column(Float, default=0)
-    synced_transactions = Column(Float, default=0)
-
-    # Error tracking
-    last_error = Column(Text)
-    last_error_at = Column(DateTime)
-    error_count = Column(Float, default=0)
-
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
-    deleted_at = Column(DateTime, nullable=True)
-
-    # Indexes
-    __table_args__ = (
-        Index("idx_ofconnections_user_status", "user_id", "status"),
-        UniqueConstraint("user_id", "institution_code", name="uq_ofconnections_user_institution"),
-    )
-
-    # Relationships
-    user = relationship("User", back_populates="openfinance_connections")
-
-    def __repr__(self):
-        return f"<OpenFinanceConnection {self.institution_name} ({self.status.value})>"
-
-
 class OFInstitution(Base):
     """
     Open Finance sandbox institutions available for account linking.
@@ -647,6 +608,14 @@ class OFLinkedAccount(Base):
     currency = Column(String(3), default="BRL")
     is_active = Column(Boolean, default=True)
     last_sync_at = Column(DateTime)
+
+    # Sync state tracking — added in Story 2.2
+    sync_status = Column(
+        String(20), nullable=False, default=LinkedAccountSyncStatus.IDLE.value
+    )
+    last_sync_error = Column(Text, nullable=True)
+    last_sync_attempt_at = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
@@ -661,6 +630,47 @@ class OFLinkedAccount(Base):
 
     def __repr__(self):
         return f"<OFLinkedAccount {self.account_number_last4} ({self.account_type})>"
+
+
+class OFSyncJob(Base):
+    """
+    Tracks an Open Finance transaction sync job (manual or scheduled).
+
+    A single sync_id may fan out to multiple linked accounts; this table records
+    the parent job. Per-account results are aggregated in `accounts_processed`,
+    `transactions_inserted`, `transactions_skipped`, etc.
+    """
+
+    __tablename__ = "of_sync_jobs"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    linked_account_id = Column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("of_linked_accounts.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    status = Column(String(20), nullable=False, default=SyncJobStatus.QUEUED.value)
+    trigger = Column(String(20), nullable=False, default="manual")  # manual | scheduled | webhook
+
+    accounts_queued = Column(Integer, default=0)
+    accounts_processed = Column(Integer, default=0)
+    transactions_inserted = Column(Integer, default=0)
+    transactions_skipped = Column(Integer, default=0)
+    error_message = Column(Text)
+
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_of_sync_jobs_user_id", "user_id"),
+        Index("idx_of_sync_jobs_status", "status"),
+    )
+
+    def __repr__(self):
+        return f"<OFSyncJob {self.id} {self.status}>"
 
 
 class SubscriptionHistory(Base):
