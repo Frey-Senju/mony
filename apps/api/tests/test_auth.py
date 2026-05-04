@@ -5,12 +5,13 @@ Tests for register, login, refresh, logout, 2fa/setup, password-reset.
 """
 
 import pytest
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from main import app
-from database.base import Base, SessionLocal
+from database.base import Base, SessionLocal, get_db
 from database.models import User
 from utils.auth import hash_password, verify_totp_code, generate_totp_secret
 
@@ -37,10 +38,11 @@ def test_db():
         finally:
             db.close()
 
-    app.dependency_overrides[SessionLocal] = override_get_db
+    app.dependency_overrides[get_db] = override_get_db
 
     yield engine
 
+    app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(bind=engine)
 
 
@@ -52,8 +54,9 @@ def client(test_db):
 
 @pytest.fixture
 def test_user(test_db):
-    """Create a test user."""
-    db = SessionLocal()
+    """Create a test user in the test database."""
+    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=test_db)
+    db = TestingSession()
     user = User(
         email="test@example.com",
         password_hash=hash_password("SecurePass123!"),
@@ -63,6 +66,7 @@ def test_user(test_db):
     db.add(user)
     db.commit()
     db.refresh(user)
+    db.close()
     return user
 
 

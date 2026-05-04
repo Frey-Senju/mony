@@ -19,13 +19,14 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 })
 
-// Mock localStorage
+// Mock localStorage with actual key-value storage behaviour
+let _storage = {}
 const localStorageMock = {
-  getItem: jest.fn(),
-  setItem: jest.fn(),
-  removeItem: jest.fn(),
-  clear: jest.fn(),
-};
+  getItem: jest.fn((key) => _storage[key] ?? null),
+  setItem: jest.fn((key, value) => { _storage[key] = String(value) }),
+  removeItem: jest.fn((key) => { delete _storage[key] }),
+  clear: jest.fn(() => { _storage = {} }),
+}
 
 Object.defineProperty(window, 'localStorage', {
   value: localStorageMock,
