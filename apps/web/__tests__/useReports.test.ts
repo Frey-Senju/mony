@@ -23,15 +23,12 @@ const originalFetch = global.fetch
 
 beforeEach(() => {
   // Provide a baseline tokens entry so getAuthHeaders returns non-empty.
-  ;(window.localStorage.getItem as jest.Mock).mockImplementation((key: string) =>
-    key === 'mony_tokens'
-      ? JSON.stringify({ access_token: 'fake-jwt', refresh_token: 'r' })
-      : null
-  )
+  localStorage.setItem('mony_tokens', JSON.stringify({ access_token: 'fake-jwt', refresh_token: 'r' }))
 })
 
 afterEach(() => {
   global.fetch = originalFetch
+  localStorage.clear()
   jest.clearAllMocks()
 })
 
@@ -198,7 +195,7 @@ describe('useReports — U3: error', () => {
   })
 
   test('no-token scenario is a no-op (no fetch call, no error)', async () => {
-    ;(window.localStorage.getItem as jest.Mock).mockReturnValue(null)
+    localStorage.removeItem('mony_tokens')
     global.fetch = jest.fn() as any
 
     const { result } = renderHook(() => useReports(undefined))

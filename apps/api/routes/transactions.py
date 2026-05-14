@@ -174,11 +174,16 @@ async def create_transaction(
 
     # Check plan limit (BASIC: 100 tx/month)
     if user.plan == "BASIC":
+        today = date.today()
+        month_start = date(today.year, today.month, 1)
+        next_month = today.month % 12 + 1
+        next_year = today.year + (1 if today.month == 12 else 0)
+        month_end = date(next_year, next_month, 1)
         current_month_tx = db.query(Transaction).filter(
             and_(
                 Transaction.user_id == UUID(user_id),
-                Transaction.transaction_date.year == datetime.now().year,
-                Transaction.transaction_date.month == datetime.now().month,
+                Transaction.transaction_date >= month_start,
+                Transaction.transaction_date < month_end,
             )
         ).count()
 
