@@ -14,20 +14,11 @@ from sqlalchemy import and_, desc, or_
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
-from database.base import SessionLocal
+from database.base import get_db
 from database.models import Transaction, Account, TransactionType, User
 from utils.auth import get_current_user_from_header
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
-
-
-def get_db():
-    """Dependency injection for database session."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ============ Request/Response Models ============

@@ -104,7 +104,7 @@ export const TwoFASetup = ({ onSuccess, onCancel }: TwoFASetupProps) => {
       {/* Secret (fallback) */}
       <div>
         <label className="block text-sm font-medium text-gray-700">
-          Can't scan? Enter this code manually:
+          Can&apos;t scan? Enter this code manually:
         </label>
         <div className="mt-2 p-3 bg-gray-100 rounded-lg font-mono text-center text-gray-800 break-all">
           {secret}

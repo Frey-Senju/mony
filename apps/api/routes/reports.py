@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
-from database.base import SessionLocal
+from database.base import get_db
 from database.models import (
     Category,
     Transaction,
@@ -32,16 +32,6 @@ from utils.auth import get_current_user_from_header
 router = APIRouter(prefix="/reports", tags=["reports"])
 
 
-# ============ DB Session Dependency ============
-
-
-def get_db():
-    """Dependency injection for database session (mirror of transactions.py)."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ============ Helpers ============

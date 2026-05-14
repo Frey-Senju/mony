@@ -245,7 +245,7 @@ def test_2fa_setup_unauthorized(client):
     """Test 2FA setup without authentication."""
     response = client.post("/auth/2fa/setup")
 
-    assert response.status_code == 403  # Forbidden (missing auth)
+    assert response.status_code == 401  # Unauthorized (missing auth)
 
 
 def test_totp_code_verification():

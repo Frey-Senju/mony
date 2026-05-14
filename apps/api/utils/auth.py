@@ -203,8 +203,7 @@ def generate_totp_secret(user_email: str) -> str:
         Base32-encoded secret (32 chars)
     """
     import pyotp
-    totp = pyotp.TOTP()
-    return totp.secret
+    return pyotp.random_base32()
 
 
 def generate_totp_qr_code(user_email: str, secret: str) -> str:
