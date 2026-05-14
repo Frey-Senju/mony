@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 
 from database.base import get_db
-from database.models import Transaction, Account, TransactionType, User
+from database.models import Transaction, Account, TransactionType, User, UserPlan
 from utils.auth import get_current_user_from_header
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -173,7 +173,7 @@ async def create_transaction(
         )
 
     # Check plan limit (BASIC: 100 tx/month)
-    if user.plan == "BASIC":
+    if user.plan == UserPlan.BASIC:
         today = date.today()
         month_start = date(today.year, today.month, 1)
         next_month = today.month % 12 + 1

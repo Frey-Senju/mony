@@ -365,11 +365,13 @@ describe('TwoFASetup', () => {
     } as Response)
   })
 
-  it('renders initial setup screen', () => {
+  it('renders initial setup screen', async () => {
     render(<TwoFASetup />)
 
     expect(screen.getByText(/enable two-factor authentication/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /get started/i })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /get started/i })).toBeInTheDocument()
+    })
   })
 
   it('requests 2FA setup on button click', async () => {
@@ -384,7 +386,9 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
@@ -405,7 +409,9 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
@@ -426,7 +432,9 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
@@ -454,7 +462,9 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
@@ -468,6 +478,7 @@ describe('TwoFASetup', () => {
 
 describe('Token Storage', () => {
   beforeEach(() => {
+    jest.resetAllMocks()
     localStorage.clear()
   })
 
