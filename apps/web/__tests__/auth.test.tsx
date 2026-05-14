@@ -438,15 +438,19 @@ describe('TwoFASetup', () => {
 
     fireEvent.click(getStartedButton)
 
-    await waitFor(() => {
-      const totpInput = screen.getByPlaceholderText('000000') as HTMLInputElement
-      expect(totpInput).toBeInTheDocument()
+    const totpInput = await waitFor(() => screen.getByPlaceholderText('000000') as HTMLInputElement)
+    expect(totpInput).toBeInTheDocument()
 
-      // Try invalid input
-      fireEvent.click(screen.getByRole('button', { name: /enable 2fa/i }))
+    // Button disabled with empty input
+    expect(screen.getByRole('button', { name: /enable 2fa/i })).toBeDisabled()
 
-      expect(screen.getByText(/invalid code format/i)).toBeInTheDocument()
-    })
+    // Button disabled with partial input (3 digits)
+    fireEvent.change(totpInput, { target: { value: '123' } })
+    expect(screen.getByRole('button', { name: /enable 2fa/i })).toBeDisabled()
+
+    // Button enabled with valid 6-digit input
+    fireEvent.change(totpInput, { target: { value: '123456' } })
+    expect(screen.getByRole('button', { name: /enable 2fa/i })).not.toBeDisabled()
   })
 
   it('shows backup codes', async () => {
