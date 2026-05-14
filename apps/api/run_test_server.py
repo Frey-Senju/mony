@@ -13,8 +13,12 @@ api_dir = Path(__file__).parent
 os.chdir(api_dir)
 sys.path.insert(0, str(api_dir))
 
-# Override DATABASE_URL to use SQLite
-os.environ["DATABASE_URL"] = "sqlite:///./mony_test.db"
+# Use DATABASE_URL from environment if set (e.g., PostgreSQL in CI).
+# Fall back to SQLite only for local dev without Docker.
+if "DATABASE_URL" not in os.environ:
+    os.environ["DATABASE_URL"] = "sqlite:///./mony_test.db"
+
+_db_url = os.environ["DATABASE_URL"]
 
 import uvicorn
 from sqlalchemy import create_engine
@@ -22,11 +26,9 @@ from sqlalchemy.orm import sessionmaker
 from database.base import Base, SessionLocal, get_db as original_get_db
 from main import app
 
-# Initialize database with SQLite
-engine = create_engine(
-    "sqlite:///./mony_test.db",
-    connect_args={"check_same_thread": False}
-)
+# Build engine — SQLite needs check_same_thread=False; PostgreSQL does not.
+_connect_args = {"check_same_thread": False} if _db_url.startswith("sqlite") else {}
+engine = create_engine(_db_url, connect_args=_connect_args)
 Base.metadata.drop_all(bind=engine)  # Clean slate for each test run
 Base.metadata.create_all(bind=engine)
 

@@ -77,6 +77,20 @@ jobs:
     name: E2E Tests (Playwright)
     runs-on: ubuntu-latest
     needs: [lint, test-api, test-web]
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: mony
+          POSTGRES_PASSWORD: mony
+          POSTGRES_DB: mony_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -99,6 +113,10 @@ jobs:
 
       - name: Start backend (SQLite test server)
         run: cd apps/api && python run_test_server.py &
+        env:
+          DATABASE_URL: postgresql://mony:mony@localhost:5432/mony_e2e
+          SECRET_KEY: ci-test-secret-key-32bytes-xxxxxxxx
+          ENCRYPTION_KEY: JE6X8Yd1jM7s4iOQyq0g9_-6n8AbJv1uS1Iqj1eIE_o=
 
       - name: Build frontend (test env)
         run: cd apps/web && npm run build
