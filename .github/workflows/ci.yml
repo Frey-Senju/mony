@@ -111,12 +111,29 @@ jobs:
 
       - run: npx playwright install --with-deps chromium
 
-      - name: Start backend (SQLite test server)
-        run: cd apps/api && python run_test_server.py &
+      - name: Start backend
+        run: |
+          cd apps/api
+          python run_test_server.py > /tmp/backend.log 2>&1 &
+          echo "Backend PID: $!"
         env:
           DATABASE_URL: postgresql://mony:mony@localhost:5432/mony_e2e
           SECRET_KEY: ci-test-secret-key-32bytes-xxxxxxxx
           ENCRYPTION_KEY: JE6X8Yd1jM7s4iOQyq0g9_-6n8AbJv1uS1Iqj1eIE_o=
+
+      - name: Wait for backend health
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Backend healthy after $i attempts"
+              exit 0
+            fi
+            echo "Attempt $i/30: not ready, sleeping 2s..."
+            sleep 2
+          done
+          echo "=== BACKEND STARTUP LOG ==="
+          cat /tmp/backend.log || echo "(no log)"
+          exit 1
 
       - name: Build frontend (test env)
         run: cd apps/web && npm run build
@@ -128,8 +145,8 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
 
-      - name: Wait for servers
-        run: npx wait-on http://localhost:8000/health http://localhost:3000 --timeout 60000
+      - name: Wait for frontend
+        run: npx wait-on http://localhost:3000 --timeout 60000
 
       - name: Run E2E tests
         run: cd apps/web && npm run test:e2e
