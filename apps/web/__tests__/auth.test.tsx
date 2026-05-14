@@ -24,7 +24,7 @@ global.fetch = jest.fn()
 
 describe('LoginForm', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
     localStorage.clear()
   })
 
@@ -153,7 +153,7 @@ describe('LoginForm', () => {
 
 describe('SignupForm', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
     localStorage.clear()
   })
 
@@ -282,7 +282,7 @@ describe('SignupForm', () => {
 
 describe('ForgotPasswordForm', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
   })
 
   it('renders forgot password form', () => {
@@ -350,7 +350,19 @@ describe('ForgotPasswordForm', () => {
 
 describe('TwoFASetup', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
+    // Provide a token so setup2FA can authenticate
+    localStorage.setItem('mony_tokens', JSON.stringify({
+      access_token: 'test-token',
+      refresh_token: 'test-refresh',
+      token_type: 'bearer',
+      expires_in: 900,
+    }))
+    // Mock the fetchUser call triggered by useAuth on mount
+    ;(fetch as jest.MockedFunction<typeof fetch>).mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({}),
+    } as Response)
   })
 
   it('renders initial setup screen', () => {

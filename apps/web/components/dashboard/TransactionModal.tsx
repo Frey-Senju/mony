@@ -29,7 +29,7 @@ interface Transaction {
   category_id?: string
 }
 
-interface TransactionModalProps {
+export interface TransactionModalProps {
   transaction?: Transaction
   isOpen: boolean
   onClose: () => void

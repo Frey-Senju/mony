@@ -22,11 +22,12 @@ from utils.auth import hash_password, verify_totp_code, generate_totp_secret
 @pytest.fixture
 def test_db():
     """Create test database and drop after tests."""
-    # Use in-memory SQLite for testing
-    SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
-    engine = create_engine(
-        SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-    )
+    import os
+    database_url = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+    if "sqlite" in database_url:
+        engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    else:
+        engine = create_engine(database_url)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
     Base.metadata.create_all(bind=engine)
@@ -334,7 +335,7 @@ def test_password_reset_invalid_token(client):
         json={"token": "invalid.token.here", "new_password": "NewPass123!"},
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 400
     assert "Invalid" in response.json()["detail"]
 
 

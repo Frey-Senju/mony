@@ -12,7 +12,7 @@ interface SummaryCard {
   subtitle?: string
 }
 
-interface SummaryCardsProps {
+export interface SummaryCardsProps {
   totalSpent: number
   totalIncome: number
   currentBalance: number

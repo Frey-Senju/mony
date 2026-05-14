@@ -47,7 +47,7 @@ export function useTransactions(token?: string) {
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-  const getAuthHeaders = useCallback(() => {
+  const getAuthHeaders = useCallback((): Record<string, string> => {
     const authToken = token || (typeof window !== 'undefined' ? localStorage.getItem('mony_tokens') : null)
     console.log('[DEBUG] useTransactions.getAuthHeaders - token param:', token ? 'PROVIDED' : 'NONE', ', authToken:', authToken ? 'EXISTS' : 'MISSING')
     if (!authToken) {

@@ -17,7 +17,7 @@ interface Transaction {
   external_id?: string | null
 }
 
-interface TransactionListProps {
+export interface TransactionListProps {
   transactions: Transaction[]
   selectedIds: Set<string>
   onSelectionChange: (ids: Set<string>) => void

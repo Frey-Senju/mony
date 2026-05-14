@@ -19,15 +19,16 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 })
 
-// Mock localStorage with actual key-value storage behaviour
+// Mock localStorage with actual key-value storage behaviour (plain functions so jest.resetAllMocks() doesn't wipe implementations)
 let _storage = {}
-const localStorageMock = {
-  getItem: jest.fn((key) => _storage[key] ?? null),
-  setItem: jest.fn((key, value) => { _storage[key] = String(value) }),
-  removeItem: jest.fn((key) => { delete _storage[key] }),
-  clear: jest.fn(() => { _storage = {} }),
-}
-
 Object.defineProperty(window, 'localStorage', {
-  value: localStorageMock,
+  value: {
+    getItem: (key) => Object.prototype.hasOwnProperty.call(_storage, key) ? _storage[key] : null,
+    setItem: (key, value) => { _storage[key] = String(value) },
+    removeItem: (key) => { delete _storage[key] },
+    clear: () => { _storage = {} },
+    get length() { return Object.keys(_storage).length },
+    key: (n) => Object.keys(_storage)[n] ?? null,
+  },
+  writable: true,
 })

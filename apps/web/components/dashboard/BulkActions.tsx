@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { Archive, Tag, Trash2, Download, X, ChevronDown } from 'lucide-react'
 
-interface BulkActionsProps {
+export interface BulkActionsProps {
   selectedCount: number
   onArchive: () => void
   onCategorize: () => void
