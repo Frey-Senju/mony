@@ -12,6 +12,7 @@ import {
   listLinkedAccounts,
   initiateConsent,
   unlinkAccount,
+  triggerSync,
   type Institution,
   type LinkedAccount,
 } from '@/lib/api/open-finance'
@@ -37,6 +38,7 @@ function ConnectionsContent() {
   const [connectingId, setConnectingId] = useState<string | null>(null)
   const [disconnectTarget, setDisconnectTarget] = useState<LinkedAccount | null>(null)
   const [disconnecting, setDisconnecting] = useState(false)
+  const [syncingAccountId, setSyncingAccountId] = useState<string | null>(null)
   const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null)
 
   const accessToken = tokens?.access_token || ''
@@ -104,6 +106,25 @@ function ConnectionsContent() {
     }
   }
 
+  const handleSync = async (account: LinkedAccount) => {
+    if (!accessToken) return
+    setSyncingAccountId(account.id)
+    try {
+      const result = await triggerSync(accessToken, account.id)
+      showNotification(
+        'success',
+        `Sync iniciado (${result.accounts_queued} conta${result.accounts_queued > 1 ? 's' : ''}).`
+      )
+      // Refresh after a short delay so the new last_sync_at is visible.
+      setTimeout(fetchLinkedAccounts, 1500)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Erro ao iniciar sync'
+      showNotification('error', message)
+    } finally {
+      setSyncingAccountId(null)
+    }
+  }
+
   const handleDisconnectConfirm = async () => {
     if (!disconnectTarget || !accessToken) return
     setDisconnecting(true)
@@ -162,6 +183,8 @@ function ConnectionsContent() {
                 key={acct.id}
                 account={acct}
                 onDisconnect={setDisconnectTarget}
+                onSync={handleSync}
+                syncing={syncingAccountId === acct.id}
               />
             ))
           )}

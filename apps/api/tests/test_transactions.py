@@ -43,7 +43,6 @@ def test_account(db_session, test_user):
         type=AccountType.CHECKING,
         balance=Decimal("1000.00"),
         currency="BRL",
-        is_active=True,
     )
     db_session.add(account)
     db_session.commit()

@@ -11,20 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
-from database.base import SessionLocal
+from database.base import get_db
 from database.models import Account, User, AccountType
 from utils.auth import get_current_user_from_header
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
-
-
-def get_db():
-    """Dependency injection for database session."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ============ Request/Response Models ============

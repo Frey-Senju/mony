@@ -24,7 +24,7 @@ global.fetch = jest.fn()
 
 describe('LoginForm', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
     localStorage.clear()
   })
 
@@ -153,7 +153,7 @@ describe('LoginForm', () => {
 
 describe('SignupForm', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
     localStorage.clear()
   })
 
@@ -282,7 +282,7 @@ describe('SignupForm', () => {
 
 describe('ForgotPasswordForm', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
   })
 
   it('renders forgot password form', () => {
@@ -350,14 +350,28 @@ describe('ForgotPasswordForm', () => {
 
 describe('TwoFASetup', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    jest.resetAllMocks()
+    // Provide a token so setup2FA can authenticate
+    localStorage.setItem('mony_tokens', JSON.stringify({
+      access_token: 'test-token',
+      refresh_token: 'test-refresh',
+      token_type: 'bearer',
+      expires_in: 900,
+    }))
+    // Mock the fetchUser call triggered by useAuth on mount
+    ;(fetch as jest.MockedFunction<typeof fetch>).mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({}),
+    } as Response)
   })
 
-  it('renders initial setup screen', () => {
+  it('renders initial setup screen', async () => {
     render(<TwoFASetup />)
 
     expect(screen.getByText(/enable two-factor authentication/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /get started/i })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /get started/i })).toBeInTheDocument()
+    })
   })
 
   it('requests 2FA setup on button click', async () => {
@@ -372,7 +386,9 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
@@ -393,7 +409,9 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
@@ -414,19 +432,25 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
-    await waitFor(() => {
-      const totpInput = screen.getByPlaceholderText('000000') as HTMLInputElement
-      expect(totpInput).toBeInTheDocument()
+    const totpInput = await waitFor(() => screen.getByPlaceholderText('000000') as HTMLInputElement)
+    expect(totpInput).toBeInTheDocument()
 
-      // Try invalid input
-      fireEvent.click(screen.getByRole('button', { name: /enable 2fa/i }))
+    // Button disabled with empty input
+    expect(screen.getByRole('button', { name: /enable 2fa/i })).toBeDisabled()
 
-      expect(screen.getByText(/invalid code format/i)).toBeInTheDocument()
-    })
+    // Button disabled with partial input (3 digits)
+    fireEvent.change(totpInput, { target: { value: '123' } })
+    expect(screen.getByRole('button', { name: /enable 2fa/i })).toBeDisabled()
+
+    // Button enabled with valid 6-digit input
+    fireEvent.change(totpInput, { target: { value: '123456' } })
+    expect(screen.getByRole('button', { name: /enable 2fa/i })).not.toBeDisabled()
   })
 
   it('shows backup codes', async () => {
@@ -442,7 +466,9 @@ describe('TwoFASetup', () => {
     } as Response)
 
     render(<TwoFASetup />)
-    const getStartedButton = screen.getByRole('button', { name: /get started/i })
+    const getStartedButton = await waitFor(() =>
+      screen.getByRole('button', { name: /get started/i })
+    )
 
     fireEvent.click(getStartedButton)
 
@@ -456,6 +482,7 @@ describe('TwoFASetup', () => {
 
 describe('Token Storage', () => {
   beforeEach(() => {
+    jest.resetAllMocks()
     localStorage.clear()
   })
 

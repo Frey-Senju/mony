@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 
-from database.base import SessionLocal
+from database.base import get_db
 from database.models import User
 from utils.auth import (
     hash_password,
@@ -29,15 +29,6 @@ from utils.auth import (
 password_reset_tokens = {}
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
-
-
-def get_db():
-    """Dependency injection for database session."""
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ============ Request/Response Models ============
@@ -364,8 +355,8 @@ async def request_password_reset(
         reset_token = create_password_reset_token(user.id)
         password_reset_tokens[reset_token] = {
             "user_id": user.id,
-            "created_at": datetime.utcnow(),
-            "expires_at": datetime.utcnow() + timedelta(hours=24)
+            "created_at": datetime.now(dt_timezone.utc),
+            "expires_at": datetime.now(dt_timezone.utc) + timedelta(hours=24)
         }
 
         # TODO: Send email with reset token
@@ -407,7 +398,7 @@ async def confirm_password_reset(
 
     # Check token expiration
     token_data = password_reset_tokens[payload.token]
-    if datetime.utcnow() > token_data["expires_at"]:
+    if datetime.now(dt_timezone.utc) > token_data["expires_at"]:
         del password_reset_tokens[payload.token]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

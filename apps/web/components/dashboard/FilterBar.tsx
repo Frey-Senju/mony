@@ -3,7 +3,7 @@
 import React, { useState } from 'react'
 import { Search, X } from 'lucide-react'
 
-interface FilterState {
+export interface FilterState {
   accountId?: string
   type?: 'all' | 'income' | 'expense'
   startDate?: string
@@ -12,7 +12,7 @@ interface FilterState {
   isReconciled?: 'all' | 'reconciled' | 'pending'
 }
 
-interface FilterBarProps {
+export interface FilterBarProps {
   onFilterChange: (filters: FilterState) => void
   accounts?: Array<{ id: string; name: string }>
   loading?: boolean
@@ -21,7 +21,6 @@ interface FilterBarProps {
 export function FilterBar({
   onFilterChange,
   accounts = [],
-  loading = false,
 }: FilterBarProps) {
   const [filters, setFilters] = useState<FilterState>({
     type: 'all',
@@ -37,7 +36,7 @@ export function FilterBar({
   }
 
   const resetFilters = () => {
-    const resetState = {
+    const resetState: FilterState = {
       type: 'all',
       isReconciled: 'all',
     }

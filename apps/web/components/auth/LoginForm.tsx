@@ -53,7 +53,7 @@ export const LoginForm = ({ onSuccess }: LoginFormProps) => {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} noValidate className="space-y-6">
       {/* Email field */}
       <div>
         <label htmlFor="email" className="block text-sm font-medium text-gray-700">

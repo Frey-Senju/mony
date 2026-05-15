@@ -126,8 +126,9 @@ test.describe('Filters', () => {
     // Wait for filter
     await page.waitForTimeout(500)
 
-    // Find reset button
-    const resetButton = page.locator('button:has-text("Limpar filtros")')
+    // Find reset button — use .first() because page may render a second
+    // "Limpar filtros" in the empty-state banner when no results match.
+    const resetButton = page.locator('button:has-text("Limpar filtros")').first()
 
     if (await resetButton.isVisible()) {
       // Click reset

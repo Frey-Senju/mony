@@ -203,8 +203,7 @@ def generate_totp_secret(user_email: str) -> str:
         Base32-encoded secret (32 chars)
     """
     import pyotp
-    totp = pyotp.TOTP()
-    return totp.secret
+    return pyotp.random_base32()
 
 
 def generate_totp_qr_code(user_email: str, secret: str) -> str:
@@ -321,7 +320,7 @@ def create_password_reset_token(user_id: int, expires_delta: Optional[timedelta]
     return encoded_jwt
 
 
-def verify_password_reset_token(token: str) -> int:
+def verify_password_reset_token(token: str) -> str:
     """
     Verify password reset token and extract user ID.
 
@@ -352,7 +351,7 @@ def verify_password_reset_token(token: str) -> int:
                 detail="Invalid token type"
             )
 
-        return int(user_id)
+        return user_id
 
     except JWTError as e:
         raise HTTPException(

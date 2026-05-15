@@ -15,10 +15,17 @@ const customJestConfig = {
   testEnvironment: 'jest-environment-jsdom',
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
+    '^@mony/shared$': '<rootDir>/../../packages/shared/src/index.ts',
+    '^@mony/shared/(.*)$': '<rootDir>/../../packages/shared/src/$1',
   },
   testMatch: [
     '**/__tests__/**/*.[jt]s?(x)',
     '**/?(*.)+(spec|test).[jt]s?(x)',
+  ],
+  testPathIgnorePatterns: [
+    '<rootDir>/node_modules/',
+    '<rootDir>/.next/',
+    '<rootDir>/e2e/',
   ],
   collectCoverageFrom: [
     'components/**/*.{js,jsx,ts,tsx}',

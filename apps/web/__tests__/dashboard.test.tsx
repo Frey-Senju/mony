@@ -5,7 +5,7 @@
  */
 
 import React, { act } from 'react'
-import { render, screen, fireEvent, waitFor, within, renderHook as rtlRenderHook } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, renderHook as rtlRenderHook } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SummaryCards } from '@/components/dashboard/SummaryCards'
 import { TransactionList } from '@/components/dashboard/TransactionList'

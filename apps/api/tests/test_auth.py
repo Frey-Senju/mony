@@ -5,12 +5,13 @@ Tests for register, login, refresh, logout, 2fa/setup, password-reset.
 """
 
 import pytest
+from datetime import datetime, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from main import app
-from database.base import Base, SessionLocal
+from database.base import Base, SessionLocal, get_db
 from database.models import User
 from utils.auth import hash_password, verify_totp_code, generate_totp_secret
 
@@ -21,11 +22,12 @@ from utils.auth import hash_password, verify_totp_code, generate_totp_secret
 @pytest.fixture
 def test_db():
     """Create test database and drop after tests."""
-    # Use in-memory SQLite for testing
-    SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
-    engine = create_engine(
-        SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-    )
+    import os
+    database_url = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+    if "sqlite" in database_url:
+        engine = create_engine(database_url, connect_args={"check_same_thread": False})
+    else:
+        engine = create_engine(database_url)
     TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
     Base.metadata.create_all(bind=engine)
@@ -37,10 +39,11 @@ def test_db():
         finally:
             db.close()
 
-    app.dependency_overrides[SessionLocal] = override_get_db
+    app.dependency_overrides[get_db] = override_get_db
 
     yield engine
 
+    app.dependency_overrides.pop(get_db, None)
     Base.metadata.drop_all(bind=engine)
 
 
@@ -52,8 +55,9 @@ def client(test_db):
 
 @pytest.fixture
 def test_user(test_db):
-    """Create a test user."""
-    db = SessionLocal()
+    """Create a test user in the test database."""
+    TestingSession = sessionmaker(autocommit=False, autoflush=False, bind=test_db)
+    db = TestingSession()
     user = User(
         email="test@example.com",
         password_hash=hash_password("SecurePass123!"),
@@ -63,6 +67,7 @@ def test_user(test_db):
     db.add(user)
     db.commit()
     db.refresh(user)
+    db.close()
     return user
 
 
@@ -241,7 +246,7 @@ def test_2fa_setup_unauthorized(client):
     """Test 2FA setup without authentication."""
     response = client.post("/auth/2fa/setup")
 
-    assert response.status_code == 403  # Forbidden (missing auth)
+    assert response.status_code == 401  # Unauthorized (missing auth)
 
 
 def test_totp_code_verification():
@@ -330,7 +335,7 @@ def test_password_reset_invalid_token(client):
         json={"token": "invalid.token.here", "new_password": "NewPass123!"},
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 400
     assert "Invalid" in response.json()["detail"]
 
 

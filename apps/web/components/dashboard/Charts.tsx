@@ -25,7 +25,7 @@ interface Transaction {
   category_id?: string
 }
 
-interface ChartsProps {
+export interface ChartsProps {
   transactions: Transaction[]
   loading?: boolean
 }

@@ -119,7 +119,7 @@ Esta regra vale para: código de produção, migrações de banco, configuraçõ
 
 ## Obsidian Brain
 
-**Vault:** `C:\Users\cristofer.schwartzer\Desktop\Obsidian\Mony\`
+**Vault:** `C:\Users\Crist\Desktop\Mony\`
 
 Protocolo obrigatório:
 - Toda sessão: criar nota `NN-SESSION-YYYYMMDD-DESCRICAO.md`

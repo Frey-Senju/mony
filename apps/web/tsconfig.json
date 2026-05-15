@@ -25,6 +25,12 @@
     "paths": {
       "@/*": [
         "./*"
+      ],
+      "@mony/shared": [
+        "../../packages/shared/src/index.ts"
+      ],
+      "@mony/shared/*": [
+        "../../packages/shared/src/*"
       ]
     },
     "allowJs": true,
