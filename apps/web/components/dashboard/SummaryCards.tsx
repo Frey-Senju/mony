@@ -10,6 +10,7 @@ interface SummaryCard {
   icon: React.ReactNode
   color: 'blue' | 'green' | 'red' | 'purple'
   subtitle?: string
+  href?: string
 }
 
 export interface SummaryCardsProps {
@@ -17,6 +18,7 @@ export interface SummaryCardsProps {
   totalIncome: number
   currentBalance: number
   budgetProgress?: number
+  budgetsExceeded?: number
   loading?: boolean
   previousMonthData?: {
     totalSpent: number
@@ -30,6 +32,7 @@ export function SummaryCards({
   totalIncome,
   currentBalance,
   budgetProgress = 0,
+  budgetsExceeded = 0,
   loading = false,
   previousMonthData,
 }: SummaryCardsProps) {
@@ -86,12 +89,13 @@ export function SummaryCards({
       subtitle: 'Conta corrente',
     },
     {
-      title: 'Meta orçamentária',
-      value: `${budgetProgress}%`,
+      title: 'Budgets em alerta',
+      value: budgetsExceeded > 0 ? `${budgetsExceeded} ultrapassado${budgetsExceeded > 1 ? 's' : ''}` : `${budgetProgress}%`,
       trend: budgetProgress > 80 ? -5 : 2,
       icon: <Target className="w-6 h-6" />,
       color: 'purple',
-      subtitle: `${100 - budgetProgress}% restante`,
+      subtitle: budgetsExceeded > 0 ? 'Ver budgets' : `${100 - budgetProgress}% restante`,
+      href: '/dashboard/budgets',
     },
   ]
 
@@ -113,7 +117,8 @@ export function SummaryCards({
       {cards.map((card) => (
         <div
           key={card.title}
-          className={`border rounded-lg p-6 transition-all hover:shadow-md ${colorClasses[card.color]}`}
+          className={`border rounded-lg p-6 transition-all hover:shadow-md ${colorClasses[card.color]} ${card.href ? 'cursor-pointer' : ''}`}
+          onClick={card.href ? () => window.location.href = card.href! : undefined}
         >
           <div className="flex items-start justify-between">
             <div className="flex-1">
