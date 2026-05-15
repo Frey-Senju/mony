@@ -22,6 +22,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard/reports', label: 'Relatórios', testId: 'nav-reports' },
   { href: '/dashboard/budgets', label: 'Budgets', testId: 'nav-budgets' },
   { href: '/dashboard/insights', label: 'Insights', testId: 'nav-insights' },
+  { href: '/dashboard/goals', label: 'Metas', testId: 'nav-goals' },
 ]
 
 export function DashboardNav() {
