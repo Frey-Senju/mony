@@ -35,49 +35,11 @@ services:
         generateValue: true
       - key: ENVIRONMENT
         value: production
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "1"
       - key: OF_SYNC_USE_STUB
         value: "1"
       - key: OF_SYNC_LOOKBACK_DAYS
         value: "7"
       - key: OF_FIRST_SYNC_LOOKBACK_DAYS
         value: "90"
-
-  - type: worker
-    name: mony-celery-worker
-    runtime: python
-    plan: free
-    buildCommand: pip install -r apps/api/requirements.txt
-    startCommand: cd apps/api && celery -A workers.celery_app.celery_app worker --loglevel=info --concurrency=2
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mony-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: mony-redis
-          type: redis
-          property: connectionString
-      - key: OF_SYNC_USE_STUB
-        value: "1"
-      - key: OF_SYNC_LOOKBACK_DAYS
-        value: "7"
-      - key: OF_FIRST_SYNC_LOOKBACK_DAYS
-        value: "90"
-
-  - type: worker
-    name: mony-celery-beat
-    runtime: python
-    plan: free
-    buildCommand: pip install -r apps/api/requirements.txt
-    startCommand: cd apps/api && celery -A workers.celery_app.celery_app beat --loglevel=info
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: mony-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: mony-redis
-          type: redis
-          property: connectionString
