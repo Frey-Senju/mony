@@ -6,6 +6,7 @@ from routes.accounts import router as accounts_router
 from routes.reports import router as reports_router
 from routes.open_finance import router as open_finance_router
 from routes.open_finance_sync import router as open_finance_sync_router
+from routes.budgets import router as budgets_router
 
 app = FastAPI(
     title="Mony API",
@@ -33,6 +34,7 @@ app.include_router(accounts_router)
 app.include_router(reports_router)
 app.include_router(open_finance_router)
 app.include_router(open_finance_sync_router)
+app.include_router(budgets_router)
 
 @app.get("/")
 async def root():

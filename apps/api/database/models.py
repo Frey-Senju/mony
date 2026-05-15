@@ -711,3 +711,29 @@ class SubscriptionHistory(Base):
 
     def __repr__(self):
         return f"<SubscriptionHistory {self.plan_from.value} → {self.plan_to.value}>"
+
+
+class Budget(Base):
+    """Monthly spending budget per category."""
+
+    __tablename__ = "budgets"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    category = Column(String(100), nullable=False)
+    limit_amount = Column(Numeric(12, 2), nullable=False)
+    currency = Column(String(3), nullable=False, default="BRL")
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("limit_amount > 0", name="ck_budget_limit_positive"),
+        UniqueConstraint("user_id", "category", name="uq_budget_user_category"),
+        Index("ix_budgets_user_id", "user_id"),
+    )
+
+    user = relationship("User")
+
+    def __repr__(self):
+        return f"<Budget {self.category} {self.limit_amount}>"

@@ -5,6 +5,7 @@ from .models import (
     Account,
     AccountType,
     AuditLog,
+    Budget,
     Category,
     ConsentStatus,
     Goal,
@@ -40,6 +41,7 @@ __all__ = [
     # Models
     "User",
     "Account",
+    "Budget",
     "Category",
     "Transaction",
     "TransactionCategory",
