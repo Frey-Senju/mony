@@ -5,14 +5,10 @@ databases:
     plan: free
 
 services:
-  # ── Redis (Key Value) ────────────────────────────────────────────────────────
   - type: redis
     name: mony-redis
     plan: free
-    maxmemoryPolicy: allkeys-lru
-    ipAllowList: []          # internal access only
 
-  # ── FastAPI (Web Service) ────────────────────────────────────────────────────
   - type: web
     name: mony-api
     runtime: docker
@@ -38,13 +34,12 @@ services:
       - key: ENVIRONMENT
         value: production
       - key: OF_SYNC_USE_STUB
-        value: "1"           # flip to "0" after Bacen sandbox credentials arrive
+        value: "1"
       - key: OF_SYNC_LOOKBACK_DAYS
         value: "7"
       - key: OF_FIRST_SYNC_LOOKBACK_DAYS
         value: "90"
 
-  # ── Celery Worker (Background Worker) ───────────────────────────────────────
   - type: worker
     name: mony-celery-worker
     runtime: python
@@ -56,21 +51,11 @@ services:
         fromDatabase:
           name: mony-db
           property: connectionString
-      - key: ENCRYPTION_KEY
-        fromService:
-          name: mony-api
-          type: web
-          envVarKey: ENCRYPTION_KEY
       - key: REDIS_URL
         fromService:
           name: mony-redis
           type: redis
           property: connectionString
-      - key: WEBHOOK_SECRET
-        fromService:
-          name: mony-api
-          type: web
-          envVarKey: WEBHOOK_SECRET
       - key: OF_SYNC_USE_STUB
         value: "1"
       - key: OF_SYNC_LOOKBACK_DAYS
@@ -78,7 +63,6 @@ services:
       - key: OF_FIRST_SYNC_LOOKBACK_DAYS
         value: "90"
 
-  # ── Celery Beat / Scheduler (1 instance only) ────────────────────────────────
   - type: worker
     name: mony-celery-beat
     runtime: python
@@ -90,11 +74,6 @@ services:
         fromDatabase:
           name: mony-db
           property: connectionString
-      - key: ENCRYPTION_KEY
-        fromService:
-          name: mony-api
-          type: web
-          envVarKey: ENCRYPTION_KEY
       - key: REDIS_URL
         fromService:
           name: mony-redis
