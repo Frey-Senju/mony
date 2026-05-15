@@ -1,7 +1,8 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
-import { X } from 'lucide-react'
+import React, { useState, useEffect, useRef } from 'react'
+import { X, Sparkles } from 'lucide-react'
+import { fetchAutoCategory } from '@/lib/api/insights'
 
 interface Account {
   id: string
@@ -51,6 +52,8 @@ export function TransactionModal({
   const [formData, setFormData] = useState<Partial<Transaction>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSaving, setIsSaving] = useState(false)
+  const [suggestion, setSuggestion] = useState<{ name: string; confidence: 'high' | 'low' } | null>(null)
+  const suggestionDismissed = useRef(false)
 
   useEffect(() => {
     if (transaction) {
@@ -63,7 +66,48 @@ export function TransactionModal({
       })
     }
     setErrors({})
+    setSuggestion(null)
+    suggestionDismissed.current = false
   }, [transaction, isOpen, accounts])
+
+  useEffect(() => {
+    const desc = formData.description?.trim() ?? ''
+    if (desc.length < 3 || transaction || suggestionDismissed.current) return
+
+    const timer = setTimeout(async () => {
+      try {
+        const raw = typeof window !== 'undefined' ? localStorage.getItem('mony_tokens') : null
+        const token = raw ? (JSON.parse(raw).access_token ?? null) : null
+        if (!token) return
+        const merchant = formData.merchant_name?.trim()
+        const result = await fetchAutoCategory(token, desc, merchant)
+        if (result.category && result.confidence !== 'none') {
+          const matched = categories.find(
+            (c) => c.name.toLowerCase() === result.category!.toLowerCase()
+          )
+          if (matched) setSuggestion({ name: result.category!, confidence: result.confidence as 'high' | 'low' })
+          else setSuggestion(null)
+        } else {
+          setSuggestion(null)
+        }
+      } catch { /* silently ignore */ }
+    }, 600)
+
+    return () => clearTimeout(timer)
+  }, [formData.description, formData.merchant_name, categories, transaction])
+
+  const acceptSuggestion = () => {
+    if (!suggestion) return
+    const matched = categories.find((c) => c.name.toLowerCase() === suggestion.name.toLowerCase())
+    if (matched) setFormData((prev) => ({ ...prev, category_id: matched.id }))
+    setSuggestion(null)
+    suggestionDismissed.current = true
+  }
+
+  const dismissSuggestion = () => {
+    setSuggestion(null)
+    suggestionDismissed.current = true
+  }
 
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -216,6 +260,29 @@ export function TransactionModal({
               <p className="text-red-600 dark:text-red-400 text-sm mt-1">
                 {errors.description}
               </p>
+            )}
+            {suggestion && !formData.category_id && (
+              <div className="flex items-center gap-2 mt-1.5 px-3 py-1.5 bg-blue-50 dark:bg-blue-900/20 rounded border border-blue-200 dark:border-blue-800">
+                <Sparkles className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                <span className="text-xs text-blue-700 dark:text-blue-300 flex-1">
+                  Sugestão: <span className="font-medium">{suggestion.name}</span>
+                  {suggestion.confidence === 'high' ? ' · alta confiança' : ''}
+                </span>
+                <button
+                  type="button"
+                  onClick={acceptSuggestion}
+                  className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  Aceitar
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissSuggestion}
+                  className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                >
+                  Ignorar
+                </button>
+              </div>
             )}
           </div>
 
