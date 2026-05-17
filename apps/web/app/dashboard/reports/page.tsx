@@ -44,18 +44,40 @@ function ReportsContent() {
   const { user } = auth
   const token = auth.tokens?.access_token
 
-  // Default to the current month.
   const now = useMemo(() => new Date(), [])
   const [year, setYear] = useState<number>(now.getFullYear())
   const [month, setMonth] = useState<number>(now.getMonth() + 1)
 
+  // Date range mode
+  const [mode, setMode] = useState<'month' | 'range'>('month')
+  const todayISO = now.toISOString().slice(0, 10)
+  const [startDate, setStartDate] = useState<string>(todayISO.slice(0, 8) + '01')
+  const [endDate, setEndDate] = useState<string>(todayISO)
+  const [pendingStart, setPendingStart] = useState<string>(startDate)
+  const [pendingEnd, setPendingEnd] = useState<string>(endDate)
+  const [rangeApplied, setRangeApplied] = useState(false)
+
   const { summary, breakdown, loading, error, fetchReports } = useReports(token)
 
-  // Fetch on mount and whenever the selected month changes or the token arrives.
   useEffect(() => {
     if (!token) return
-    fetchReports(year, month)
-  }, [token, year, month, fetchReports])
+    if (mode === 'month') {
+      fetchReports({ year, month })
+    } else if (rangeApplied) {
+      fetchReports({ start_date: startDate, end_date: endDate })
+    }
+  }, [token, year, month, mode, startDate, endDate, rangeApplied, fetchReports])
+
+  const applyRange = () => {
+    setStartDate(pendingStart)
+    setEndDate(pendingEnd)
+    setRangeApplied(true)
+  }
+
+  const switchMode = (next: 'month' | 'range') => {
+    setMode(next)
+    setRangeApplied(false)
+  }
 
   const handleMonthInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     // <input type="month"> emits "YYYY-MM".
@@ -117,48 +139,109 @@ function ReportsContent() {
 
       {/* Main Content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
-        {/* Month Selector */}
-        <section
-          className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4 flex items-center gap-3 flex-wrap"
-          data-testid="month-selector"
-        >
-          <button
-            type="button"
-            onClick={handlePrevMonth}
-            className="px-3 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-            data-testid="month-prev"
-            aria-label="Mês anterior"
-          >
-            ← Anterior
-          </button>
+        {/* Period Mode Toggle */}
+        <section className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+          <div className="flex gap-2" data-testid="mode-toggle">
+            <button
+              type="button"
+              onClick={() => switchMode('month')}
+              className={`px-4 py-2 text-sm rounded-md font-medium transition ${
+                mode === 'month'
+                  ? 'bg-blue-600 text-white'
+                  : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              data-testid="mode-month"
+            >
+              Por Mês
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode('range')}
+              className={`px-4 py-2 text-sm rounded-md font-medium transition ${
+                mode === 'range'
+                  ? 'bg-blue-600 text-white'
+                  : 'border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+              data-testid="mode-range"
+            >
+              Período
+            </button>
+          </div>
 
-          <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-            <span>Mês:</span>
-            <input
-              type="month"
-              value={monthInputValue}
-              onChange={handleMonthInputChange}
-              className="px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-              data-testid="month-input"
-            />
-          </label>
+          {mode === 'month' && (
+            <div className="flex items-center gap-3 flex-wrap" data-testid="month-selector">
+              <button
+                type="button"
+                onClick={handlePrevMonth}
+                className="px-3 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                data-testid="month-prev"
+                aria-label="Mês anterior"
+              >
+                ← Anterior
+              </button>
+              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                <span>Mês:</span>
+                <input
+                  type="month"
+                  value={monthInputValue}
+                  onChange={handleMonthInputChange}
+                  className="px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                  data-testid="month-input"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={handleNextMonth}
+                className="px-3 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+                data-testid="month-next"
+                aria-label="Próximo mês"
+              >
+                Próximo →
+              </button>
+              <span className="ml-auto text-sm text-slate-500 dark:text-slate-400" data-testid="selected-month-label">
+                {monthLabel}
+              </span>
+            </div>
+          )}
 
-          <button
-            type="button"
-            onClick={handleNextMonth}
-            className="px-3 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-            data-testid="month-next"
-            aria-label="Próximo mês"
-          >
-            Próximo →
-          </button>
-
-          <span
-            className="ml-auto text-sm text-slate-500 dark:text-slate-400"
-            data-testid="selected-month-label"
-          >
-            {monthLabel}
-          </span>
+          {mode === 'range' && (
+            <div className="flex items-end gap-3 flex-wrap" data-testid="date-range-picker">
+              <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-300">
+                <span>De:</span>
+                <input
+                  type="date"
+                  value={pendingStart}
+                  onChange={(e) => setPendingStart(e.target.value)}
+                  className="px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                  data-testid="range-start"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm text-slate-700 dark:text-slate-300">
+                <span>Até:</span>
+                <input
+                  type="date"
+                  value={pendingEnd}
+                  onChange={(e) => setPendingEnd(e.target.value)}
+                  className="px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
+                  data-testid="range-end"
+                />
+              </label>
+              <button
+                type="button"
+                onClick={applyRange}
+                disabled={!pendingStart || !pendingEnd || pendingStart > pendingEnd}
+                className="px-4 py-2 text-sm rounded-md bg-blue-600 text-white font-medium hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                data-testid="apply-range"
+              >
+                Aplicar
+              </button>
+              {rangeApplied && (
+                <span className="text-sm text-slate-500 dark:text-slate-400">
+                  {startDate} → {endDate}
+                </span>
+              )}
+            </div>
+          )}
         </section>
 
         {/* Error banner */}
