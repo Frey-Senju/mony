@@ -17,7 +17,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func
+from sqlalchemy import and_, extract, func
 from sqlalchemy.orm import Session
 
 from database.base import get_db
@@ -327,3 +327,87 @@ async def category_breakdown(
         total_expenses=total_expenses,
         items=items,
     )
+
+
+# ============ Endpoint: Annual Summary ============
+
+
+class AnnualMonthItem(BaseModel):
+    month: int
+    income: Decimal
+    expenses: Decimal
+    net: Decimal
+
+
+class AnnualSummaryResponse(BaseModel):
+    year: int
+    months: List[AnnualMonthItem]
+    totals: AnnualMonthItem
+
+
+@router.get("/annual-summary", response_model=AnnualSummaryResponse)
+async def annual_summary(
+    year: int = Query(..., ge=1970, le=9999, description="Target year (e.g., 2026)"),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Return a 12-month breakdown for the given year.
+
+    Months with no transactions appear with zeros. The ``totals`` item
+    (month=0) is the yearly aggregate.
+    """
+    year_start = date(year, 1, 1)
+    year_end = date(year + 1, 1, 1)
+
+    rows = (
+        db.query(
+            extract("month", Transaction.transaction_date).label("m"),
+            Transaction.type,
+            func.coalesce(func.sum(Transaction.amount), 0).label("total"),
+        )
+        .filter(
+            and_(
+                Transaction.user_id == UUID(user_id),
+                Transaction.transaction_date >= year_start,
+                Transaction.transaction_date < year_end,
+                Transaction.deleted_at.is_(None),
+            )
+        )
+        .group_by("m", Transaction.type)
+        .all()
+    )
+
+    # Build a lookup: month -> {income, expenses}
+    data: dict[int, dict[str, Decimal]] = {
+        m: {"income": Decimal("0.00"), "expenses": Decimal("0.00")}
+        for m in range(1, 13)
+    }
+    for m, tx_type, total in rows:
+        m_int = int(m)
+        amount = Decimal(str(total or 0))
+        if tx_type == TransactionType.INCOME:
+            data[m_int]["income"] += amount
+        elif tx_type == TransactionType.EXPENSE:
+            data[m_int]["expenses"] += amount
+
+    months = [
+        AnnualMonthItem(
+            month=m,
+            income=data[m]["income"],
+            expenses=data[m]["expenses"],
+            net=data[m]["income"] - data[m]["expenses"],
+        )
+        for m in range(1, 13)
+    ]
+
+    total_income = sum(it.income for it in months)
+    total_expenses = sum(it.expenses for it in months)
+    totals = AnnualMonthItem(
+        month=0,
+        income=total_income,
+        expenses=total_expenses,
+        net=total_income - total_expenses,
+    )
+
+    return AnnualSummaryResponse(year=year, months=months, totals=totals)

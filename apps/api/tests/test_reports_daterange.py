@@ -198,3 +198,35 @@ def test_no_params_returns_422(db_session):
         headers=_auth(token),
     )
     assert r.status_code == 422
+
+
+def test_annual_summary_returns_12_months(db_session):
+    """annual-summary always returns 12 month objects for the given year."""
+    user, token = _make_user(db_session, "_ann")
+    acc = _make_account(db_session, user.id)
+    # Two transactions in different months
+    _make_tx(db_session, user.id, acc.id, 200, TransactionType.INCOME, date(2026, 1, 5))
+    _make_tx(db_session, user.id, acc.id, 150, TransactionType.EXPENSE, date(2026, 6, 15))
+
+    r = client.get("/reports/annual-summary?year=2026", headers=_auth(token))
+    assert r.status_code == 200
+    data = r.json()
+    assert data["year"] == 2026
+    assert len(data["months"]) == 12
+    assert data["months"][0]["month"] == 1
+    assert float(data["months"][0]["income"]) == 200.0
+    assert float(data["months"][5]["expenses"]) == 150.0
+    assert float(data["totals"]["income"]) == 200.0
+    assert float(data["totals"]["expenses"]) == 150.0
+
+
+def test_annual_summary_empty_year(db_session):
+    """annual-summary with no transactions returns all zeros."""
+    user, token = _make_user(db_session, "_empty")
+
+    r = client.get("/reports/annual-summary?year=2020", headers=_auth(token))
+    assert r.status_code == 200
+    data = r.json()
+    assert len(data["months"]) == 12
+    assert all(float(m["income"]) == 0.0 for m in data["months"])
+    assert float(data["totals"]["net"]) == 0.0

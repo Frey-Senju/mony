@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { usePathname } from 'next/navigation'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { MonthlySummaryCard } from '@/components/reports/MonthlySummaryCard'
 import { CategoryBreakdownChart } from '@/components/reports/CategoryBreakdownChart'
@@ -44,6 +45,7 @@ function ReportsContent() {
   const auth = useAuth()
   const { user } = auth
   const token = auth.tokens?.access_token
+  const pathname = usePathname()
 
   const now = useMemo(() => new Date(), [])
   const [year, setYear] = useState<number>(now.getFullYear())
@@ -127,13 +129,37 @@ function ReportsContent() {
               </p>
             </div>
 
-            <Link
-              href="/dashboard"
-              className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
-              data-testid="back-to-dashboard"
-            >
-              ← Voltar ao dashboard
-            </Link>
+            <div className="flex items-center gap-4">
+              <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1" data-testid="report-tabs">
+                <Link
+                  href="/dashboard/reports"
+                  className={`px-4 py-1.5 text-sm rounded-md font-medium transition ${
+                    pathname === '/dashboard/reports'
+                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                  }`}
+                >
+                  Mensal
+                </Link>
+                <Link
+                  href="/dashboard/reports/annual"
+                  className={`px-4 py-1.5 text-sm rounded-md font-medium transition ${
+                    pathname === '/dashboard/reports/annual'
+                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
+                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                  }`}
+                >
+                  Anual
+                </Link>
+              </div>
+              <Link
+                href="/dashboard"
+                className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                data-testid="back-to-dashboard"
+              >
+                ← Dashboard
+              </Link>
+            </div>
           </div>
         </div>
       </div>
