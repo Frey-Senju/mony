@@ -7,6 +7,7 @@ import { MonthlySummaryCard } from '@/components/reports/MonthlySummaryCard'
 import { CategoryBreakdownChart } from '@/components/reports/CategoryBreakdownChart'
 import { shiftMonth, useReports } from '@/hooks/useReports'
 import { useAuth } from '@/stores/auth/useAuth'
+import { exportReportToCSV } from '@/utils/export'
 
 /**
  * /dashboard/reports — monthly financial reports.
@@ -242,6 +243,41 @@ function ReportsContent() {
               )}
             </div>
           )}
+        </section>
+
+        {/* Export Actions */}
+        <section className="flex gap-3 no-print" data-testid="export-actions">
+          <button
+            type="button"
+            onClick={() => {
+              exportReportToCSV(
+                {
+                  total_income: summary?.total_income ?? 0,
+                  total_expenses: summary?.total_expenses ?? 0,
+                  net_balance: summary?.net_balance ?? 0,
+                },
+                (breakdown?.items ?? []).map((item) => ({
+                  name: item.category_name,
+                  amount: item.total,
+                  percentage: item.percentage,
+                })),
+                mode === 'month' ? monthLabel : `${startDate} → ${endDate}`
+              )
+            }}
+            disabled={loading || (!summary && !breakdown)}
+            className="flex items-center gap-2 px-4 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            data-testid="export-csv"
+          >
+            ↓ Exportar CSV
+          </button>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="flex items-center gap-2 px-4 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
+            data-testid="print-pdf"
+          >
+            🖨 Imprimir / PDF
+          </button>
         </section>
 
         {/* Error banner */}

@@ -179,6 +179,48 @@ export function exportToHTML(transactions: Transaction[], filename: string = 're
   downloadFile(blob, filename)
 }
 
+export interface ReportSummary {
+  total_income: number
+  total_expenses: number
+  net_balance: number
+}
+
+export interface ReportCategoryItem {
+  name: string
+  amount: number
+  percentage: number
+}
+
+export function exportReportToCSV(
+  summary: ReportSummary,
+  categories: ReportCategoryItem[],
+  periodLabel: string,
+  filename: string = 'relatorio.csv'
+): void {
+  const fmt = (n: number) => n.toFixed(2).replace('.', ',')
+
+  const lines: string[] = [
+    `"Mony — Relatório Financeiro"`,
+    `"Período","${periodLabel}"`,
+    `"Gerado em","${new Date().toLocaleString('pt-BR')}"`,
+    ``,
+    `"=== Resumo ==="`,
+    `"Receitas","R$ ${fmt(summary.total_income)}"`,
+    `"Despesas","R$ ${fmt(summary.total_expenses)}"`,
+    `"Saldo","R$ ${fmt(summary.net_balance)}"`,
+    ``,
+    `"=== Por Categoria ==="`,
+    `"Categoria","Valor","Percentual"`,
+    ...categories.map(
+      (c) => `"${c.name}","R$ ${fmt(c.amount)}","${c.percentage.toFixed(1)}%"`
+    ),
+  ]
+
+  const bom = '﻿'
+  const blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8;' })
+  downloadFile(blob, filename)
+}
+
 /**
  * Helper function to download file
  */
