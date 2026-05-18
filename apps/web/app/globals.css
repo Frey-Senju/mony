@@ -30,6 +30,17 @@ a {
   text-decoration: none;
 }
 
+@media print {
+  [data-testid="dashboard-nav"],
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white;
+    color: black;
+  }
+}
+
 @layer html {
   :root {
     --background-start-rgb: 214, 219, 220;

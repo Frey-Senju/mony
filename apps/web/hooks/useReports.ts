@@ -1,18 +1,14 @@
 'use client'
 
 import { useCallback, useState } from 'react'
+import type { ReportParams } from '@/lib/api/reports'
+import { fetchMonthlySummary, fetchCategoryBreakdown } from '@/lib/api/reports'
 
-/**
- * useReports — fetch monthly summary and category breakdown in parallel.
- *
- * Mirrors the auth-header pattern of ``useTransactions``. The two endpoints
- * are fired with ``Promise.all`` (not sequential awaits) so month-switching
- * latency is bounded by the slower request, not the sum of both.
- */
+export type { ReportParams }
 
 export interface MonthlySummary {
-  year: number
-  month: number
+  year: number | null
+  month: number | null
   total_income: number
   total_expenses: number
   net_balance: number
@@ -26,8 +22,8 @@ export interface CategoryBreakdownItem {
 }
 
 export interface CategoryBreakdown {
-  year: number
-  month: number
+  year: number | null
+  month: number | null
   total_expenses: number
   items: CategoryBreakdownItem[]
 }
@@ -38,8 +34,6 @@ export interface ReportsState {
   loading: boolean
   error: string | null
 }
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 function getAuthHeaders(token?: string): Record<string, string> {
   const stored =
@@ -75,8 +69,8 @@ function toNumber(value: unknown): number {
 
 function normalizeSummary(raw: any): MonthlySummary {
   return {
-    year: Number(raw.year),
-    month: Number(raw.month),
+    year: raw.year != null ? Number(raw.year) : null,
+    month: raw.month != null ? Number(raw.month) : null,
     total_income: toNumber(raw.total_income),
     total_expenses: toNumber(raw.total_expenses),
     net_balance: toNumber(raw.net_balance),
@@ -85,8 +79,8 @@ function normalizeSummary(raw: any): MonthlySummary {
 
 function normalizeBreakdown(raw: any): CategoryBreakdown {
   return {
-    year: Number(raw.year),
-    month: Number(raw.month),
+    year: raw.year != null ? Number(raw.year) : null,
+    month: raw.month != null ? Number(raw.month) : null,
     total_expenses: toNumber(raw.total_expenses),
     items: (raw.items || []).map((item: any) => ({
       category_id: item.category_id ?? null,
@@ -106,7 +100,7 @@ export function useReports(token?: string) {
   })
 
   const fetchReports = useCallback(
-    async (year: number, month: number) => {
+    async (params: ReportParams) => {
       const headers = getAuthHeaders(token)
       if (Object.keys(headers).length === 0) {
         setState({ summary: null, breakdown: null, loading: false, error: null })
@@ -116,28 +110,15 @@ export function useReports(token?: string) {
       setState((prev) => ({ ...prev, loading: true, error: null }))
 
       try {
-        const qs = `year=${year}&month=${month}`
-        // Parallel fetch (@po recommendation #3): bounded by slower request,
-        // not the sum. Sequential awaits would double perceived latency.
-        const [summaryResp, breakdownResp] = await Promise.all([
-          fetch(`${API_URL}/reports/monthly-summary?${qs}`, { headers }),
-          fetch(`${API_URL}/reports/category-breakdown?${qs}`, { headers }),
-        ])
-
-        if (!summaryResp.ok) {
-          throw new Error(
-            `Failed to fetch monthly summary: ${summaryResp.status} ${summaryResp.statusText}`
-          )
-        }
-        if (!breakdownResp.ok) {
-          throw new Error(
-            `Failed to fetch category breakdown: ${breakdownResp.status} ${breakdownResp.statusText}`
-          )
-        }
+        const accessToken = (() => {
+          const stored = token || (typeof window !== 'undefined' ? localStorage.getItem('mony_tokens') : null)
+          if (!stored) return ''
+          try { return JSON.parse(stored).access_token ?? stored } catch { return stored }
+        })()
 
         const [summaryJson, breakdownJson] = await Promise.all([
-          summaryResp.json(),
-          breakdownResp.json(),
+          fetchMonthlySummary(accessToken, params),
+          fetchCategoryBreakdown(accessToken, params),
         ])
 
         setState({
