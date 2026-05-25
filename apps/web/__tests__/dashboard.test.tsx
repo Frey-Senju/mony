@@ -68,7 +68,7 @@ describe('Dashboard Components', () => {
       expect(screen.getByText(/Gastos este mês/i)).toBeInTheDocument()
       expect(screen.getByText(/Renda este mês/i)).toBeInTheDocument()
       expect(screen.getByText(/Saldo disponível/i)).toBeInTheDocument()
-      expect(screen.getByText(/Meta orçamentária/i)).toBeInTheDocument()
+      expect(screen.getByText(/Budgets em alerta/i)).toBeInTheDocument()
 
       // Check for formatted values
       expect(screen.getByText(/R\$ 500,00/)).toBeInTheDocument()

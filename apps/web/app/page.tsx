@@ -1,10 +1,22 @@
+'use client'
+
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/stores/auth/useAuth'
+
 export default function Home() {
+  const router = useRouter()
+  const { isAuthenticated, loading } = useAuth()
+
+  useEffect(() => {
+    if (!loading) {
+      router.replace(isAuthenticated ? '/dashboard' : '/auth/login')
+    }
+  }, [isAuthenticated, loading, router])
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 w-full max-w-5xl items-center justify-between font-mono text-sm">
-        <h1 className="text-4xl font-bold">Mony</h1>
-        <p className="mt-4 text-gray-600">Money management application</p>
-      </div>
-    </main>
+    <div className="min-h-screen flex items-center justify-center">
+      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
+    </div>
   )
 }
