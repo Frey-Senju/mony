@@ -30,6 +30,8 @@ test.describe('Goals', () => {
 
   test('shows empty state when no goals exist', async ({ page }) => {
     await page.goto('/dashboard/goals')
+    // Wait for page to finish loading (PrivateRoute + data fetch)
+    await page.waitForLoadState('networkidle')
     // Either shows goals or the empty state — both are valid
     const hasGoals = await page.locator('[data-testid="goal-card"]').count() > 0
     const hasEmptyState = await page.getByText(/Nenhuma meta criada/i).isVisible().catch(() => false)

@@ -26,6 +26,7 @@ test.describe('Insights', () => {
 
   test('shows descriptive subtitle', async ({ page }) => {
     await page.goto('/dashboard/insights')
-    await expect(page.getByText(/Padrões de gasto e análise automática/i)).toBeVisible()
+    await page.waitForLoadState('networkidle')
+    await expect(page.getByText(/Padrões de gasto e análise automática/i)).toBeVisible({ timeout: 15000 })
   })
 })

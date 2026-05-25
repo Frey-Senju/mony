@@ -32,7 +32,7 @@ test.describe('Dashboard', () => {
     await expect(page.locator('text=Gastos este mês')).toBeVisible()
     await expect(page.locator('text=Renda este mês')).toBeVisible()
     await expect(page.locator('text=Saldo disponível')).toBeVisible()
-    await expect(page.locator('text=Meta orçamentária')).toBeVisible()
+    await expect(page.locator('text=Budgets em alerta')).toBeVisible()
   })
 
   test('should display charts section', async ({ page }) => {

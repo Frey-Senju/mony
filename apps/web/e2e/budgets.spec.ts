@@ -16,21 +16,21 @@ test.describe('Budgets', () => {
     await expect(page.getByRole('heading', { name: 'Budgets' })).toBeVisible()
   })
 
-  test('shows "Nova Budget" button', async ({ page }) => {
+  test('shows "Novo Budget" button', async ({ page }) => {
     await page.goto('/dashboard/budgets')
-    await expect(page.getByRole('button', { name: /nova budget/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /novo budget/i })).toBeVisible()
   })
 
   test('opens create budget modal', async ({ page }) => {
     await page.goto('/dashboard/budgets')
-    await page.getByRole('button', { name: /nova budget/i }).click()
+    await page.getByRole('button', { name: /novo budget/i }).click()
     await expect(page.getByRole('heading', { name: /novo budget/i })).toBeVisible()
     await expect(page.getByPlaceholder(/alimentação/i)).toBeVisible()
   })
 
   test('closes modal on cancel', async ({ page }) => {
     await page.goto('/dashboard/budgets')
-    await page.getByRole('button', { name: /nova budget/i }).click()
+    await page.getByRole('button', { name: /novo budget/i }).click()
     await page.getByRole('button', { name: /cancelar/i }).click()
     await expect(page.getByRole('heading', { name: /novo budget/i })).not.toBeVisible()
   })
