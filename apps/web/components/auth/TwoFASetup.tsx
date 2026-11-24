@@ -16,13 +16,14 @@ export interface TwoFASetupProps {
 }
 
 export const TwoFASetup = ({ onSuccess, onCancel }: TwoFASetupProps) => {
-  const { setup2FA, loading, error } = useAuth()
+  const { setup2FA, verify2FA, loading, error } = useAuth()
   const [step, setStep] = useState<'request' | 'confirm'>('request')
   const [qrCode, setQrCode] = useState<string>('')
   const [secret, setSecret] = useState<string>('')
   const [backupCodes, setBackupCodes] = useState<string[]>([])
   const [totp, setTotp] = useState('')
   const [validationError, setValidationError] = useState('')
+  const [verifying, setVerifying] = useState(false)
 
   const handleRequestSetup = async () => {
     try {
@@ -31,7 +32,7 @@ export const TwoFASetup = ({ onSuccess, onCancel }: TwoFASetupProps) => {
       setSecret(data.secret)
       setBackupCodes(data.backup_codes)
       setStep('confirm')
-    } catch (err) {
+    } catch {
       // Error is handled by useAuth hook
     }
   }
@@ -42,9 +43,16 @@ export const TwoFASetup = ({ onSuccess, onCancel }: TwoFASetupProps) => {
       return
     }
 
-    // TODO: Send verify_2fa request to backend
-    // For now, just show success
-    onSuccess?.()
+    setVerifying(true)
+    setValidationError('')
+    try {
+      await verify2FA(totp)
+      onSuccess?.()
+    } catch (err) {
+      setValidationError(err instanceof Error ? err.message : 'Invalid verification code')
+    } finally {
+      setVerifying(false)
+    }
   }
 
   if (step === 'request') {
@@ -163,10 +171,10 @@ export const TwoFASetup = ({ onSuccess, onCancel }: TwoFASetupProps) => {
       {/* Confirm button */}
       <button
         onClick={handleConfirm}
-        disabled={totp.length !== 6 || loading}
+        disabled={totp.length !== 6 || loading || verifying}
         className="w-full bg-green-600 text-white py-2 px-4 rounded-lg font-medium hover:bg-green-700 disabled:bg-gray-400 transition-colors"
       >
-        {loading ? 'Enabling...' : 'Enable 2FA'}
+        {loading || verifying ? 'Enabling...' : 'Enable 2FA'}
       </button>
 
       <button

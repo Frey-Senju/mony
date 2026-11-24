@@ -16,6 +16,12 @@ export interface Transaction {
   is_recurring: boolean
   recurring_pattern?: string
   is_reconciled: boolean
+  source?: 'manual' | 'open_finance'
+  external_id?: string | null
+  category_id?: string
+  category_name?: string
+  category_color?: string
+  category_icon?: string
   created_at: string
   updated_at: string
 }
@@ -49,37 +55,26 @@ export function useTransactions(token?: string) {
 
   const getAuthHeaders = useCallback((): Record<string, string> => {
     const authToken = token || (typeof window !== 'undefined' ? localStorage.getItem('mony_tokens') : null)
-    console.log('[DEBUG] useTransactions.getAuthHeaders - token param:', token ? 'PROVIDED' : 'NONE', ', authToken:', authToken ? 'EXISTS' : 'MISSING')
-    if (!authToken) {
-      console.log('[DEBUG] useTransactions.getAuthHeaders - returning empty headers')
-      return {}
-    }
+    if (!authToken) return {}
 
     try {
       const tokens = JSON.parse(authToken)
-      console.log('[DEBUG] useTransactions.getAuthHeaders - parsed JSON successfully')
       return {
-        'Authorization': `Bearer ${tokens.access_token}`,
+        Authorization: `Bearer ${tokens.access_token}`,
         'Content-Type': 'application/json',
       }
     } catch {
-      console.log('[DEBUG] useTransactions.getAuthHeaders - JSON parse failed, using token as-is')
       return {
-        'Authorization': `Bearer ${authToken}`,
+        Authorization: `Bearer ${authToken}`,
         'Content-Type': 'application/json',
       }
     }
   }, [token])
 
   const fetchTransactions = useCallback(
-    async (
-      filters?: FilterState,
-      customOffset?: number,
-      customLimit?: number
-    ) => {
+    async (filters?: FilterState, customOffset?: number, customLimit?: number) => {
       const headers = getAuthHeaders()
       if (Object.keys(headers).length === 0) {
-        console.log('[DEBUG] useTransactions - skipping fetch, no auth headers')
         setTransactions([])
         return
       }
@@ -96,34 +91,21 @@ export function useTransactions(token?: string) {
           limit: limit.toString(),
         })
 
-        if (filters?.accountId) {
-          queryParams.append('account_id', filters.accountId)
-        }
-        if (filters?.type) {
-          queryParams.append('type', filters.type)
-        }
-        if (filters?.startDate) {
-          queryParams.append('start_date', filters.startDate)
-        }
-        if (filters?.endDate) {
-          queryParams.append('end_date', filters.endDate)
-        }
-        if (filters?.search) {
-          queryParams.append('search', filters.search)
-        }
+        if (filters?.accountId) queryParams.append('account_id', filters.accountId)
+        if (filters?.type) queryParams.append('type', filters.type)
+        if (filters?.startDate) queryParams.append('start_date', filters.startDate)
+        if (filters?.endDate) queryParams.append('end_date', filters.endDate)
+        if (filters?.search) queryParams.append('search', filters.search)
         if (filters?.isReconciled === 'reconciled') {
           queryParams.append('is_reconciled', 'true')
         } else if (filters?.isReconciled === 'pending') {
           queryParams.append('is_reconciled', 'false')
         }
 
-        const response = await fetch(
-          `${API_URL}/transactions?${queryParams.toString()}`,
-          {
-            method: 'GET',
-            headers: headers,
-          }
-        )
+        const response = await fetch(`${API_URL}/transactions?${queryParams.toString()}`, {
+          method: 'GET',
+          headers,
+        })
 
         if (!response.ok) {
           throw new Error(`Failed to fetch transactions: ${response.statusText}`)
@@ -131,14 +113,9 @@ export function useTransactions(token?: string) {
 
         const data = await response.json()
         setTransactions(data.items)
-        setPagination({
-          offset,
-          limit,
-          total: data.total,
-        })
+        setPagination({ offset, limit, total: data.total })
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Erro ao buscar transações'
+        const message = err instanceof Error ? err.message : 'Erro ao buscar transações'
         setError(message)
         setTransactions([])
       } finally {
@@ -148,13 +125,11 @@ export function useTransactions(token?: string) {
     [pagination.offset, pagination.limit, API_URL, getAuthHeaders]
   )
 
-  // Auto-fetch transactions when token becomes available
   useEffect(() => {
     if (token) {
-      console.log('[DEBUG] useTransactions - token available, fetching...')
       fetchTransactions({}, 0, 20)
     }
-  }, [token])
+  }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const createTransaction = useCallback(
     async (transactionData: Omit<Transaction, 'id' | 'created_at' | 'updated_at'>) => {
@@ -166,15 +141,15 @@ export function useTransactions(token?: string) {
         })
 
         if (!response.ok) {
-          throw new Error(`Failed to create transaction: ${response.statusText}`)
+          const errBody = await response.json().catch(() => ({}))
+          throw new Error(errBody.detail || `Failed to create transaction: ${response.statusText}`)
         }
 
         const newTransaction = await response.json()
         setTransactions((prev) => [newTransaction, ...prev])
         return newTransaction
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Erro ao criar transação'
+        const message = err instanceof Error ? err.message : 'Erro ao criar transação'
         setError(message)
         throw err
       }
@@ -192,17 +167,15 @@ export function useTransactions(token?: string) {
         })
 
         if (!response.ok) {
-          throw new Error(`Failed to update transaction: ${response.statusText}`)
+          const errBody = await response.json().catch(() => ({}))
+          throw new Error(errBody.detail || `Failed to update transaction: ${response.statusText}`)
         }
 
         const updated = await response.json()
-        setTransactions((prev) =>
-          prev.map((t) => (t.id === id ? updated : t))
-        )
+        setTransactions((prev) => prev.map((t) => (t.id === id ? updated : t)))
         return updated
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Erro ao atualizar transação'
+        const message = err instanceof Error ? err.message : 'Erro ao atualizar transação'
         setError(message)
         throw err
       }
@@ -224,8 +197,7 @@ export function useTransactions(token?: string) {
 
         setTransactions((prev) => prev.filter((t) => t.id !== id))
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Erro ao deletar transação'
+        const message = err instanceof Error ? err.message : 'Erro ao deletar transação'
         setError(message)
         throw err
       }
@@ -233,19 +205,32 @@ export function useTransactions(token?: string) {
     [API_URL, getAuthHeaders]
   )
 
+  const bulkCategorize = useCallback(
+    async (transactionIds: string[], categoryId: string) => {
+      const response = await fetch(`${API_URL}/transactions/bulk-categorize`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ transaction_ids: transactionIds, category_id: categoryId }),
+      })
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}))
+        throw new Error(errBody.detail || 'Erro ao categorizar transações')
+      }
+      return response.json()
+    },
+    [API_URL, getAuthHeaders]
+  )
+
   const reconcileTransaction = useCallback(
     async (id: string, isReconciled: boolean) => {
-      return updateTransaction(id, { is_reconciled: isReconciled } as any)
+      return updateTransaction(id, { is_reconciled: isReconciled })
     },
     [updateTransaction]
   )
 
-  const changePage = useCallback(
-    (newOffset: number) => {
-      setPagination((prev) => ({ ...prev, offset: newOffset }))
-    },
-    []
-  )
+  const changePage = useCallback((newOffset: number) => {
+    setPagination((prev) => ({ ...prev, offset: newOffset }))
+  }, [])
 
   return {
     transactions,
@@ -256,6 +241,7 @@ export function useTransactions(token?: string) {
     createTransaction,
     updateTransaction,
     deleteTransaction,
+    bulkCategorize,
     reconcileTransaction,
     changePage,
   }

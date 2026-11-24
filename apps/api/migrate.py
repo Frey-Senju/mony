@@ -9,12 +9,22 @@ Three cases handled:
 """
 import os
 import subprocess
+import sys
 
 from sqlalchemy import create_engine
 from sqlalchemy import inspect as sa_inspect
 
-DATABASE_URL = os.environ["DATABASE_URL"]
-engine = create_engine(DATABASE_URL)
+DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+if not DATABASE_URL:
+    print("[migrate] ERROR: DATABASE_URL environment variable is not set.", file=sys.stderr)
+    sys.exit(1)
+
+# Render/Heroku sometimes supply legacy `postgres://` URLs; SQLAlchemy 2 requires `postgresql://`
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    os.environ["DATABASE_URL"] = DATABASE_URL
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 tables = set(sa_inspect(engine).get_table_names())
 
 

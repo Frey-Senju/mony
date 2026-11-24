@@ -1,6 +1,6 @@
 # EPIC-002: Mony — Open Finance & Intelligence
 
-**Status**: Planning  
+**Status**: ✅ DONE (Merged PRs #3–#9)  
 **Priority**: P0  
 **Created**: 2026-04-24  
 **Assigned**: @pm (Morgan)  

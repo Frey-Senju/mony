@@ -191,10 +191,21 @@ export const useAuth = () => {
 
   // Logout user
   const logout = useCallback(() => {
+    const accessToken = state.tokens?.access_token
+    if (accessToken) {
+      fetch(`${API_URL}/auth/logout`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+        },
+      }).catch(() => {
+        // Best-effort token revocation
+      })
+    }
     localStorage.removeItem('mony_tokens')
     setState({ user: null, tokens: null, loading: false, error: null })
     router.push('/auth/login')
-  }, [router])
+  }, [router, state.tokens?.access_token])
 
   // Request password reset
   const requestPasswordReset = useCallback(
@@ -279,6 +290,30 @@ export const useAuth = () => {
     }
   }, [state.tokens?.access_token])
 
+  // Verify and activate 2FA
+  const verify2FA = useCallback(
+    async (totpCode: string) => {
+      if (!state.tokens?.access_token) throw new Error('Not authenticated')
+
+      const response = await fetch(`${API_URL}/auth/2fa/verify`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${state.tokens.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ totp_code: totpCode }),
+      })
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.detail || '2FA verification failed')
+      }
+
+      return response.json()
+    },
+    [state.tokens?.access_token]
+  )
+
   // Get authorization header
   const getAuthHeader = useCallback(() => {
     if (!state.tokens?.access_token) return {}
@@ -304,6 +339,7 @@ export const useAuth = () => {
     requestPasswordReset,
     confirmPasswordReset,
     setup2FA,
+    verify2FA,
     getAuthHeader,
   }
 }

@@ -1,38 +1,83 @@
-from fastapi import FastAPI
+import os
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from routes.auth import router as auth_router
-from routes.transactions import router as transactions_router
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
 from routes.accounts import router as accounts_router
-from routes.reports import router as reports_router
+from routes.auth import router as auth_router
+from routes.budgets import router as budgets_router
+from routes.categories import router as categories_router
+from routes.goals import router as goals_router
+from routes.insights import router as insights_router
 from routes.open_finance import router as open_finance_router
 from routes.open_finance_sync import router as open_finance_sync_router
-from routes.budgets import router as budgets_router
-from routes.insights import router as insights_router
-from routes.goals import router as goals_router
+from routes.reports import router as reports_router
+from routes.transactions import router as transactions_router
 
 app = FastAPI(
     title="Mony API",
     description="Money management API",
-    version="0.1.0"
+    version="0.2.0",
 )
 
-# CORS configuration
+# Rate limiting (slowapi) — active in production, relaxed in automated tests
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["200/minute"],
+    enabled=not bool(os.getenv("PYTEST_CURRENT_TEST")),
+)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Please try again shortly."},
+    )
+
+
+# CORS configuration — includes PATCH for /goals/{id}/deposit and env override
+_default_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://web-flame-alpha-37.vercel.app",
+]
+_extra_origins = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+_frontend_url = os.getenv("FRONTEND_URL", "").strip().rstrip("/")
+if _frontend_url and _frontend_url not in _default_origins:
+    _extra_origins.append(_frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "https://web-flame-alpha-37.vercel.app",
-        # Add production Vercel URL when ready
-    ],
+    allow_origins=list(dict.fromkeys(_default_origins + _extra_origins)),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Webhook-Signature"],
 )
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    return response
+
 
 # Register routers
 app.include_router(auth_router)
-app.include_router(transactions_router)
 app.include_router(accounts_router)
+app.include_router(categories_router)
+app.include_router(transactions_router)
 app.include_router(reports_router)
 app.include_router(open_finance_router)
 app.include_router(open_finance_sync_router)
@@ -40,13 +85,16 @@ app.include_router(budgets_router)
 app.include_router(insights_router)
 app.include_router(goals_router)
 
+
 @app.get("/")
 async def root():
-    return {"message": "Mony API is running"}
+    return {"message": "Mony API is running", "version": "0.2.0"}
+
 
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
+
 
 if __name__ == "__main__":
     import uvicorn

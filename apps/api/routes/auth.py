@@ -1,32 +1,48 @@
 """
 Authentication endpoints for Mony API.
 
-Provides user registration, login, token refresh, logout, 2FA, password reset.
+Provides user registration (with default account + category seeding), login,
+profile read/update (/auth/users/me), token refresh, logout (with token
+blacklist), 2FA setup/verify/disable, and password reset.
 """
 
 from datetime import datetime, timedelta, timezone as dt_timezone
+from decimal import Decimal
+import logging
+import os
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+import httpx
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
 
 from database.base import get_db
-from database.models import User
+from database.models import Account, AccountType, User
+from routes.categories import ensure_default_categories
 from utils.auth import (
+    blacklist_token,
+    create_access_token,
+    create_password_reset_token,
+    create_refresh_token,
+    extract_bearer_token,
+    generate_backup_codes,
+    generate_totp_qr_code,
+    generate_totp_secret,
+    get_current_user_from_header,
     hash_password,
     verify_password,
-    create_access_token,
-    create_refresh_token,
-    verify_token,
-    get_current_user_from_header,
-    create_password_reset_token,
     verify_password_reset_token,
+    verify_token,
+    verify_totp_code,
 )
+from utils.uuid_utils import parse_uuid
 
-# In-memory store for password reset tokens (24h TTL)
-# TODO: Move to Redis for production
-password_reset_tokens = {}
+logger = logging.getLogger(__name__)
+
+# In-memory store for password reset tokens (24h TTL).
+# Exported for compatibility with existing tests.
+password_reset_tokens: dict[str, dict] = {}
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -35,67 +51,64 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 
 class RegisterRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "email": "user@example.com",
+                "password": "SecurePass123!",
+                "full_name": "João Silva",
+            }
+        }
+    )
+
     email: EmailStr
     password: str
     full_name: str
 
-    class Config:
-        example = {
-            "email": "user@example.com",
-            "password": "SecurePass123!",
-            "full_name": "João Silva"
-        }
-
 
 class LoginRequest(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "email": "user@example.com",
+                "password": "SecurePass123!",
+            }
+        }
+    )
+
     email: EmailStr
     password: str
 
-    class Config:
-        example = {
-            "email": "user@example.com",
-            "password": "SecurePass123!"
-        }
-
 
 class TokenResponse(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "access_token": "eyJhbGci...",
+                "refresh_token": "eyJhbGci...",
+                "token_type": "bearer",
+                "expires_in": 900,
+            }
+        }
+    )
+
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
     expires_in: int  # seconds
 
-    class Config:
-        example = {
-            "access_token": "eyJhbGci...",
-            "refresh_token": "eyJhbGci...",
-            "token_type": "bearer",
-            "expires_in": 900
-        }
-
 
 class RefreshTokenRequest(BaseModel):
     refresh_token: str
-
-    class Config:
-        example = {"refresh_token": "eyJhbGci..."}
 
 
 class PasswordResetRequest(BaseModel):
     email: EmailStr
 
-    class Config:
-        example = {"email": "user@example.com"}
-
 
 class PasswordResetConfirm(BaseModel):
     token: str
     new_password: str
-
-    class Config:
-        example = {
-            "token": "reset_token_from_email",
-            "new_password": "NewSecurePass123!"
-        }
 
 
 class TwoFASetupResponse(BaseModel):
@@ -103,19 +116,75 @@ class TwoFASetupResponse(BaseModel):
     secret: str
     backup_codes: list[str]
 
-    class Config:
-        example = {
-            "qr_code": "data:image/png;base64,...",
-            "secret": "JBSWY3DPEBLW64TMMQ======",
-            "backup_codes": ["code1", "code2", ...]
-        }
-
 
 class TwoFAVerifyRequest(BaseModel):
-    totp_code: str
+    totp_code: str = Field(min_length=6, max_length=8)
 
-    class Config:
-        example = {"totp_code": "123456"}
+
+class UserProfileResponse(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    phone: Optional[str] = None
+    preferred_currency: str = "BRL"
+    timezone: str = "America/Sao_Paulo"
+    is_email_verified: bool = False
+    two_factor_enabled: bool = False
+    plan: str = "BASIC"
+    created_at: str
+
+
+class UserProfileUpdateRequest(BaseModel):
+    full_name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    phone: Optional[str] = Field(default=None, max_length=20)
+    preferred_currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    timezone: Optional[str] = Field(default=None, max_length=50)
+
+
+def _serialize_user(user: User) -> UserProfileResponse:
+    plan_value = user.plan.value.upper() if hasattr(user.plan, "value") else str(user.plan or "BASIC").upper()
+    return UserProfileResponse(
+        id=str(user.id),
+        email=user.email,
+        full_name=user.full_name,
+        phone=user.phone,
+        preferred_currency=user.preferred_currency or "BRL",
+        timezone=user.timezone or "America/Sao_Paulo",
+        is_email_verified=bool(user.is_email_verified),
+        two_factor_enabled=bool(user.two_factor_enabled),
+        plan=plan_value,
+        created_at=user.created_at.isoformat() if user.created_at else datetime.utcnow().isoformat(),
+    )
+
+
+async def _send_password_reset_email(email: str, reset_token: str) -> None:
+    """Send password reset link via Resend when RESEND_API_KEY is configured."""
+    api_key = os.getenv("RESEND_API_KEY")
+    frontend_url = os.getenv("FRONTEND_URL", "https://web-flame-alpha-37.vercel.app").rstrip("/")
+    reset_link = f"{frontend_url}/auth/forgot-password?token={reset_token}"
+
+    if not api_key:
+        logger.info("[DEV MODE] Password reset link for %s: %s", email, reset_link)
+        return
+
+    from_addr = os.getenv("RESEND_FROM_EMAIL", "Mony <noreply@mony.app>")
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            await client.post(
+                "https://api.resend.com/emails",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "from": from_addr,
+                    "to": [email],
+                    "subject": "Redefinição de senha — Mony",
+                    "html": (
+                        f"<p>Recebemos uma solicitação para redefinir sua senha no Mony.</p>"
+                        f"<p><a href='{reset_link}'>Clique aqui para criar uma nova senha</a> (válido por 24 horas).</p>"
+                    ),
+                },
+            )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to send password reset email via Resend: %s", exc)
 
 
 # ============ Endpoint 1: Register ============
@@ -124,45 +193,55 @@ class TwoFAVerifyRequest(BaseModel):
 @router.post("/register", response_model=TokenResponse, status_code=201)
 async def register(
     payload: RegisterRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Register new user.
 
-    - email: unique identifier
-    - password: stored with bcrypt (cost 12)
-    - full_name: display name
-
-    Returns access + refresh tokens (tokens valid immediately, no email verification required).
+    Automatically provisions a default checking account ("Conta Principal") and
+    seeds the default transaction categories so new users can start immediately.
     """
-    # Check if email exists
     existing_user = db.query(User).filter(User.email == payload.email).first()
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered"
+            detail="Email already registered",
         )
 
-    # Create new user
     user = User(
         email=payload.email,
         password_hash=hash_password(payload.password),
         full_name=payload.full_name,
-        is_email_verified=False,  # TODO: email verification flow in Story 1.2b
-        created_at=datetime.utcnow()
+        is_email_verified=False,
+        created_at=datetime.utcnow(),
     )
     db.add(user)
     db.commit()
     db.refresh(user)
 
-    # Generate tokens
+    # Auto-provision default account and default categories for seamless onboarding
+    default_account = Account(
+        user_id=user.id,
+        name="Conta Principal",
+        type=AccountType.CHECKING,
+        balance=Decimal("0.00"),
+        currency=user.preferred_currency or "BRL",
+        icon="🏦",
+        color="#0071E3",
+        is_default=True,
+        sort_order=0.0,
+    )
+    db.add(default_account)
+    db.commit()
+    ensure_default_categories(db, user.id)
+
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=900  # 15 minutes
+        expires_in=900,
     )
 
 
@@ -172,41 +251,29 @@ async def register(
 @router.post("/login", response_model=TokenResponse)
 async def login(
     payload: LoginRequest,
-    db: Session = Depends(get_db)
+    request: Request,
+    db: Session = Depends(get_db),
 ):
-    """
-    Authenticate user with email + password.
-
-    - Account lockout after 5 failed attempts (24h lockdown)
-    - Rate limited to 15 attempts/min per IP
-
-    Returns access + refresh tokens.
-    """
+    """Authenticate user with email + password and account lockout protection."""
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials"
+            detail="Invalid credentials",
         )
 
-    # Check if account is locked
     if user.is_locked:
-        if datetime.utcnow() < user.locked_until:
+        if user.locked_until and datetime.utcnow() < user.locked_until:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Account is locked. Try again later."
+                detail="Account is locked. Try again later.",
             )
-        else:
-            # Unlock account after lockout period
-            user.is_locked = False
-            user.failed_login_attempts = 0
+        user.is_locked = False
+        user.failed_login_attempts = 0
 
-    # Verify password
     if not verify_password(payload.password, user.password_hash):
         user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-
-        # Lock account after 5 failed attempts
         if user.failed_login_attempts >= 5:
             user.is_locked = True
             user.locked_until = datetime.utcnow() + timedelta(hours=24)
@@ -214,23 +281,66 @@ async def login(
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials"
+            detail="Invalid credentials",
         )
 
-    # Reset failed attempts on success
     user.failed_login_attempts = 0
     user.last_login_at = datetime.utcnow()
+    if request.client:
+        user.last_login_ip = request.client.host
     db.commit()
 
-    # Generate tokens
     access_token = create_access_token(user.id)
     refresh_token = create_refresh_token(user.id)
 
     return TokenResponse(
         access_token=access_token,
         refresh_token=refresh_token,
-        expires_in=900
+        expires_in=900,
     )
+
+
+# ============ Endpoint 2b: Current User Profile ============
+
+
+@router.get("/users/me", response_model=UserProfileResponse)
+async def get_current_user_profile(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Return the authenticated user's profile."""
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid, User.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return _serialize_user(user)
+
+
+@router.put("/users/me", response_model=UserProfileResponse)
+async def update_current_user_profile(
+    payload: UserProfileUpdateRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Update the authenticated user's profile fields."""
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid, User.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if payload.full_name is not None:
+        user.full_name = payload.full_name.strip()
+    if payload.phone is not None:
+        user.phone = payload.phone.strip() or None
+    if payload.preferred_currency is not None:
+        user.preferred_currency = payload.preferred_currency.upper()
+    if payload.timezone is not None:
+        user.timezone = payload.timezone
+
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(user)
+    return _serialize_user(user)
 
 
 # ============ Endpoint 3: Refresh Token ============
@@ -239,39 +349,32 @@ async def login(
 @router.post("/refresh", response_model=TokenResponse)
 async def refresh_token(
     payload: RefreshTokenRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Issue new access token using valid refresh token.
-
-    - Refresh tokens valid for 7 days
-    - Expired refresh tokens return 401
-
-    Returns new access + refresh tokens.
-    """
+    """Issue new access + refresh tokens using a valid refresh token."""
     try:
         user_id = verify_token(payload.refresh_token, token_type="refresh")
-    except HTTPException as e:
+    except HTTPException:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token"
+            detail="Invalid or expired refresh token",
         )
 
-    user = db.query(User).filter(User.id == user_id).first()
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="User not found",
         )
 
-    # Generate new tokens
     access_token = create_access_token(user.id)
     new_refresh_token = create_refresh_token(user.id)
 
     return TokenResponse(
         access_token=access_token,
         refresh_token=new_refresh_token,
-        expires_in=900
+        expires_in=900,
     )
 
 
@@ -280,58 +383,98 @@ async def refresh_token(
 
 @router.post("/logout", status_code=204)
 async def logout(
-    user_id: str = Depends(get_current_user_from_header)
+    authorization: str = Header(None),
+    user_id: str = Depends(get_current_user_from_header),
 ):
-    """
-    Invalidate user session.
-
-    - Token added to blacklist (Redis, 7-day TTL)
-    - Subsequent requests with this token rejected
-    """
-    # TODO: Add token to blacklist in Redis
+    """Invalidate the current access token by adding it to the blacklist."""
+    token = extract_bearer_token(authorization)
+    blacklist_token(token, ttl_seconds=900)
     return None
 
 
-# ============ Endpoint 5: Setup 2FA (TOTP) ============
+# ============ Endpoint 5: 2FA (TOTP) ============
 
 
 @router.post("/2fa/setup", response_model=TwoFASetupResponse)
 async def setup_2fa(
     user_id: str = Depends(get_current_user_from_header),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Generate TOTP secret for 2FA setup.
-
-    - Generates 6-digit TOTP codes (Google Authenticator compatible)
-    - Returns QR code + secret + 10 backup codes
-    - User must verify with verify_2fa endpoint to enable
-
-    Backup codes: 1-time use, can disable 2FA if TOTP device lost.
-    """
-    from uuid import UUID
-    user = db.query(User).filter(User.id == UUID(user_id)).first()
+    """Generate and persist pending TOTP secret + QR code + backup codes."""
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="User not found",
         )
-
-    # Generate TOTP secret + QR code + backup codes
-    from utils.auth import generate_totp_secret, generate_totp_qr_code, generate_backup_codes
 
     secret = generate_totp_secret(user.email)
     qr_code = generate_totp_qr_code(user.email, secret)
     backup_codes = generate_backup_codes(count=10)
 
-    # TODO: Store secret + backup codes in database (encrypted)
-    # User must confirm with TOTP code before 2FA is actually enabled
+    # Store secret (remains disabled until user confirms via /auth/2fa/verify)
+    user.two_factor_secret = secret
+    user.updated_at = datetime.utcnow()
+    db.commit()
 
     return TwoFASetupResponse(
         qr_code=qr_code,
         secret=secret,
-        backup_codes=backup_codes
+        backup_codes=backup_codes,
     )
+
+
+@router.post("/2fa/verify", status_code=200)
+async def verify_2fa(
+    payload: TwoFAVerifyRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Verify TOTP code and enable 2FA for the authenticated user."""
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not user.two_factor_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="2FA setup has not been initiated",
+        )
+
+    if not verify_totp_code(user.two_factor_secret, payload.totp_code.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid TOTP verification code",
+        )
+
+    user.two_factor_enabled = True
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    return {"message": "Two-factor authentication enabled", "two_factor_enabled": True}
+
+
+@router.post("/2fa/disable", status_code=200)
+async def disable_2fa(
+    payload: TwoFAVerifyRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Disable 2FA after confirming current TOTP code."""
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if not user.two_factor_enabled or not user.two_factor_secret:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="2FA is not enabled")
+    if not verify_totp_code(user.two_factor_secret, payload.totp_code.strip()):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid TOTP verification code")
+
+    user.two_factor_enabled = False
+    user.two_factor_secret = None
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    return {"message": "Two-factor authentication disabled", "two_factor_enabled": False}
 
 
 # ============ Endpoint 6: Password Reset (2-step) ============
@@ -340,87 +483,66 @@ async def setup_2fa(
 @router.post("/password-reset/request", status_code=202)
 async def request_password_reset(
     payload: PasswordResetRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Step 1: Request password reset.
-
-    - Email sent with reset token (24h validity)
-    - Returns 202 regardless of email existence (security: no user enumeration)
-    """
+    """Step 1: Request password reset (202 always to prevent user enumeration)."""
     user = db.query(User).filter(User.email == payload.email).first()
 
     if user:
-        # Generate reset token
         reset_token = create_password_reset_token(user.id)
         password_reset_tokens[reset_token] = {
             "user_id": user.id,
             "created_at": datetime.now(dt_timezone.utc),
-            "expires_at": datetime.now(dt_timezone.utc) + timedelta(hours=24)
+            "expires_at": datetime.now(dt_timezone.utc) + timedelta(hours=24),
         }
+        await _send_password_reset_email(user.email, reset_token)
 
-        # TODO: Send email with reset token
-        # Email template: https://app.example.com/reset-password?token={reset_token}
-        # Use: Resend, SendGrid, or other email service
-        print(f"[DEV MODE] Password reset token for {user.email}: {reset_token}")
-
-    # Return 202 regardless of whether user exists (no user enumeration)
     return {"message": "Check your email for password reset instructions"}
 
 
 @router.post("/password-reset/confirm", status_code=200)
 async def confirm_password_reset(
     payload: PasswordResetConfirm,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """
-    Step 2: Confirm password reset with token from email.
-
-    - Token must be valid (within 24h)
-    - New password must meet security policy
-    - Old refresh tokens invalidated (logout all sessions)
-    """
-    # Verify reset token
+    """Step 2: Confirm password reset with valid one-time token."""
     try:
         user_id = verify_password_reset_token(payload.token)
     except HTTPException:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token"
+            detail="Invalid or expired reset token",
         )
 
-    # Check if token still exists in our store (not already used)
     if payload.token not in password_reset_tokens:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token"
+            detail="Invalid or expired reset token",
         )
 
-    # Check token expiration
     token_data = password_reset_tokens[payload.token]
     if datetime.now(dt_timezone.utc) > token_data["expires_at"]:
         del password_reset_tokens[payload.token]
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Reset token expired"
+            detail="Reset token expired",
         )
 
-    # Get user
-    user = db.query(User).filter(User.id == user_id).first()
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found"
+            detail="User not found",
         )
 
-    # Update password
     user.password_hash = hash_password(payload.new_password)
+    user.is_locked = False
+    user.failed_login_attempts = 0
+    user.updated_at = datetime.utcnow()
     db.commit()
 
-    # Invalidate token (mark as used)
     del password_reset_tokens[payload.token]
-
-    # TODO: Invalidate all refresh tokens (logout all sessions)
-    # Approach: Add blacklist entry for all tokens issued before now
+    blacklist_token(payload.token, ttl_seconds=86400)
 
     return {"message": "Password reset successfully"}

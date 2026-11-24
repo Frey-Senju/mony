@@ -180,23 +180,40 @@ export function TransactionModal({
     }
   }
 
+  // Close on Escape for keyboard accessibility
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, onClose])
+
   if (!isOpen) {
     return null
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-slate-900 rounded-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
+    <div
+      className="fixed inset-0 bg-slate-950/45 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="transaction-modal-title"
+    >
+      <div className="glass-modal max-w-md w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900">
-          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">
+        <div className="flex items-center justify-between p-6 border-b border-slate-200/60 dark:border-white/10 sticky top-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md">
+          <h2 id="transaction-modal-title" className="text-xl font-semibold text-slate-900 dark:text-slate-100">
             {transaction ? 'Editar Transação' : 'Nova Transação'}
           </h2>
           <button
+            type="button"
             onClick={onClose}
-            className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+            aria-label="Fechar modal"
+            className="p-1 rounded-lg text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
           >
-            <X className="w-6 h-6" />
+            <X className="w-6 h-6" aria-hidden="true" />
           </button>
         </div>
 

@@ -87,6 +87,12 @@ try:
         test_session.commit()
         print(f"[OK] Created test accounts")
 
+        # Seed default categories so Reports/Budgets/Insights have real data
+        from routes.categories import ensure_default_categories
+        from database.models import TransactionCategory
+        seeded_cats = ensure_default_categories(test_session, test_user.id)
+        cat_by_name = {c.name: c for c in seeded_cats}
+
         # Create test transactions
         today = date.today()
         transactions = [
@@ -120,8 +126,15 @@ try:
         ]
         for txn in transactions:
             test_session.add(txn)
+        test_session.flush()
+        if "Alimentação" in cat_by_name:
+            test_session.add(TransactionCategory(transaction_id=transactions[0].id, category_id=cat_by_name["Alimentação"].id))
+        if "Trabalho" in cat_by_name:
+            test_session.add(TransactionCategory(transaction_id=transactions[1].id, category_id=cat_by_name["Trabalho"].id))
+        if "Lazer" in cat_by_name:
+            test_session.add(TransactionCategory(transaction_id=transactions[2].id, category_id=cat_by_name["Lazer"].id))
         test_session.commit()
-        print(f"[OK] Created {len(transactions)} test transactions")
+        print(f"[OK] Created {len(transactions)} test transactions with categories")
 finally:
     test_session.close()
 

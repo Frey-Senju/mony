@@ -13,6 +13,9 @@ interface Transaction {
   is_reconciled: boolean
   currency: string
   category_id?: string
+  category_name?: string
+  category_color?: string
+  category_icon?: string
   source?: 'manual' | 'open_finance'
   external_id?: string | null
 }
@@ -33,7 +36,7 @@ export interface TransactionListProps {
   onPaginationChange?: (offset: number) => void
 }
 
-const CATEGORY_MAP: { [key: string]: string } = {
+const LEGACY_CATEGORY_MAP: { [key: string]: string } = {
   '1': 'Alimentação',
   '2': 'Transporte',
   '3': 'Saúde',
@@ -44,7 +47,7 @@ const CATEGORY_MAP: { [key: string]: string } = {
   '8': 'Outros',
 }
 
-const CATEGORY_COLORS: { [key: string]: string } = {
+const LEGACY_CATEGORY_COLORS: { [key: string]: string } = {
   '1': 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300',
   '2': 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300',
   '3': 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300',
@@ -101,12 +104,9 @@ export function TransactionList({
 
   if (loading) {
     return (
-      <div className="space-y-3">
+      <div className="space-y-3" aria-busy="true" aria-label="Carregando transações">
         {[...Array(5)].map((_, i) => (
-          <div
-            key={i}
-            className="h-16 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse"
-          />
+          <div key={i} className="h-16 glass-card animate-pulse" />
         ))}
       </div>
     )
@@ -114,8 +114,8 @@ export function TransactionList({
 
   if (transactions.length === 0) {
     return (
-      <div className="text-center py-12">
-        <p className="text-slate-500 dark:text-slate-400">
+      <div className="glass-panel text-center py-12">
+        <p className="text-slate-600 dark:text-slate-300 font-medium">
           Nenhuma transação encontrada
         </p>
       </div>
@@ -127,15 +127,20 @@ export function TransactionList({
 
   return (
     <div className="space-y-3">
-      {/* Bulk Actions Bar */}
+      {/* Bulk Selection Bar */}
       {someSelected && (
-        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 flex items-center justify-between">
-          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+        <div
+          role="status"
+          aria-live="polite"
+          className="glass-card px-4 py-3 flex items-center justify-between border-primary-300/60"
+        >
+          <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
             {selectedIds.size} selecionado(s)
           </span>
           <button
+            type="button"
             onClick={() => onSelectionChange(new Set())}
-            className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+            className="text-sm font-medium text-primary-600 hover:underline"
           >
             Desselecionar tudo
           </button>
@@ -143,196 +148,228 @@ export function TransactionList({
       )}
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-800">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
-              <th className="px-4 py-3 text-left">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  ref={(el) => {
-                    if (el) {
-                      el.indeterminate = someSelected
-                    }
-                  }}
-                  onChange={toggleSelectAll}
-                  className="rounded"
-                />
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-slate-900 dark:text-slate-100">
-                Descrição
-              </th>
-              <th className="px-4 py-3 text-right font-medium text-slate-900 dark:text-slate-100">
-                Valor
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-slate-900 dark:text-slate-100">
-                Categoria
-              </th>
-              <th className="px-4 py-3 text-left font-medium text-slate-900 dark:text-slate-100">
-                Data
-              </th>
-              <th className="px-4 py-3 text-center font-medium text-slate-900 dark:text-slate-100">
-                Status
-              </th>
-              <th className="px-4 py-3 text-right font-medium text-slate-900 dark:text-slate-100">
-                Ações
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {transactions.map((transaction) => (
-              <tr
-                key={transaction.id}
-                className="border-b border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors"
-              >
-                <td className="px-4 py-3">
+      <div className="glass-card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-white/40 dark:bg-white/5 border-b border-slate-200/70 dark:border-white/10">
+                <th scope="col" className="px-4 py-3 text-left">
                   <input
                     type="checkbox"
-                    checked={selectedIds.has(transaction.id)}
-                    onChange={() => toggleSelect(transaction.id)}
+                    aria-label="Selecionar todas as transações"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) {
+                        el.indeterminate = someSelected
+                      }
+                    }}
+                    onChange={toggleSelectAll}
                     className="rounded"
                   />
-                </td>
-                <td className="px-4 py-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-medium text-slate-900 dark:text-slate-100">
-                        {transaction.description}
-                      </p>
-                      {transaction.source === 'open_finance' && (
-                        <span
-                          className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
-                          data-testid="open-finance-badge"
-                          title="Importada via Open Finance"
-                        >
-                          <Landmark className="w-3 h-3" />
-                          Open Finance
-                        </span>
-                      )}
-                    </div>
-                    {transaction.merchant_name && (
-                      <p className="text-xs text-slate-500 dark:text-slate-400">
-                        {transaction.merchant_name}
-                      </p>
-                    )}
-                  </div>
-                </td>
-                <td
-                  className={`px-4 py-3 text-right font-semibold ${
-                    transaction.type === 'income'
-                      ? 'text-green-600 dark:text-green-400'
-                      : 'text-red-600 dark:text-red-400'
-                  }`}
-                >
-                  <div className="flex items-center justify-end gap-2">
-                    {transaction.type === 'income' ? (
-                      <TrendingUp className="w-4 h-4" />
-                    ) : (
-                      <TrendingDown className="w-4 h-4" />
-                    )}
-                    {formatCurrency(
-                      Math.abs(transaction.amount),
-                      transaction.currency
-                    )}
-                  </div>
-                </td>
-                <td className="px-4 py-3">
-                  {transaction.category_id && CATEGORY_MAP[transaction.category_id] ? (
-                    <span
-                      className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium ${
-                        CATEGORY_COLORS[transaction.category_id]
+                </th>
+                <th scope="col" className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-slate-100">
+                  Descrição
+                </th>
+                <th scope="col" className="px-4 py-3 text-right font-semibold text-slate-900 dark:text-slate-100">
+                  Valor
+                </th>
+                <th scope="col" className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-slate-100">
+                  Categoria
+                </th>
+                <th scope="col" className="px-4 py-3 text-left font-semibold text-slate-900 dark:text-slate-100">
+                  Data
+                </th>
+                <th scope="col" className="px-4 py-3 text-center font-semibold text-slate-900 dark:text-slate-100">
+                  Status
+                </th>
+                <th scope="col" className="px-4 py-3 text-right font-semibold text-slate-900 dark:text-slate-100">
+                  Ações
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {transactions.map((transaction) => {
+                const resolvedCategoryName =
+                  transaction.category_name ||
+                  (transaction.category_id ? LEGACY_CATEGORY_MAP[transaction.category_id] : undefined)
+
+                return (
+                  <tr
+                    key={transaction.id}
+                    className="border-b border-slate-200/60 dark:border-white/10 last:border-b-0 hover:bg-white/45 dark:hover:bg-white/5 transition-colors"
+                  >
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Selecionar transação ${transaction.description}`}
+                        checked={selectedIds.has(transaction.id)}
+                        onChange={() => toggleSelect(transaction.id)}
+                        className="rounded"
+                      />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium text-slate-900 dark:text-slate-100">
+                            {transaction.description}
+                          </p>
+                          {transaction.source === 'open_finance' && (
+                            <span
+                              className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"
+                              data-testid="open-finance-badge"
+                              title="Importada via Open Finance"
+                            >
+                              <Landmark className="w-3 h-3" aria-hidden="true" />
+                              Open Finance
+                            </span>
+                          )}
+                        </div>
+                        {transaction.merchant_name && (
+                          <p className="text-xs text-slate-500 dark:text-slate-400">
+                            {transaction.merchant_name}
+                          </p>
+                        )}
+                      </div>
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-right font-semibold whitespace-nowrap ${
+                        transaction.type === 'income'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
                       }`}
                     >
-                      {CATEGORY_MAP[transaction.category_id]}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-slate-400">Sem categoria</span>
-                  )}
-                </td>
-                <td className="px-4 py-3 text-slate-600 dark:text-slate-400">
-                  {formatDate(transaction.transaction_date)}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <button
-                    onClick={() =>
-                      onReconcile(transaction.id, !transaction.is_reconciled)
-                    }
-                    className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors"
-                    title={
-                      transaction.is_reconciled
-                        ? 'Marcar como não reconciliado'
-                        : 'Marcar como reconciliado'
-                    }
-                  >
-                    {transaction.is_reconciled ? (
-                      <>
-                        <Check className="w-4 h-4 text-green-600 dark:text-green-400" />
-                        <span className="text-green-600 dark:text-green-400">
-                          OK
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <X className="w-4 h-4 text-slate-400" />
-                        <span className="text-slate-400">Pendente</span>
-                      </>
-                    )}
-                  </button>
-                </td>
-                <td className="px-4 py-3 text-right flex items-center justify-end gap-2">
-                  <button
-                    onClick={() => onEdit(transaction.id)}
-                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors text-blue-600 dark:text-blue-400"
-                    title="Editar"
-                  >
-                    <Edit2 className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => onDelete(transaction.id)}
-                    className="p-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors text-red-600 dark:text-red-400"
-                    title="Deletar"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {transaction.type === 'income' ? (
+                          <TrendingUp className="w-4 h-4" aria-hidden="true" />
+                        ) : (
+                          <TrendingDown className="w-4 h-4" aria-hidden="true" />
+                        )}
+                        {formatCurrency(Math.abs(transaction.amount), transaction.currency)}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {resolvedCategoryName ? (
+                        transaction.category_color ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium"
+                            style={{
+                              backgroundColor: `${transaction.category_color}22`,
+                              color: transaction.category_color,
+                              border: `1px solid ${transaction.category_color}44`,
+                            }}
+                          >
+                            {transaction.category_icon && <span aria-hidden="true">{transaction.category_icon}</span>}
+                            {resolvedCategoryName}
+                          </span>
+                        ) : (
+                          <span
+                            className={`inline-block px-2.5 py-1 rounded-full text-xs font-medium ${
+                              (transaction.category_id && LEGACY_CATEGORY_COLORS[transaction.category_id]) ||
+                              'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                            }`}
+                          >
+                            {resolvedCategoryName}
+                          </span>
+                        )
+                      ) : (
+                        <span className="text-xs text-slate-400">Sem categoria</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                      {formatDate(transaction.transaction_date)}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => onReconcile(transaction.id, !transaction.is_reconciled)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium hover:bg-white/50 dark:hover:bg-white/10 transition-colors"
+                        title={
+                          transaction.is_reconciled
+                            ? 'Marcar como não reconciliado'
+                            : 'Marcar como reconciliado'
+                        }
+                        aria-label={
+                          transaction.is_reconciled
+                            ? `Marcar ${transaction.description} como pendente`
+                            : `Marcar ${transaction.description} como reconciliado`
+                        }
+                      >
+                        {transaction.is_reconciled ? (
+                          <>
+                            <Check className="w-4 h-4 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                            <span className="text-emerald-600 dark:text-emerald-400">OK</span>
+                          </>
+                        ) : (
+                          <>
+                            <X className="w-4 h-4 text-slate-400" aria-hidden="true" />
+                            <span className="text-slate-500 dark:text-slate-400">Pendente</span>
+                          </>
+                        )}
+                      </button>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => onEdit(transaction.id)}
+                          className="p-1.5 hover:bg-white/60 dark:hover:bg-white/10 rounded-lg transition-colors text-blue-600 dark:text-blue-400"
+                          title="Editar"
+                          aria-label={`Editar ${transaction.description}`}
+                        >
+                          <Edit2 className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDelete(transaction.id)}
+                          className="p-1.5 hover:bg-red-50/70 dark:hover:bg-red-950/30 rounded-lg transition-colors text-red-600 dark:text-red-400"
+                          title="Deletar"
+                          aria-label={`Deletar ${transaction.description}`}
+                        >
+                          <Trash2 className="w-4 h-4" aria-hidden="true" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Pagination */}
       {pagination && pagination.total > 0 && (
-        <div className="flex items-center justify-between mt-6">
-          <p className="text-sm text-slate-600 dark:text-slate-400">
+        <div className="flex items-center justify-between pt-2">
+          <p className="text-sm text-slate-600 dark:text-slate-300">
             Mostrando {pagination.offset + 1} a{' '}
             {Math.min(pagination.offset + pagination.limit, pagination.total)} de{' '}
             {pagination.total} transações
           </p>
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={() =>
                 onPaginationChange &&
                 onPaginationChange(Math.max(0, pagination.offset - pagination.limit))
               }
               disabled={pagination.offset === 0}
-              className="px-4 py-2 rounded border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="liquid-btn liquid-btn-glass px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Anterior
             </button>
             <button
+              type="button"
               onClick={() =>
                 onPaginationChange &&
                 onPaginationChange(
                   Math.min(
                     pagination.offset + pagination.limit,
-                    pagination.total - pagination.limit
+                    Math.max(0, pagination.total - pagination.limit)
                   )
                 )
               }
               disabled={pagination.offset + pagination.limit >= pagination.total}
-              className="px-4 py-2 rounded border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="liquid-btn liquid-btn-glass px-4 py-2 rounded-xl text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Próxima
             </button>

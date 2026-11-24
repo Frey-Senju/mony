@@ -14,6 +14,8 @@ DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://user:password@localhost:5432/mony_dev"
 )
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Create engine with connection pooling
 engine = create_engine(
