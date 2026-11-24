@@ -10,12 +10,14 @@ Endpoints:
 
 from datetime import date, datetime
 from decimal import Decimal
+import re
 from typing import List, Optional
+import unicodedata
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, func
+from sqlalchemy import and_, func, or_
 from sqlalchemy.orm import Session
 
 from database.base import get_db
@@ -30,7 +32,12 @@ from database.models import (
     TransactionType,
 )
 from routes.categories import ensure_default_categories
-from routes.transactions import _balance_delta, _resolve_category, _set_transaction_category
+from routes.transactions import (
+    _balance_delta,
+    _month_filter_clause,
+    _resolve_category,
+    _set_transaction_category,
+)
 from services.ai_analyzer import (
     analyze_document,
     chat_with_financial_context,
@@ -74,7 +81,60 @@ class ImportTransactionsRequest(BaseModel):
     statement_month: str = Field(pattern=r"^\d{4}-\d{2}$")
     filename: Optional[str] = None
     document_type: Optional[str] = None
+    skip_duplicates: bool = True
     items: List[ExtractedTransactionItem] = Field(min_length=1)
+
+
+def _norm_fp_text(text: str) -> str:
+    s = re.sub(r"\(\s*\d{1,2}\s*/\s*\d{1,2}\s*\)", "", text or "")
+    s = re.sub(r"(?:parcela|parc\.?)\s*\d{1,2}\s*(?:/|de)\s*\d{1,2}", "", s, flags=re.IGNORECASE)
+    nfkd = unicodedata.normalize("NFKD", s.lower())
+    cleaned = "".join(c for c in nfkd if not unicodedata.combining(c))
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned).strip()
+    return cleaned[:48]
+
+
+def _tx_fingerprints(
+    description: str,
+    merchant: Optional[str],
+    amount: float | Decimal,
+    installment_number: Optional[int],
+    tx_date: Optional[str | date] = None,
+) -> set[tuple]:
+    amt = round(abs(float(amount)), 2)
+    desc_key = _norm_fp_text(description)
+    merch_key = _norm_fp_text(merchant or "")
+    fps: set[tuple] = set()
+    if desc_key:
+        fps.add(("d", desc_key, amt, installment_number))
+    if merch_key:
+        fps.add(("m", merch_key, amt, installment_number))
+    if tx_date and desc_key:
+        first_tok = desc_key.split(" ")[0]
+        fps.add(("dt", first_tok, amt, str(tx_date)))
+    return fps
+
+
+def _existing_month_fingerprints(db: Session, uid: UUID, stmt_month: str) -> set[tuple]:
+    existing = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            _month_filter_clause(stmt_month),
+        )
+        .all()
+    )
+    fps: set[tuple] = set()
+    for tx in existing:
+        fps |= _tx_fingerprints(
+            tx.description,
+            tx.merchant_name,
+            tx.amount,
+            tx.installment_number,
+            tx.transaction_date.isoformat() if tx.transaction_date else None,
+        )
+    return fps
 
 
 class ChatMessage(BaseModel):
@@ -138,6 +198,34 @@ async def analyze_uploaded_document(
         user_categories=cat_names,
         override_month=override_month,
     )
+
+    # Annotate potential duplicates already stored in this billing month
+    stmt_month = result.get("statement_month") or date.today().strftime("%Y-%m")
+    existing_fps = _existing_month_fingerprints(db, uid, stmt_month)
+    duplicates_detected = 0
+    for item in result.get("items") or []:
+        item_fps = _tx_fingerprints(
+            str(item.get("description") or ""),
+            item.get("merchant_name"),
+            item.get("amount") or 0,
+            item.get("installment_number"),
+            item.get("transaction_date"),
+        )
+        is_dup = bool(item_fps & existing_fps)
+        item["is_duplicate"] = is_dup
+        if is_dup:
+            duplicates_detected += 1
+            inst_note = (
+                f" · Parcela {item['installment_number']}/{item['installment_total']}"
+                if item.get("installment_number") and item.get("installment_total")
+                else ""
+            )
+            amt_brl = f"R$ {float(item.get('amount') or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            item["duplicate_reason"] = f"Já existe em {stmt_month} ({amt_brl}{inst_note})"
+        else:
+            item["duplicate_reason"] = None
+
+    result["duplicates_detected"] = duplicates_detected
     return result
 
 
@@ -162,9 +250,27 @@ async def import_analyzed_transactions(
     ensure_default_categories(db, uid)
 
     imported_ids: list[str] = []
+    skipped_duplicates = 0
     balance_change = Decimal("0.00")
+    existing_fps = (
+        _existing_month_fingerprints(db, uid, payload.statement_month)
+        if payload.skip_duplicates
+        else set()
+    )
 
     for item in payload.items:
+        item_fps = _tx_fingerprints(
+            item.description,
+            item.merchant_name,
+            item.amount,
+            item.installment_number,
+            item.transaction_date.isoformat(),
+        )
+        if payload.skip_duplicates and (item_fps & existing_fps):
+            skipped_duplicates += 1
+            continue
+        existing_fps |= item_fps
+
         try:
             tx_type = TransactionType(item.type)
         except ValueError:
@@ -210,22 +316,25 @@ async def import_analyzed_transactions(
     account.balance = Decimal(str(account.balance or 0)) + balance_change
 
     # Store receipt audit record
-    receipt = Receipt(
-        user_id=uid,
-        transaction_id=UUID(imported_ids[0]) if imported_ids else None,
-        file_path=(payload.filename or "documento")[:255],
-        mime_type="application/json",
-        extracted_data={
-            "document_type": payload.document_type,
-            "statement_month": payload.statement_month,
-            "imported_count": len(imported_ids),
-        },
-    )
-    db.add(receipt)
+    if imported_ids:
+        receipt = Receipt(
+            user_id=uid,
+            transaction_id=UUID(imported_ids[0]),
+            file_path=(payload.filename or "documento")[:255],
+            mime_type="application/json",
+            extracted_data={
+                "document_type": payload.document_type,
+                "statement_month": payload.statement_month,
+                "imported_count": len(imported_ids),
+                "skipped_duplicates": skipped_duplicates,
+            },
+        )
+        db.add(receipt)
     db.commit()
 
     return {
         "imported": len(imported_ids),
+        "skipped_duplicates": skipped_duplicates,
         "statement_month": payload.statement_month,
         "transaction_ids": imported_ids,
         "new_account_balance": float(account.balance),

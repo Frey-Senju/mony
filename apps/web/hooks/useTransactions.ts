@@ -34,6 +34,8 @@ export interface Transaction {
 export interface FilterState {
   accountId?: string
   type?: 'income' | 'expense'
+  paymentMethod?: string
+  statementMonth?: string
   startDate?: string
   endDate?: string
   search?: string
@@ -98,6 +100,8 @@ export function useTransactions(token?: string) {
 
         if (filters?.accountId) queryParams.append('account_id', filters.accountId)
         if (filters?.type) queryParams.append('type', filters.type)
+        if (filters?.paymentMethod) queryParams.append('payment_method', filters.paymentMethod)
+        if (filters?.statementMonth) queryParams.append('statement_month', filters.statementMonth)
         if (filters?.startDate) queryParams.append('start_date', filters.startDate)
         if (filters?.endDate) queryParams.append('end_date', filters.endDate)
         if (filters?.search) queryParams.append('search', filters.search)

@@ -5,6 +5,7 @@ import { useState, useCallback, useEffect } from 'react'
 export interface FilterState {
   accountId?: string
   type?: 'all' | 'income' | 'expense'
+  paymentMethod?: string
   startDate?: string
   endDate?: string
   search?: string
@@ -119,6 +120,7 @@ export function useFilter() {
     if (filters.search) count++
     if (filters.accountId) count++
     if (filters.type && filters.type !== 'all') count++
+    if (filters.paymentMethod && filters.paymentMethod !== 'all') count++
     if (filters.startDate) count++
     if (filters.endDate) count++
     if (filters.isReconciled && filters.isReconciled !== 'all') count++

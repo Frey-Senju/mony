@@ -7,9 +7,12 @@ Reports, and AI Insights work end-to-end), automatic Account balance sync, and
 bulk categorization.
 """
 
+import calendar
 from datetime import date, datetime
 from decimal import Decimal
+import re
 from typing import Optional
+import unicodedata
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -343,19 +346,67 @@ async def create_transaction(
 # ============ Endpoint 2: List Transactions ============
 
 
+def _month_bounds(ym: str) -> tuple[date, date]:
+    """Return inclusive ``(first_day, last_day)`` for a ``YYYY-MM`` string."""
+    y_str, m_str = ym.split("-")
+    y, m = int(y_str), int(m_str)
+    last_day = calendar.monthrange(y, m)[1]
+    return date(y, m, 1), date(y, m, last_day)
+
+
+def _shift_month(ym: str, delta: int) -> str:
+    """Shift a ``YYYY-MM`` string by ``delta`` months."""
+    y_str, m_str = ym.split("-")
+    total = int(y_str) * 12 + (int(m_str) - 1) + delta
+    ny, nm = divmod(total, 12)
+    return f"{ny:04d}-{nm + 1:02d}"
+
+
+def _month_filter_clause(ym: str):
+    """Match transactions explicitly tagged with ``statement_month`` OR dated inside ``ym``."""
+    m_start, m_end = _month_bounds(ym)
+    return or_(
+        Transaction.statement_month == ym,
+        and_(
+            Transaction.statement_month.is_(None),
+            Transaction.transaction_date >= m_start,
+            Transaction.transaction_date <= m_end,
+        ),
+    )
+
+
+def _norm_installment_key(text: str) -> str:
+    """Normalize merchant/description by stripping accents and installment markers like '(3/10)'."""
+    s = re.sub(r"\(\s*\d{1,2}\s*/\s*\d{1,2}\s*\)", "", text or "")
+    s = re.sub(r"(?:parcela|parc\.?)\s*\d{1,2}\s*(?:/|de)\s*\d{1,2}", "", s, flags=re.IGNORECASE)
+    s = re.sub(r"\b\d{1,2}\s*/\s*\d{1,2}\b", "", s)
+    nfkd = unicodedata.normalize("NFKD", s.lower())
+    cleaned = "".join(c for c in nfkd if not unicodedata.combining(c))
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned).strip()
+    return cleaned[:60] or "parcelamento"
+
+
+_PT_MONTH_SHORT = [
+    "", "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+    "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+]
+
+
 @router.get("", response_model=TransactionListResponse)
 async def list_transactions(
     user_id: str = Depends(get_current_user_from_header),
     account_id: Optional[str] = Query(None, description="Filter by account ID"),
     category_id: Optional[str] = Query(None, description="Filter by category ID"),
     type: Optional[TransactionType] = Query(None, description="Filter by transaction type"),
+    payment_method: Optional[str] = Query(None, description="Filter by payment method (credit_card, pix, boleto, etc.)"),
+    statement_month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="Filter by billing/competency month (YYYY-MM)"),
     start_date: Optional[date] = Query(None, description="Filter transactions from this date"),
     end_date: Optional[date] = Query(None, description="Filter transactions until this date"),
     search: Optional[str] = Query(None, description="Search in description or merchant_name"),
     is_reconciled: Optional[bool] = Query(None, description="Filter by reconciliation status"),
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
-    order_by: str = Query("transaction_date", description="Field to sort by (desc: -field)"),
+    order_by: str = Query("-transaction_date", description="Field to sort by (desc: -field)"),
     db: Session = Depends(get_db),
 ):
     """List active user transactions with filtering, sorting, and pagination."""
@@ -375,6 +426,12 @@ async def list_transactions(
 
     if type:
         query = query.filter(Transaction.type == type)
+
+    if payment_method:
+        query = query.filter(Transaction.payment_method == payment_method)
+
+    if statement_month:
+        query = query.filter(_month_filter_clause(statement_month))
 
     if start_date:
         query = query.filter(Transaction.transaction_date >= start_date)
@@ -409,6 +466,193 @@ async def list_transactions(
         offset=offset,
         limit=limit,
     )
+
+
+# ============ Endpoint 2a: Month Summary & Payment Breakdown ============
+
+
+@router.get("/summary/month")
+async def get_month_summary(
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="Competency month YYYY-MM"),
+    account_id: Optional[str] = Query(None, description="Optional account filter"),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Exact monthly summary (independent of list pagination) + payment method breakdown."""
+    uid = parse_uuid(user_id, "user_id")
+    target_month = month or date.today().strftime("%Y-%m")
+    prev_month = _shift_month(target_month, -1)
+
+    def _fetch_month_txs(ym: str) -> list[Transaction]:
+        q = db.query(Transaction).filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            _month_filter_clause(ym),
+        )
+        if account_id:
+            q = q.filter(Transaction.account_id == parse_uuid(account_id, "account_id"))
+        return q.all()
+
+    cur_txs = _fetch_month_txs(target_month)
+    prev_txs = _fetch_month_txs(prev_month)
+
+    total_income = sum(float(t.amount) for t in cur_txs if t.type == TransactionType.INCOME)
+    total_expenses = sum(float(t.amount) for t in cur_txs if t.type == TransactionType.EXPENSE)
+    total_refunds = sum(float(t.amount) for t in cur_txs if t.type == TransactionType.REFUND)
+    prev_income = sum(float(t.amount) for t in prev_txs if t.type == TransactionType.INCOME)
+    prev_expenses = sum(float(t.amount) for t in prev_txs if t.type == TransactionType.EXPENSE)
+
+    pm_totals: dict[str, dict[str, float | int]] = {}
+    installment_total = 0.0
+    installment_count = 0
+    for t in cur_txs:
+        if t.type == TransactionType.EXPENSE:
+            pm = t.payment_method or "other"
+            if pm not in pm_totals:
+                pm_totals[pm] = {"total": 0.0, "count": 0}
+            pm_totals[pm]["total"] = round(float(pm_totals[pm]["total"]) + float(t.amount), 2)
+            pm_totals[pm]["count"] = int(pm_totals[pm]["count"]) + 1
+            if t.installment_number and t.installment_total and t.installment_total > 1:
+                installment_total += float(t.amount)
+                installment_count += 1
+
+    by_payment_method = [
+        {"payment_method": pm, "total": vals["total"], "count": vals["count"]}
+        for pm, vals in sorted(pm_totals.items(), key=lambda kv: float(kv[1]["total"]), reverse=True)
+    ]
+
+    return {
+        "month": target_month,
+        "previous_month": prev_month,
+        "total_income": round(total_income, 2),
+        "total_expenses": round(total_expenses, 2),
+        "total_refunds": round(total_refunds, 2),
+        "net": round(total_income - total_expenses + total_refunds, 2),
+        "transaction_count": len(cur_txs),
+        "previous_month_income": round(prev_income, 2),
+        "previous_month_expenses": round(prev_expenses, 2),
+        "previous_month_count": len(prev_txs),
+        "installment_expenses": round(installment_total, 2),
+        "installment_count": installment_count,
+        "by_payment_method": by_payment_method,
+    }
+
+
+# ============ Endpoint 2b: Installments Future Projection ============
+
+
+@router.get("/installments/projection")
+async def get_installments_projection(
+    start_month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$"),
+    months: int = Query(6, ge=1, le=24),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Project future credit-card / installment commitments based on active
+    installment transactions (e.g., 3/10 in Nov projects 4/10..10/10 ahead).
+    """
+    uid = parse_uuid(user_id, "user_id")
+    base_month = start_month or date.today().strftime("%Y-%m")
+    window = [_shift_month(base_month, i) for i in range(months)]
+    window_set = set(window)
+
+    txs = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.type == TransactionType.EXPENSE,
+            Transaction.installment_number.isnot(None),
+            Transaction.installment_total.isnot(None),
+            Transaction.installment_total > 1,
+        )
+        .all()
+    )
+
+    # Group into unique installment chains to avoid double-counting when multiple
+    # monthly statements for the same purchase have already been imported.
+    chains: dict[tuple[str, float, int], list[tuple[str, Transaction]]] = {}
+    for tx in txs:
+        ym = tx.statement_month or tx.transaction_date.strftime("%Y-%m")
+        base_label = tx.merchant_name or tx.description
+        key = (_norm_installment_key(base_label), round(float(tx.amount), 2), int(tx.installment_total or 1))
+        chains.setdefault(key, []).append((ym, tx))
+
+    bucket_items: dict[str, list[dict]] = {m: [] for m in window}
+    active_chains_count = 0
+
+    for (_norm_key, amt, total_inst), entries in chains.items():
+        # Sort by (statement_month, installment_number)
+        entries.sort(key=lambda pair: (pair[0], int(pair[1].installment_number or 0)))
+        recorded_months: set[str] = set()
+        chain_active_in_window = False
+
+        for ym, tx in entries:
+            recorded_months.add(ym)
+            if ym in window_set:
+                chain_active_in_window = True
+                clean_desc = re.sub(r"\s*\(\d{1,2}/\d{1,2}\)\s*", "", tx.description or "").strip() or tx.description
+                bucket_items[ym].append({
+                    "description": clean_desc,
+                    "merchant_name": tx.merchant_name,
+                    "amount": amt,
+                    "installment_number": int(tx.installment_number or 1),
+                    "installment_total": total_inst,
+                    "status": "recorded",
+                    "payment_method": tx.payment_method or "credit_card",
+                    "original_purchase_date": tx.original_purchase_date.isoformat() if tx.original_purchase_date else None,
+                })
+
+        # Project remaining installments forward from the latest recorded installment
+        latest_ym, latest_tx = entries[-1]
+        latest_num = int(latest_tx.installment_number or 1)
+        clean_desc = re.sub(r"\s*\(\d{1,2}/\d{1,2}\)\s*", "", latest_tx.description or "").strip() or latest_tx.description
+
+        for next_num in range(latest_num + 1, total_inst + 1):
+            proj_ym = _shift_month(latest_ym, next_num - latest_num)
+            if proj_ym in window_set and proj_ym not in recorded_months:
+                chain_active_in_window = True
+                bucket_items[proj_ym].append({
+                    "description": clean_desc,
+                    "merchant_name": latest_tx.merchant_name,
+                    "amount": amt,
+                    "installment_number": next_num,
+                    "installment_total": total_inst,
+                    "status": "projected",
+                    "payment_method": latest_tx.payment_method or "credit_card",
+                    "original_purchase_date": latest_tx.original_purchase_date.isoformat() if latest_tx.original_purchase_date else None,
+                })
+
+        if chain_active_in_window:
+            active_chains_count += 1
+
+    months_out = []
+    total_future_committed = 0.0
+    for ym in window:
+        y_str, m_str = ym.split("-")
+        label = f"{_PT_MONTH_SHORT[int(m_str)]}/{y_str}"
+        items = sorted(bucket_items[ym], key=lambda i: float(i["amount"]), reverse=True)
+        rec_total = round(sum(float(i["amount"]) for i in items if i["status"] == "recorded"), 2)
+        proj_total = round(sum(float(i["amount"]) for i in items if i["status"] == "projected"), 2)
+        tot = round(rec_total + proj_total, 2)
+        total_future_committed = round(total_future_committed + tot, 2)
+        months_out.append({
+            "month": ym,
+            "label": label,
+            "recorded_total": rec_total,
+            "projected_total": proj_total,
+            "total_committed": tot,
+            "installments_count": len(items),
+            "items": items,
+        })
+
+    return {
+        "base_month": base_month,
+        "total_future_committed": total_future_committed,
+        "active_chains_count": active_chains_count,
+        "months": months_out,
+    }
 
 
 # ============ Endpoint 2b: Bulk Categorize ============

@@ -38,6 +38,8 @@ interface ExtractedItem {
   installment_number?: number | null
   installment_total?: number | null
   confidence?: string
+  is_duplicate?: boolean
+  duplicate_reason?: string | null
   selected?: boolean
 }
 
@@ -49,6 +51,7 @@ interface AnalysisResult {
   issuer?: string | null
   statement_month: string
   summary: string
+  duplicates_detected?: number
   items: ExtractedItem[]
 }
 
@@ -278,7 +281,9 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
       const data = (await res.json()) as AnalysisResult
       setAnalysis(data)
       setTargetMonth(data.statement_month)
-      setEditableItems((data.items || []).map((i) => ({ ...i, selected: true })))
+      setEditableItems(
+        (data.items || []).map((i) => ({ ...i, selected: i.is_duplicate ? false : true }))
+      )
     } catch (err) {
       setImportError(err instanceof Error ? err.message : 'Erro ao analisar arquivo')
     } finally {
@@ -337,8 +342,12 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
         throw new Error(err.detail || 'Erro ao importar transações')
       }
       const result = await res.json()
+      const skippedNote =
+        result.skipped_duplicates > 0
+          ? ` (${result.skipped_duplicates} duplicata(s) ignorada(s))`
+          : ''
       setImportSuccess(
-        `${result.imported} transação(ões) cadastrada(s) com sucesso no mês ${result.statement_month}!`
+        `${result.imported} transação(ões) cadastrada(s) com sucesso no mês ${result.statement_month}!${skippedNote}`
       )
       setAnalysis(null)
       setEditableItems([])
@@ -644,6 +653,17 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                       />
                     </div>
                   </div>
+                  {(analysis.duplicates_detected ?? 0) > 0 && (
+                    <div
+                      role="status"
+                      className="px-3 py-2 rounded-xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300/70 dark:border-amber-800/70 text-xs text-amber-800 dark:text-amber-200 flex items-center gap-2"
+                    >
+                      <AlertCircle className="w-4 h-4 shrink-0" aria-hidden="true" />
+                      <span>
+                        <strong>{analysis.duplicates_detected}</strong> possível(is) duplicata(s) já desmarcada(s) automaticamente para evitar lançamento em dobro.
+                      </span>
+                    </div>
+                  )}
                 </div>
 
                 {editableItems.length > 0 && (
@@ -681,6 +701,14 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                                   <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-purple-100/80 dark:bg-purple-900/40 text-purple-700 dark:text-purple-300">
                                     <CreditCard className="w-3 h-3" aria-hidden="true" />
                                     Parcela {item.installment_number}/{item.installment_total}
+                                  </span>
+                                )}
+                                {item.is_duplicate && (
+                                  <span
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100/90 dark:bg-amber-900/40 text-amber-800 dark:text-amber-200"
+                                    title={item.duplicate_reason || 'Lançamento semelhante já existe neste mês'}
+                                  >
+                                    Possível duplicata
                                   </span>
                                 )}
                                 {item.original_purchase_date &&
