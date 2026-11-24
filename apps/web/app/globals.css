@@ -544,70 +544,81 @@
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
-/* ─── Animated Liquid Glass M Logo & Floating Transparent Coins ─── */
+/* ─── Animated Liquid Glass M Logo (Theme-Reactive Refractive Wave + Caustics) ─── */
 .mony-logo-orb {
   background:
-    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.52) 0%, rgba(186, 230, 253, 0.22) 45%, rgba(15, 23, 42, 0.16) 100%),
-    linear-gradient(140deg, rgba(var(--accent-rgb, 0 113 227) / 0.36) 0%, rgba(99, 102, 241, 0.22) 100%);
-  border: 1px solid rgba(255, 255, 255, 0.72);
+    radial-gradient(circle at 28% 22%, rgba(var(--accent-rgb, 0 113 227) / 0.14) 0%, transparent 62%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.72) 0%, rgba(241, 245, 251, 0.56) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.74);
   box-shadow:
-    inset 0 1.5px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -1px 0 rgba(147, 197, 253, 0.38),
-    0 6px 18px rgba(var(--accent-rgb, 0 113 227) / 0.24);
-  backdrop-filter: blur(14px) saturate(200%);
-  -webkit-backdrop-filter: blur(14px) saturate(200%);
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.92),
+    inset 0 -1px 0 rgba(var(--accent-rgb, 0 113 227) / 0.18),
+    0 6px 18px rgba(var(--accent-rgb, 0 113 227) / 0.16);
+  backdrop-filter: blur(14px) saturate(190%);
+  -webkit-backdrop-filter: blur(14px) saturate(190%);
 }
 :root[data-theme="dark"] .mony-logo-orb {
   background:
-    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.24) 0%, rgba(56, 189, 248, 0.18) 48%, rgba(2, 6, 23, 0.56) 100%);
-  border-color: rgba(255, 255, 255, 0.30);
-}
-.mony-logo-glint {
-  stroke-dasharray: 28 110;
-  animation: monyGlintSweep 4.2s ease-in-out infinite;
-}
-.mony-coin-float-a { animation: monyCoinFloatA 5.6s ease-in-out infinite alternate; transform-origin: 14px 40px; }
-.mony-coin-float-b { animation: monyCoinFloatB 6.4s ease-in-out infinite alternate; transform-origin: 49px 24px; }
-.mony-coin-float-c { animation: monyCoinFloatC 4.9s ease-in-out infinite alternate; transform-origin: 33px 48px; }
-.mony-coin-float-d { animation: monyCoinFloatD 5.8s ease-in-out infinite alternate; transform-origin: 24px 15px; }
-
-@keyframes monyGlintSweep {
-  0%   { stroke-dashoffset: 138; opacity: 0.3; }
-  50%  { opacity: 1; }
-  100% { stroke-dashoffset: 0; opacity: 0.35; }
-}
-@keyframes monyCoinFloatA {
-  0%   { transform: translate3d(-1.5px, 2px, 0) scale(0.96); opacity: 0.72; }
-  100% { transform: translate3d(3px, -3.5px, 0) scale(1.06); opacity: 1; }
-}
-@keyframes monyCoinFloatB {
-  0%   { transform: translate3d(1.5px, -2px, 0) scale(1.04); opacity: 0.95; }
-  100% { transform: translate3d(-3px, 3px, 0) scale(0.94); opacity: 0.72; }
-}
-@keyframes monyCoinFloatC {
-  0%   { transform: translate3d(-2px, 1px, 0) scale(0.94); opacity: 0.65; }
-  100% { transform: translate3d(2.5px, -2.5px, 0) scale(1.08); opacity: 0.95; }
-}
-@keyframes monyCoinFloatD {
-  0%   { transform: translate3d(1px, 2px, 0) scale(0.9); opacity: 0.6; }
-  100% { transform: translate3d(-2px, -2px, 0) scale(1.05); opacity: 0.9; }
+    radial-gradient(circle at 30% 25%, rgba(var(--accent-rgb, 0 113 227) / 0.24) 0%, transparent 62%),
+    linear-gradient(145deg, rgba(15, 23, 42, 0.72) 0%, rgba(7, 13, 28, 0.86) 100%);
+  border-color: rgba(255, 255, 255, 0.22);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.24),
+    0 8px 22px rgba(0, 0, 0, 0.44);
 }
 
-:root[data-motion="off"] .mony-logo-glint,
-:root[data-motion="off"] .mony-coin-float-a,
-:root[data-motion="off"] .mony-coin-float-b,
-:root[data-motion="off"] .mony-coin-float-c,
-:root[data-motion="off"] .mony-coin-float-d {
+.mony-lg-ribbon {
+  transform-origin: 120px 124px;
+  animation: monyLgBreathe 4.6s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+}
+.mony-lg-caustics-a {
+  animation: monyLgCausticSweep 3.4s linear infinite;
+}
+.mony-lg-caustics-b {
+  animation: monyLgCausticSweep 5.2s linear infinite;
+  animation-delay: -1.8s;
+}
+.mony-lg-glint-a {
+  stroke-dasharray: 64 316;
+  animation: monyLgGlintFlow 3.2s linear infinite;
+}
+.mony-lg-glint-b {
+  stroke-dasharray: 40 340;
+  animation: monyLgGlintFlowRev 4.4s linear infinite;
+}
+.mony-lg-m-sheen {
+  animation: monyLgMSheen 4.8s ease-in-out infinite;
+}
+
+@keyframes monyLgBreathe {
+  0%, 100% { transform: translateY(0px) scale(1, 1); }
+  33%      { transform: translateY(-2.4px) scale(1.012, 0.988); }
+  66%      { transform: translateY(1.8px) scale(0.992, 1.014); }
+}
+@keyframes monyLgCausticSweep {
+  0%   { transform: translate(-95px, -35px) rotate(-28deg); }
+  100% { transform: translate(165px, 35px) rotate(-28deg); }
+}
+@keyframes monyLgGlintFlow {
+  0%   { stroke-dashoffset: 380; }
+  100% { stroke-dashoffset: 0; }
+}
+@keyframes monyLgGlintFlowRev {
+  0%   { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: 380; }
+}
+@keyframes monyLgMSheen {
+  0%, 100% { opacity: 0.16; transform: translateX(-60px); }
+  50%      { opacity: 0.34; transform: translateX(70px); }
+}
+
+:root[data-motion="off"] .mony-lg-ribbon,
+:root[data-motion="off"] .mony-lg-caustics-a,
+:root[data-motion="off"] .mony-lg-caustics-b,
+:root[data-motion="off"] .mony-lg-glint-a,
+:root[data-motion="off"] .mony-lg-glint-b,
+:root[data-motion="off"] .mony-lg-m-sheen {
   animation: none !important;
-}
-@media (prefers-reduced-motion: reduce) {
-  .mony-logo-glint,
-  .mony-coin-float-a,
-  .mony-coin-float-b,
-  .mony-coin-float-c,
-  .mony-coin-float-d {
-    animation: none !important;
-  }
 }
 
 /* ─── VisionOS Floating Liquid Glass Sidebar Rail ─── */
