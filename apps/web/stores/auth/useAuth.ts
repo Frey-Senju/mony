@@ -70,27 +70,89 @@ export const useAuth = () => {
     []
   )
 
-  // Load tokens from localStorage on mount
+  // Load tokens from localStorage on mount, silently refreshing if expired
   useEffect(() => {
-    const stored = localStorage.getItem('mony_tokens')
-    if (stored) {
+    let active = true
+    const init = async () => {
+      const stored = localStorage.getItem('mony_tokens')
+      if (!stored) {
+        if (active) setState(prev => ({ ...prev, loading: false }))
+        return
+      }
       try {
-        const tokens = JSON.parse(stored)
-        setState(prev => ({ ...prev, tokens }))
-        // Fetch user data from backend
-        fetchUser(tokens.access_token).then(() => {
-          setState(prev => ({ ...prev, loading: false }))
-        }).catch(() => {
-          setState(prev => ({ ...prev, loading: false }))
+        const tokens = JSON.parse(stored) as AuthTokens
+        if (active) setState(prev => ({ ...prev, tokens }))
+
+        const res = await fetch(`${API_URL}/auth/users/me`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${tokens.access_token}`,
+            'Content-Type': 'application/json',
+          },
         })
+
+        if (res.ok) {
+          const user = (await res.json()) as User
+          if (active) setState(prev => ({ ...prev, user, loading: false }))
+          return
+        }
+
+        // If access token expired (401), try refreshing with refresh_token automatically
+        if (res.status === 401 && tokens.refresh_token) {
+          const refRes = await fetch(`${API_URL}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+          })
+          if (refRes.ok) {
+            const newTokens = (await refRes.json()) as AuthTokens
+            localStorage.setItem('mony_tokens', JSON.stringify(newTokens))
+            if (active) setState(prev => ({ ...prev, tokens: newTokens }))
+            await fetchUser(newTokens.access_token)
+            if (active) setState(prev => ({ ...prev, loading: false }))
+            return
+          }
+          // Refresh token is also invalid/expired — clear session
+          localStorage.removeItem('mony_tokens')
+          if (active) setState({ user: null, tokens: null, loading: false, error: null })
+          return
+        }
+
+        if (active) setState(prev => ({ ...prev, loading: false }))
       } catch {
         localStorage.removeItem('mony_tokens')
-        setState(prev => ({ ...prev, loading: false }))
+        if (active) setState(prev => ({ ...prev, loading: false }))
       }
-    } else {
-      setState(prev => ({ ...prev, loading: false }))
+    }
+
+    init()
+    return () => {
+      active = false
     }
   }, [fetchUser])
+
+  // Proactively keep the 15-min access token fresh every 12 minutes while active
+  useEffect(() => {
+    const refreshTok = state.tokens?.refresh_token
+    if (!refreshTok) return
+    const timer = window.setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshTok }),
+        })
+        if (res.ok) {
+          const newTokens = (await res.json()) as AuthTokens
+          localStorage.setItem('mony_tokens', JSON.stringify(newTokens))
+          setState(prev => ({ ...prev, tokens: newTokens }))
+        }
+      } catch {
+        // Ignore transient network errors; next request will retry
+      }
+    }, 12 * 60 * 1000)
+    return () => window.clearInterval(timer)
+  }, [state.tokens?.refresh_token])
 
   // Register user
   const register = useCallback(

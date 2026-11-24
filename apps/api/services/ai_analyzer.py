@@ -101,7 +101,7 @@ PAYMENT_METHOD_LABELS: dict[str, str] = {
 def get_active_ai_provider() -> tuple[str, str]:
     """Return ``(provider_id, model_name)`` based on configured environment keys."""
     if os.getenv("GEMINI_API_KEY", "").strip():
-        return ("gemini", os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip())
+        return ("gemini", os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip())
     if os.getenv("OPENAI_API_KEY", "").strip():
         return ("openai", os.getenv("OPENAI_MODEL", "gpt-4o-mini").strip())
     if os.getenv("ANTHROPIC_API_KEY", "").strip():
@@ -611,6 +611,34 @@ def _extract_json_block(raw: str) -> dict[str, Any]:
     return json.loads(raw)
 
 
+async def _post_gemini_generate(
+    api_key: str,
+    model: str,
+    payload: dict[str, Any],
+    timeout: float = 45.0,
+) -> tuple[dict[str, Any], str]:
+    """Call Gemini generateContent, auto-falling back to ``gemini-flash-latest`` on 404."""
+    candidates = [model]
+    if model != "gemini-flash-latest":
+        candidates.append("gemini-flash-latest")
+
+    last_exc: Optional[Exception] = None
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for candidate in candidates:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate}:generateContent?key={api_key}"
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 404 and candidate != candidates[-1]:
+                logger.warning("Gemini model %s returned 404; retrying with %s", candidate, candidates[-1])
+                continue
+            try:
+                resp.raise_for_status()
+                return resp.json(), candidate
+            except Exception as exc:  # noqa: BLE001
+                last_exc = exc
+                break
+    raise last_exc or RuntimeError("Gemini request failed")
+
+
 async def _analyze_with_gemini(
     content: bytes,
     filename: str,
@@ -619,7 +647,6 @@ async def _analyze_with_gemini(
     model: str,
 ) -> dict[str, Any]:
     api_key = os.environ["GEMINI_API_KEY"].strip()
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
 
     parts: list[dict[str, Any]] = [{"text": prompt}]
     if content_type.startswith("image/") or content_type == "application/pdf" or filename.lower().endswith(".pdf"):
@@ -634,18 +661,17 @@ async def _analyze_with_gemini(
         text = _extract_text_from_file(content, filename, content_type)
         parts.append({"text": f"Conteúdo do arquivo ({filename}):\n{text[:30000]}"})
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        resp = await client.post(
-            url,
-            json={
-                "contents": [{"parts": parts}],
-                "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
-            },
-        )
-        resp.raise_for_status()
-        body = resp.json()
-        text_out = body["candidates"][0]["content"]["parts"][0]["text"]
-        return _extract_json_block(text_out)
+    body, _used_model = await _post_gemini_generate(
+        api_key=api_key,
+        model=model,
+        payload={
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"},
+        },
+        timeout=55.0,
+    )
+    text_out = body["candidates"][0]["content"]["parts"][0]["text"]
+    return _extract_json_block(text_out)
 
 
 async def _analyze_with_openai(
@@ -812,24 +838,32 @@ async def chat_with_financial_context(
     if provider == "gemini":
         try:
             api_key = os.environ["GEMINI_API_KEY"].strip()
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             contents = [
                 {"role": "user" if h.get("role") == "user" else "model", "parts": [{"text": h.get("content", "")}]}
                 for h in history[-6:]
+                if (h.get("content") or "").strip()
             ]
-            contents.append({"role": "user", "parts": [{"text": message}]})
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    url,
-                    json={
-                        "system_instruction": {"parts": [{"text": system_prompt}]},
-                        "contents": contents,
-                        "generationConfig": {"temperature": 0.4},
-                    },
-                )
-                resp.raise_for_status()
-                reply = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return {"reply": reply, "engine": f"gemini:{model}", "llm_connected": True}
+            # Avoid duplicating the latest user message if caller already appended it to history
+            if not (contents and contents[-1]["role"] == "user" and contents[-1]["parts"][0]["text"] == message):
+                contents.append({"role": "user", "parts": [{"text": message}]})
+            # Gemini expects conversation to start with a user turn
+            while contents and contents[0]["role"] != "user":
+                contents.pop(0)
+            if not contents:
+                contents = [{"role": "user", "parts": [{"text": message}]}]
+
+            body, used_model = await _post_gemini_generate(
+                api_key=api_key,
+                model=model,
+                payload={
+                    "system_instruction": {"parts": [{"text": system_prompt}]},
+                    "contents": contents,
+                    "generationConfig": {"temperature": 0.4},
+                },
+                timeout=35.0,
+            )
+            reply = body["candidates"][0]["content"]["parts"][0]["text"]
+            return {"reply": reply, "engine": f"gemini:{used_model}", "llm_connected": True}
         except Exception as exc:  # noqa: BLE001
             logger.warning("Gemini chat failed, using built-in financial assistant: %s", exc)
 

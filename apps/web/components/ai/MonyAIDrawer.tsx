@@ -89,10 +89,56 @@ export interface MonyAIDrawerProps {
   onClose: () => void
 }
 
+function renderFormattedText(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>
+  })
+}
+
 export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawerProps) {
-  const { tokens } = useAuth()
+  const { tokens, refreshToken } = useAuth()
   const token = tokens?.access_token
   const { categories } = useCategories(token)
+
+  // Authenticated fetch that automatically refreshes an expired 15-min JWT once
+  const authFetch = useCallback(
+    async (url: string, init: RequestInit = {}): Promise<Response> => {
+      const currentToken =
+        token ||
+        (() => {
+          try {
+            const stored = localStorage.getItem('mony_tokens')
+            return stored ? JSON.parse(stored).access_token : null
+          } catch {
+            return null
+          }
+        })()
+
+      const makeHeaders = (t: string | null) => {
+        const h = new Headers(init.headers || {})
+        if (t) h.set('Authorization', `Bearer ${t}`)
+        return h
+      }
+
+      let res = await fetch(url, { ...init, headers: makeHeaders(currentToken) })
+      if (res.status === 401) {
+        try {
+          const fresh = await refreshToken()
+          if (fresh?.access_token) {
+            res = await fetch(url, { ...init, headers: makeHeaders(fresh.access_token) })
+          }
+        } catch {
+          // refreshToken already handles logout on invalid refresh_token
+        }
+      }
+      return res
+    },
+    [token, refreshToken]
+  )
 
   const [tab, setTab] = useState<'chat' | 'import'>(initialTab)
   const [aiStatus, setAiStatus] = useState<{ provider: string; model: string; llm_connected: boolean } | null>(null)
@@ -139,12 +185,12 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
   // Load AI status + user accounts when opened
   useEffect(() => {
     if (!open || !token) return
-    fetch(`${API_URL}/ai/status`, { headers: { Authorization: `Bearer ${token}` } })
+    authFetch(`${API_URL}/ai/status`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => d && setAiStatus(d))
       .catch(() => undefined)
 
-    fetch(`${API_URL}/accounts`, { headers: { Authorization: `Bearer ${token}` } })
+    authFetch(`${API_URL}/accounts`)
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => {
         const list: AccountOption[] = Array.isArray(data) ? data : data.items || []
@@ -155,7 +201,7 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
         }
       })
       .catch(() => undefined)
-  }, [open, token, selectedAccountId])
+  }, [open, token, selectedAccountId, authFetch])
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -165,23 +211,28 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
     async (text: string) => {
       const trimmed = text.trim()
       if (!trimmed || !token || chatLoading) return
+      const priorHistory = messages.slice(-6)
       const nextHistory: ChatItem[] = [...messages, { role: 'user', content: trimmed }]
       setMessages(nextHistory)
       setInput('')
       setChatLoading(true)
       try {
-        const res = await fetch(`${API_URL}/ai/chat`, {
+        const res = await authFetch(`${API_URL}/ai/chat`, {
           method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             message: trimmed,
-            history: nextHistory.slice(-6),
+            history: priorHistory,
           }),
         })
-        if (!res.ok) throw new Error('Falha ao consultar Mony IA')
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}))
+          throw new Error(
+            res.status === 401
+              ? 'Sua sessão expirou. Faça login novamente.'
+              : errBody.detail || `Erro ${res.status} ao consultar Mony IA`
+          )
+        }
         const data = await res.json()
         setMessages((prev) => [...prev, { role: 'assistant', content: data.reply }])
       } catch (err) {
@@ -199,7 +250,7 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
         setChatLoading(false)
       }
     },
-    [token, chatLoading, messages]
+    [token, chatLoading, messages, authFetch]
   )
 
   const handleFileUpload = async (file: File) => {
@@ -216,9 +267,8 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
       if (overrideMonth) {
         formData.append('override_month', overrideMonth)
       }
-      const res = await fetch(`${API_URL}/ai/analyze-document`, {
+      const res = await authFetch(`${API_URL}/ai/analyze-document`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
         body: formData,
       })
       if (!res.ok) {
@@ -271,12 +321,9 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
     setImporting(true)
     setImportError(null)
     try {
-      const res = await fetch(`${API_URL}/ai/import-transactions`, {
+      const res = await authFetch(`${API_URL}/ai/import-transactions`, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           account_id: selectedAccountId,
           statement_month: targetMonth || analysis?.statement_month || new Date().toISOString().slice(0, 7),
@@ -399,7 +446,7 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                         : 'glass-card rounded-bl-md text-slate-800 dark:text-slate-100'
                     }`}
                   >
-                    {msg.content}
+                    {renderFormattedText(msg.content)}
                   </div>
                 </div>
               ))}
