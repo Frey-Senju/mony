@@ -1,47 +1,36 @@
 # Próximos Passos — Mony
 
 **Última atualização:** 2026-11-24  
-**Status:** EPIC-001 ✅ | EPIC-002 ✅ | EPIC-003 ✅ | Sprint Estabilização P0 + Apple Liquid Glass ✅
+**Status:** ✅ 100% Online em Produção (Vercel Frontend + Vercel FastAPI + Supabase PostgreSQL)
 
 ---
 
-## 1. Reativação do Backend no Render (Ação no Painel)
+## Arquitetura em Produção (Render substituído!)
 
-O serviço `mony-api` estava em estado `Failed service` após o período de standby (e o PostgreSQL gratuito do Render expira após 30–90 dias). Para colocá-lo online:
+| Camada | Serviço | URL / Detalhe |
+|---|---|---|
+| **Frontend (Next.js 14 + Liquid Glass)** | Vercel (`mony`) | https://mony-kappa.vercel.app |
+| **Backend API (FastAPI Serverless)** | Vercel (`mony-api`) | https://mony-api-one.vercel.app |
+| **Banco de Dados (PostgreSQL 17)** | Supabase (`licitacoes-intel-preview`) | Schema isolado `mony`, role dedicada `mony_app` + RLS habilitado em 16 tabelas |
+| **CI/CD** | GitHub Actions | `Frey-Senju/mony` (lint, pytest Postgres 15, Jest, Playwright E2E, build) |
 
-1. **Banco PostgreSQL:**
-   - Crie um novo PostgreSQL no Render (ou banco gratuito permanente no **Neon.tech** / **Supabase**, que não expira após 30 dias) e copie a connection string `postgresql://...`.
-2. **Variáveis de ambiente em `mony-api` → Environment:**
-   - `DATABASE_URL` = sua URL PostgreSQL (obrigatório — `sync: false` no `render.yaml`)
-   - `JWT_SECRET` = gerado automaticamente (ou defina string forte 32+ chars)
-   - `ENCRYPTION_KEY` = chave Fernet (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`)
-   - `REDIS_URL` = internal URL do serviço `mony-redis` (que já está **Available**)
-   - `FRONTEND_URL` = `https://web-flame-alpha-37.vercel.app`
-   - *(Opcional)* `RESEND_API_KEY` = para envio real de e-mails de redefinição de senha
-3. **Deploy:**
-   - Faça push na `main` (auto-deploy) ou clique em **Manual Deploy → Clear build cache & deploy** em `mony-api`.
-   - Exclua o serviço legado `mony` (Python 3, failed deploy há 7 meses) para manter o painel limpo.
-4. **Verificação:**
-   ```bash
-   curl https://mony-api.onrender.com/health
-   # Esperado: {"status":"healthy"}
-   ```
+*(Os serviços antigos no Render — `mony-api`, `mony` e `mony-redis` — podem ser removidos quando desejar.)*
 
 ---
 
-## 2. Roadmap — EPIC-004 (Beta Público & Monetização)
+## Roadmap — Próximos Passos Recomendados (EPIC-004)
 
-- [ ] **Billing & Planos (Stripe / Mercado Pago):** checkout + webhooks para upgrade BASIC → PRO / PREMIUM (gating já implementado no backend em Transactions, Budgets e Open Finance).
-- [ ] **Open Finance Produção:** integrar agregador (Pluggy ou Belvo) para substituir o modo stub (`OF_SYNC_USE_STUB=1`) sem exigir certificado ICP-Brasil próprio.
-- [ ] **PostgreSQL RLS (`DEC-003`):** adicionar políticas Row-Level Security via migration Alembic.
-- [ ] **Transações Recorrentes Automáticas:** job Celery Beat que gera lançamentos recorrentes a partir de `is_recurring` / `recurring_pattern`.
-- [ ] **OCR de Recibos & Entrada em Linguagem Natural (IA):** preencher transações a partir de foto ou texto livre.
+### 1. Lançamento & Operação Real (Curto Prazo)
+- [ ] **Domínio personalizado:** configurar domínio próprio (ex.: `app.mony.com.br` e `api.mony.com.br`) na Vercel e atualizar `CORS_ORIGINS`.
+- [ ] **E-mail transacional (Resend):** adicionar `RESEND_API_KEY` nas env vars do `mony-api` na Vercel para ativar o envio real de e-mails de redefinição de senha e verificação de e-mail.
+- [ ] **Upstash Redis (opcional):** se quiser blacklist de logout distribuída entre instâncias serverless (hoje usa fallback em memória) ou rate limiting distribuído, plugar Upstash Redis via `REDIS_URL`.
 
----
+### 2. Monetização & Planos (Médio Prazo)
+- [ ] **Checkout Stripe / Mercado Pago:** o gating de planos (`BASIC` / `PRO` / `PREMIUM`) já está ativo no backend (Transactions, Budgets e Open Finance), faltando a página `/settings/billing` + webhook de assinatura.
+- [ ] **Gestão de Perfil e Segurança (`/settings/profile`):** conectar UI ao novo `GET/PUT /auth/users/me` e ao fluxo completo de 2FA (`/auth/2fa/setup`, `/auth/2fa/verify`, `/auth/2fa/disable`).
 
-## Referências
-
-- **GitHub:** https://github.com/Frey-Senju/mony
-- **Vercel (web):** https://web-flame-alpha-37.vercel.app
-- **Render (api):** https://mony-api.onrender.com
-- **Obsidian Vault:** `C:\Users\Crist\Desktop\Mony`
+### 3. Evolução de Produto (EPIC-004 / EPIC-005)
+- [ ] **Open Finance Real (Pluggy ou Belvo):** substituir o modo sandbox/stub (`OF_SYNC_USE_STUB=1`) por agregador regulado pelo Bacen sem precisar manter certificado ICP-Brasil próprio.
+- [ ] **Transações Recorrentes Automáticas:** usar Vercel Cron (`/api/cron/recurring`) para materializar lançamentos recorrentes (`is_recurring`, `recurring_pattern`).
+- [ ] **Transferências entre contas:** atualizar saldo de conta origem e conta destino atomicamente.
+- [ ] **OCR de Recibos & Entrada em Linguagem Natural (IA):** extrair valor/data/estabelecimento de foto ou texto livre ("Almoço iFood 48 reais").

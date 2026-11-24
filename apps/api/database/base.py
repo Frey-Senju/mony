@@ -3,7 +3,7 @@ Database configuration and session management for Mony API.
 """
 
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
@@ -13,31 +13,36 @@ from .models import Base
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
     "postgresql://user:password@localhost:5432/mony_dev"
-)
+).strip()
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Create engine with connection pooling
+DB_SCHEMA = os.environ.get("DB_SCHEMA", "").strip()
+
+# Create engine (NullPool is ideal for serverless Vercel + Supabase Supavisor)
 engine = create_engine(
     DATABASE_URL,
-    echo=False,  # Set to True to see SQL queries
-    pool_pre_ping=True,  # Verify connections are alive before using
-    poolclass=NullPool,  # Disable connection pooling for serverless (Render)
+    echo=False,
+    pool_pre_ping=True,
+    poolclass=NullPool,
 )
+
+# Enforce isolated Postgres schema when DB_SCHEMA is configured (e.g. DB_SCHEMA=mony)
+if DB_SCHEMA and DATABASE_URL.startswith("postgresql"):
+    @event.listens_for(engine, "connect")
+    def _set_search_path(dbapi_connection, _connection_record):
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute(f'SET search_path TO "{DB_SCHEMA}"')
+        finally:
+            cursor.close()
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def get_db() -> Session:
-    """
-    Dependency for FastAPI to get database session.
-
-    Usage:
-        @app.get("/items/")
-        def get_items(db: Session = Depends(get_db)):
-            return db.query(Item).all()
-    """
+    """Dependency for FastAPI to get database session."""
     db = SessionLocal()
     try:
         yield db

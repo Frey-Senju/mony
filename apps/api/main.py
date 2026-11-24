@@ -45,6 +45,7 @@ _default_origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
     "https://web-flame-alpha-37.vercel.app",
+    "https://mony-kappa.vercel.app",
 ]
 _extra_origins = [
     o.strip()

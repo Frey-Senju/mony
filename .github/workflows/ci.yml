@@ -75,7 +75,7 @@ jobs:
 
   e2e:
     name: E2E Tests (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [lint, test-api, test-web]
     services:
       postgres:
@@ -177,4 +177,4 @@ jobs:
 
       - run: npm run build
         env:
-          NEXT_PUBLIC_API_URL: https://mony-api.onrender.com
+          NEXT_PUBLIC_API_URL: https://mony-api-one.vercel.app

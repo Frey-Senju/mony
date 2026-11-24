@@ -26,7 +26,7 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 15
 REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 # Get JWT secret from environment
-SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key-change-in-production")
+SECRET_KEY = os.getenv("JWT_SECRET", "your-secret-key-change-in-production").strip()
 
 # Password hashing context (argon2)
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
