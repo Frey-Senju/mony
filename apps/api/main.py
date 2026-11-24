@@ -7,6 +7,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
 from routes.accounts import router as accounts_router
+from routes.ai import router as ai_router
 from routes.auth import router as auth_router
 from routes.budgets import router as budgets_router
 from routes.categories import router as categories_router
@@ -85,6 +86,7 @@ app.include_router(open_finance_sync_router)
 app.include_router(budgets_router)
 app.include_router(insights_router)
 app.include_router(goals_router)
+app.include_router(ai_router)
 
 
 @app.get("/")

@@ -18,6 +18,11 @@ interface Transaction {
   category_icon?: string
   source?: 'manual' | 'open_finance'
   external_id?: string | null
+  payment_method?: string | null
+  installment_number?: number | null
+  installment_total?: number | null
+  statement_month?: string | null
+  original_purchase_date?: string | null
 }
 
 export interface TransactionListProps {
@@ -209,10 +214,39 @@ export function TransactionList({
                     </td>
                     <td className="px-4 py-3">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center flex-wrap gap-1.5">
                           <p className="font-medium text-slate-900 dark:text-slate-100">
                             {transaction.description}
                           </p>
+                          {transaction.installment_number && transaction.installment_total && (
+                            <span
+                              className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-purple-100/80 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300"
+                              title={
+                                transaction.original_purchase_date
+                                  ? `Parcela ${transaction.installment_number} de ${transaction.installment_total} · Compra em ${transaction.original_purchase_date}`
+                                  : `Parcela ${transaction.installment_number} de ${transaction.installment_total}`
+                              }
+                            >
+                              Parcela {transaction.installment_number}/{transaction.installment_total}
+                            </span>
+                          )}
+                          {transaction.payment_method && (
+                            <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100/80 text-slate-600 dark:bg-white/10 dark:text-slate-300">
+                              {transaction.payment_method === 'credit_card'
+                                ? 'Cartão'
+                                : transaction.payment_method === 'debit_card'
+                                ? 'Débito'
+                                : transaction.payment_method === 'pix'
+                                ? 'PIX'
+                                : transaction.payment_method === 'boleto'
+                                ? 'Boleto'
+                                : transaction.payment_method === 'bank_transfer'
+                                ? 'Transf.'
+                                : transaction.payment_method === 'cash'
+                                ? 'Dinheiro'
+                                : transaction.payment_method}
+                            </span>
+                          )}
                           {transaction.source === 'open_finance' && (
                             <span
                               className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300"

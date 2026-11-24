@@ -123,6 +123,11 @@ def _serialize_transaction(tx: Transaction) -> "TransactionResponse":
         is_reconciled=bool(tx.is_reconciled),
         source=tx.source or "manual",
         external_id=tx.external_id,
+        payment_method=tx.payment_method,
+        installment_number=tx.installment_number,
+        installment_total=tx.installment_total,
+        statement_month=tx.statement_month,
+        original_purchase_date=tx.original_purchase_date,
         category_id=primary_cat.id if primary_cat else None,
         category_name=primary_cat.name if primary_cat else None,
         category_color=primary_cat.color if primary_cat else None,
@@ -148,6 +153,11 @@ class TransactionCreate(BaseModel):
     merchant_name: Optional[str] = None
     is_recurring: bool = False
     recurring_pattern: Optional[str] = None
+    payment_method: Optional[str] = None
+    installment_number: Optional[int] = Field(default=None, ge=1)
+    installment_total: Optional[int] = Field(default=None, ge=1)
+    statement_month: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    original_purchase_date: Optional[date] = None
     category_id: Optional[str] = None
     category_name: Optional[str] = None
 
@@ -164,6 +174,11 @@ class TransactionUpdate(BaseModel):
     is_recurring: Optional[bool] = None
     recurring_pattern: Optional[str] = None
     is_reconciled: Optional[bool] = None
+    payment_method: Optional[str] = None
+    installment_number: Optional[int] = Field(default=None, ge=1)
+    installment_total: Optional[int] = Field(default=None, ge=1)
+    statement_month: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    original_purchase_date: Optional[date] = None
     category_id: Optional[str] = None
     category_name: Optional[str] = None
 
@@ -196,6 +211,11 @@ class TransactionResponse(BaseModel):
     is_reconciled: bool = False
     source: str = "manual"
     external_id: Optional[str] = None
+    payment_method: Optional[str] = None
+    installment_number: Optional[int] = None
+    installment_total: Optional[int] = None
+    statement_month: Optional[str] = None
+    original_purchase_date: Optional[date] = None
     category_id: Optional[UUID | str] = None
     category_name: Optional[str] = None
     category_color: Optional[str] = None
@@ -286,6 +306,11 @@ async def create_transaction(
         merchant_name=payload.merchant_name,
         is_recurring=payload.is_recurring,
         recurring_pattern=payload.recurring_pattern,
+        payment_method=payload.payment_method,
+        installment_number=payload.installment_number,
+        installment_total=payload.installment_total,
+        statement_month=payload.statement_month,
+        original_purchase_date=payload.original_purchase_date,
     )
     db.add(transaction)
     db.flush()

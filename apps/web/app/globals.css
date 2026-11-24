@@ -544,6 +544,97 @@
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* ─── Animated Liquid Glass M Logo & Floating Transparent Coins ─── */
+.mony-logo-orb {
+  background:
+    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.52) 0%, rgba(186, 230, 253, 0.22) 45%, rgba(15, 23, 42, 0.16) 100%),
+    linear-gradient(140deg, rgba(var(--accent-rgb, 0 113 227) / 0.36) 0%, rgba(99, 102, 241, 0.22) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.9),
+    inset 0 -1px 0 rgba(147, 197, 253, 0.38),
+    0 6px 18px rgba(var(--accent-rgb, 0 113 227) / 0.24);
+  backdrop-filter: blur(14px) saturate(200%);
+  -webkit-backdrop-filter: blur(14px) saturate(200%);
+}
+:root[data-theme="dark"] .mony-logo-orb {
+  background:
+    radial-gradient(circle at 28% 24%, rgba(255, 255, 255, 0.24) 0%, rgba(56, 189, 248, 0.18) 48%, rgba(2, 6, 23, 0.56) 100%);
+  border-color: rgba(255, 255, 255, 0.30);
+}
+.mony-logo-glint {
+  stroke-dasharray: 28 110;
+  animation: monyGlintSweep 4.2s ease-in-out infinite;
+}
+.mony-coin-float-a { animation: monyCoinFloatA 5.6s ease-in-out infinite alternate; transform-origin: 14px 40px; }
+.mony-coin-float-b { animation: monyCoinFloatB 6.4s ease-in-out infinite alternate; transform-origin: 49px 24px; }
+.mony-coin-float-c { animation: monyCoinFloatC 4.9s ease-in-out infinite alternate; transform-origin: 33px 48px; }
+.mony-coin-float-d { animation: monyCoinFloatD 5.8s ease-in-out infinite alternate; transform-origin: 24px 15px; }
+
+@keyframes monyGlintSweep {
+  0%   { stroke-dashoffset: 138; opacity: 0.3; }
+  50%  { opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0.35; }
+}
+@keyframes monyCoinFloatA {
+  0%   { transform: translate3d(-1.5px, 2px, 0) scale(0.96); opacity: 0.72; }
+  100% { transform: translate3d(3px, -3.5px, 0) scale(1.06); opacity: 1; }
+}
+@keyframes monyCoinFloatB {
+  0%   { transform: translate3d(1.5px, -2px, 0) scale(1.04); opacity: 0.95; }
+  100% { transform: translate3d(-3px, 3px, 0) scale(0.94); opacity: 0.72; }
+}
+@keyframes monyCoinFloatC {
+  0%   { transform: translate3d(-2px, 1px, 0) scale(0.94); opacity: 0.65; }
+  100% { transform: translate3d(2.5px, -2.5px, 0) scale(1.08); opacity: 0.95; }
+}
+@keyframes monyCoinFloatD {
+  0%   { transform: translate3d(1px, 2px, 0) scale(0.9); opacity: 0.6; }
+  100% { transform: translate3d(-2px, -2px, 0) scale(1.05); opacity: 0.9; }
+}
+
+:root[data-motion="off"] .mony-logo-glint,
+:root[data-motion="off"] .mony-coin-float-a,
+:root[data-motion="off"] .mony-coin-float-b,
+:root[data-motion="off"] .mony-coin-float-c,
+:root[data-motion="off"] .mony-coin-float-d {
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .mony-logo-glint,
+  .mony-coin-float-a,
+  .mony-coin-float-b,
+  .mony-coin-float-c,
+  .mony-coin-float-d {
+    animation: none !important;
+  }
+}
+
+/* ─── VisionOS Floating Liquid Glass Sidebar Rail ─── */
+.vision-sidebar {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.08) 52%, rgba(255, 255, 255, 0.22) 100%),
+    rgba(var(--surface-rgb), var(--glass-chrome-alpha));
+  backdrop-filter: blur(calc(var(--glass-blur) * 1.15)) saturate(var(--glass-saturation));
+  -webkit-backdrop-filter: blur(calc(var(--glass-blur) * 1.15)) saturate(var(--glass-saturation));
+  border: 1px solid var(--glass-border);
+  box-shadow:
+    inset 0 1.5px 0 var(--glass-specular),
+    inset 0 -1px 0 var(--glass-rim-bottom),
+    inset 1px 0 0 rgba(255, 255, 255, 0.35),
+    0 20px 50px rgba(15, 23, 42, 0.12);
+  border-radius: 26px;
+}
+:root[data-theme="dark"] .vision-sidebar {
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.02) 52%, rgba(255, 255, 255, 0.07) 100%),
+    rgba(var(--surface-rgb), var(--glass-chrome-alpha));
+  box-shadow:
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.24),
+    inset 0 -1px 0 rgba(147, 197, 253, 0.14),
+    0 24px 60px rgba(0, 0, 0, 0.52);
+}
+
 /* ─── Cohesive Translucent Bridge for Existing Tailwind Cards/Pages ─── */
 main .bg-slate-50,
 main .dark\:bg-slate-950 {

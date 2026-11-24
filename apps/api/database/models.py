@@ -276,6 +276,13 @@ class Transaction(Base):
     source = Column(String(20), nullable=False, default=TransactionSource.MANUAL.value)
     external_id = Column(String(200), nullable=True)
 
+    # Payment method & credit-card invoice installment tracking
+    payment_method = Column(String(30), nullable=True)
+    installment_number = Column(Integer, nullable=True)
+    installment_total = Column(Integer, nullable=True)
+    statement_month = Column(String(7), nullable=True)  # YYYY-MM billing month
+    original_purchase_date = Column(Date, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False

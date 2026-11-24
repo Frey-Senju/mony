@@ -103,6 +103,16 @@ function DashboardContent() {
     fetchTransactions(buildApiFilters(), 0, 20)
   }, [filters, fetchTransactions, buildApiFilters])
 
+  // Auto-refresh when transactions are imported via Mony IA Drawer
+  useEffect(() => {
+    const onImported = () => {
+      fetchTransactions(buildApiFilters(), 0, 20)
+      fetchAccounts()
+    }
+    window.addEventListener('mony:transactions-updated', onImported)
+    return () => window.removeEventListener('mony:transactions-updated', onImported)
+  }, [fetchTransactions, fetchAccounts, buildApiFilters])
+
   // Summary metrics
   const currentDate = new Date()
   const currentMonth = currentDate.getMonth()

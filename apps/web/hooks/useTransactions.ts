@@ -18,6 +18,11 @@ export interface Transaction {
   is_reconciled: boolean
   source?: 'manual' | 'open_finance'
   external_id?: string | null
+  payment_method?: string | null
+  installment_number?: number | null
+  installment_total?: number | null
+  statement_month?: string | null
+  original_purchase_date?: string | null
   category_id?: string
   category_name?: string
   category_color?: string
