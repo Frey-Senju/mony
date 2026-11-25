@@ -14,6 +14,7 @@ import {
   Calendar,
   Trash2,
   Upload,
+  Camera,
 } from 'lucide-react'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories } from '@/hooks/useCategories'
@@ -170,6 +171,7 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
   const [importSuccess, setImportSuccess] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const cameraInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setTab(initialTab)
@@ -501,6 +503,18 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               >
                 <Paperclip className="w-4 h-4" aria-hidden="true" />
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setTab('import')
+                  setTimeout(() => cameraInputRef.current?.click(), 80)
+                }}
+                title="Tirar foto de recibo ou nota fiscal"
+                aria-label="Tirar foto de recibo pela câmera"
+                className="liquid-btn liquid-btn-glass p-2.5 rounded-xl shrink-0"
+              >
+                <Camera className="w-4 h-4" aria-hidden="true" />
+              </button>
               <input
                 type="text"
                 value={input}
@@ -596,6 +610,18 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                   }}
                   className="hidden"
                 />
+                <input
+                  ref={cameraInputRef}
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    if (f) handleFileUpload(f)
+                    e.target.value = ''
+                  }}
+                  className="hidden"
+                />
                 {analyzing ? (
                   <div className="flex flex-col items-center gap-2 py-2">
                     <Loader2 className="w-8 h-8 animate-spin text-primary-600" aria-hidden="true" />
@@ -607,19 +633,30 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                   <div className="space-y-2.5">
                     <Upload className="w-8 h-8 mx-auto text-slate-400" aria-hidden="true" />
                     <p className="text-sm font-medium text-slate-800 dark:text-slate-100">
-                      Arraste sua fatura, extrato, boleto ou comprovante PIX
+                      Arraste sua fatura, extrato, boleto, comprovante PIX ou tire foto de um recibo
                     </p>
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                      PDF, CSV, TXT, OFX ou Imagem · Parcelas são alocadas automaticamente no <strong>mês da fatura</strong>
+                      PDF, CSV, TXT, OFX ou Foto · Parcelas são alocadas automaticamente no <strong>mês da fatura</strong>
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      className="liquid-btn liquid-btn-primary inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold mt-1"
-                    >
-                      <FileText className="w-4 h-4" aria-hidden="true" />
-                      Selecionar Arquivo
-                    </button>
+                    <div className="flex items-center justify-center gap-2.5 flex-wrap pt-1">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="liquid-btn liquid-btn-primary inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold"
+                      >
+                        <FileText className="w-4 h-4" aria-hidden="true" />
+                        Selecionar Arquivo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => cameraInputRef.current?.click()}
+                        data-testid="camera-receipt-btn"
+                        className="liquid-btn liquid-btn-glass inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold"
+                      >
+                        <Camera className="w-4 h-4" aria-hidden="true" />
+                        Tirar Foto do Recibo
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>

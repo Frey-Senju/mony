@@ -28,6 +28,7 @@ interface Transaction {
   currency: string
   notes?: string
   category_id?: string
+  payment_method?: string | null
 }
 
 export interface TransactionModalProps {
@@ -167,6 +168,7 @@ export function TransactionModal({
         notes: formData.notes,
         currency: formData.currency,
         category_id: formData.category_id,
+        payment_method: formData.payment_method || undefined,
       }
 
       await onSave(dataToSave)
@@ -344,6 +346,29 @@ export function TransactionModal({
             >
               <option value="expense">Despesa</option>
               <option value="income">Receita</option>
+            </select>
+          </div>
+
+          {/* Payment Method */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              Forma de Pagamento (Opcional)
+            </label>
+            <select
+              name="payment_method"
+              value={formData.payment_method || ''}
+              onChange={handleChange}
+              className="w-full px-4 py-2 rounded border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={isSaving}
+            >
+              <option value="">Não informado</option>
+              <option value="credit_card">Cartão de Crédito</option>
+              <option value="debit_card">Cartão de Débito</option>
+              <option value="pix">PIX</option>
+              <option value="boleto">Boleto</option>
+              <option value="bank_transfer">Transferência</option>
+              <option value="cash">Dinheiro</option>
+              <option value="other">Outro</option>
             </select>
           </div>
 

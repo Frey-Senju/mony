@@ -1,0 +1,34 @@
+<svg width="512" height="512" viewBox="0 0 240 240" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="240" y2="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#EEF5FF"/>
+      <stop offset="55%" stop-color="#E4ECFF"/>
+      <stop offset="100%" stop-color="#DCEBFF"/>
+    </linearGradient>
+    <linearGradient id="mFill" x1="54" y1="50" x2="186" y2="190" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#1E8BFF"/>
+      <stop offset="52%" stop-color="#0071E3"/>
+      <stop offset="100%" stop-color="#004C9E"/>
+    </linearGradient>
+    <linearGradient id="glassBody" x1="30" y1="96" x2="210" y2="152" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.62)"/>
+      <stop offset="45%" stop-color="rgba(0,113,227,0.18)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0.50)"/>
+    </linearGradient>
+    <mask id="maskWave">
+      <rect width="240" height="240" fill="black"/>
+      <path d="M 47 146 C 24 146, 22 104, 52 104 C 70 104, 72 142, 86 142 C 97 142, 96 105, 113 105 C 127 105, 128 142, 141 142 C 151 142, 151 104, 168 104 C 186 104, 190 142, 203 136 C 216 130, 212 105, 196 108" stroke="white" stroke-width="25" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    </mask>
+  </defs>
+  <rect width="240" height="240" rx="54" fill="url(#bg)"/>
+  <path d="M 54 50 H 91 L 120 123 L 149 50 H 186 V 190 H 155 V 103 L 130 165 H 110 L 85 103 V 190 H 54 Z" fill="url(#mFill)"/>
+  <g mask="url(#maskWave)">
+    <rect width="240" height="240" fill="url(#glassBody)"/>
+    <g transform="translate(120 124) scale(1.075, 1.13) translate(-120 -124)">
+      <path d="M 54 50 H 91 L 120 123 L 149 50 H 186 V 190 H 155 V 103 L 130 165 H 110 L 85 103 V 190 H 54 Z" fill="#0055B5" opacity="0.88"/>
+    </g>
+    <path d="M 47 146 C 24 146, 22 104, 52 104 C 70 104, 72 142, 86 142 C 97 142, 96 105, 113 105 C 127 105, 128 142, 141 142 C 151 142, 151 104, 168 104 C 186 104, 190 142, 203 136 C 216 130, 212 105, 196 108" transform="translate(0,-5)" stroke="rgba(255,255,255,0.82)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <path d="M 47 146 C 24 146, 22 104, 52 104 C 70 104, 72 142, 86 142 C 97 142, 96 105, 113 105 C 127 105, 128 142, 141 142 C 151 142, 151 104, 168 104 C 186 104, 190 142, 203 136 C 216 130, 212 105, 196 108" stroke="rgba(15,23,42,0.45)" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" mask="url(#maskWave)" opacity="0.45"/>
+  <path d="M 47 146 C 24 146, 22 104, 52 104 C 70 104, 72 142, 86 142 C 97 142, 96 105, 113 105 C 127 105, 128 142, 141 142 C 151 142, 151 104, 168 104 C 186 104, 190 142, 203 136 C 216 130, 212 105, 196 108" transform="translate(0,-6)" stroke="rgba(255,255,255,0.92)" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

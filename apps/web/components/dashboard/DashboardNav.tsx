@@ -28,6 +28,7 @@ import { useAuth } from '@/stores/auth/useAuth'
 import { MonyLogo } from '@/components/brand/MonyLogo'
 import { MonyAIDrawer } from '@/components/ai/MonyAIDrawer'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
+import { PwaInstallPrompt } from '@/components/pwa/PwaInstallPrompt'
 
 interface NavItem {
   href: string
@@ -68,6 +69,13 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     try {
       const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY)
       if (saved === 'true') setCollapsed(true)
+      // Support PWA home-screen shortcut `/dashboard?ai=import`
+      const params = new URLSearchParams(window.location.search)
+      const aiParam = params.get('ai')
+      if (aiParam === 'import' || aiParam === 'chat') {
+        setAiTab(aiParam)
+        setAiOpen(true)
+      }
     } catch {
       // ignore storage errors
     }
@@ -199,8 +207,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </ul>
         </nav>
 
-        {/* Bottom User & Logout */}
+        {/* Bottom User, PWA Install & Logout */}
         <div className="p-2.5 border-t border-white/45 dark:border-white/10 space-y-1.5">
+          <PwaInstallPrompt collapsed={collapsed} />
           {!collapsed && user?.full_name && (
             <Link
               href="/settings/profile"

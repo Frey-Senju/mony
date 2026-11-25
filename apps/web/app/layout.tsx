@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter } from 'next/font/google'
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from '@/app/_theme/model'
 import { AppearanceProvider } from '@/app/_theme/provider'
@@ -7,13 +7,36 @@ import './globals.css'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#0071E3' },
+    { media: '(prefers-color-scheme: dark)', color: '#050914' },
+  ],
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+}
+
 export const metadata: Metadata = {
   title: {
     template: '%s | Mony',
     default: 'Mony — Gestão Financeira Inteligente',
   },
   description:
-    'Dashboard financeiro inteligente com Open Finance, budgets, metas, relatórios avançados e visual Apple Liquid Glass.',
+    'Dashboard financeiro inteligente com Mony IA, leitura de faturas e recibos por câmera, projeção de parcelas, contas recorrentes, budgets e visual Apple Liquid Glass.',
+  manifest: '/manifest.webmanifest',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Mony',
+  },
+  icons: {
+    icon: [
+      { url: '/icon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' }],
+  },
 }
 
 export default function RootLayout({
