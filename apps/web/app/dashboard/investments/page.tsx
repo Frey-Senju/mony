@@ -30,6 +30,12 @@ import {
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
+import {
+  PerformancePanel,
+  RebalancePanel,
+  DividendCalendarPanel,
+  TaxReportPanel,
+} from '@/components/investments/InvestmentsProPanels'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -152,7 +158,9 @@ function InvestmentsContent() {
   const [banner, setBanner] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const [viewTab, setViewTab] = useState<'assets' | 'dividends' | 'trades'>('assets')
+  const [viewTab, setViewTab] = useState<
+    'assets' | 'performance' | 'rebalance' | 'calendar' | 'tax' | 'dividends' | 'trades'
+  >('assets')
   const [classFilter, setClassFilter] = useState('all')
   const b3InputRef = useRef<HTMLInputElement>(null)
 
@@ -717,10 +725,14 @@ function InvestmentsContent() {
       {/* Main Content Tabs: Ativos | Proventos | Operações */}
       <section className="glass-card overflow-hidden">
         <div className="px-5 py-3.5 border-b border-white/40 dark:border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="inline-flex p-1 rounded-xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15 self-start">
+          <div className="inline-flex flex-wrap p-1 rounded-xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15 self-start gap-0.5">
             {(
               [
                 ['assets', `Ativos (${portfolio?.assets.length || 0})`],
+                ['performance', 'vs CDI / IBOV'],
+                ['rebalance', 'Onde Aportar'],
+                ['calendar', 'Agenda 12m'],
+                ['tax', 'IRPF B3'],
                 ['dividends', `Proventos (${dividends.length})`],
                 ['trades', `Operações (${trades.length})`],
               ] as const
@@ -729,7 +741,7 @@ function InvestmentsContent() {
                 key={id}
                 type="button"
                 onClick={() => setViewTab(id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold transition ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
                   viewTab === id ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
                 }`}
               >
@@ -764,6 +776,14 @@ function InvestmentsContent() {
               <div key={i} className="h-12 rounded-xl bg-white/40 dark:bg-white/5 animate-pulse" />
             ))}
           </div>
+        ) : viewTab === 'performance' ? (
+          <PerformancePanel token={token || ''} />
+        ) : viewTab === 'rebalance' ? (
+          <RebalancePanel token={token || ''} />
+        ) : viewTab === 'calendar' ? (
+          <DividendCalendarPanel token={token || ''} />
+        ) : viewTab === 'tax' ? (
+          <TaxReportPanel token={token || ''} />
         ) : viewTab === 'assets' ? (
           filteredAssets.length === 0 ? (
             <div className="p-12 text-center space-y-3">

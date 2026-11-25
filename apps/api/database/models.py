@@ -894,3 +894,47 @@ class MarketQuoteCache(Base):
     logo_url = Column(Text, nullable=True)
     source = Column(String(32), nullable=False, default="yahoo")
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class CategoryRule(Base):
+    """User-defined auto-categorization or internal-transfer detection rule."""
+
+    __tablename__ = "category_rules"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    pattern = Column(String(120), nullable=False)  # case-insensitive keyword / substring
+    match_field = Column(String(20), nullable=False, default="any")  # any | description | merchant
+    action = Column(String(24), nullable=False, default="categorize")  # categorize | mark_transfer
+    category_name = Column(String(100), nullable=True)
+    priority = Column(Integer, nullable=False, default=100)
+    is_active = Column(Boolean, nullable=False, default=True)
+    matches_count = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_category_rules_user_active", "user_id", "is_active", "priority"),
+    )
+
+    user = relationship("User")
+
+
+class InvestmentTarget(Base):
+    """User target allocation % per investment asset class (for smart rebalancing)."""
+
+    __tablename__ = "investment_targets"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    asset_class = Column(String(24), nullable=False)  # stock | fii | etf | bdr | fixed_income | crypto
+    target_pct = Column(Numeric(6, 2), nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "asset_class", name="uq_inv_targets_user_class"),
+        Index("idx_inv_targets_user", "user_id"),
+    )
+
+    user = relationship("User")

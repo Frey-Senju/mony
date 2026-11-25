@@ -82,7 +82,8 @@ const TYPE_OPTIONS = [
 
 const QUICK_PROMPTS = [
   'Resumo dos meus gastos este mês',
-  'Qual meu saldo total nas contas?',
+  'Analise minha carteira B3 e proventos',
+  'Como está minha reserva de emergência?',
   'Algum budget está em alerta?',
   'Como estão minhas metas financeiras?',
 ]

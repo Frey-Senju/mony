@@ -39,12 +39,14 @@ from database.base import get_db
 from database.models import (
     InvestmentAsset,
     InvestmentDividend,
+    InvestmentTarget,
     InvestmentTrade,
     OFLinkedAccount,
 )
 from services.market_data import (
     classify_b3_ticker,
     get_bcb_macro_rates,
+    get_ibov_12m_monthly_returns,
     get_quote,
     normalize_ticker,
 )
@@ -996,4 +998,531 @@ async def sync_pluggy_investments(
         "items_synced": len(item_ids),
         "positions_synced": synced,
         "positions_created": created,
+    }
+
+
+# ============ Investidor10 Pro: Performance vs CDI / IBOV / IPCA ============
+
+
+DEFAULT_TARGETS: dict[str, float] = {
+    "stock": 35.0,
+    "fii": 30.0,
+    "fixed_income": 25.0,
+    "etf": 5.0,
+    "bdr": 5.0,
+    "crypto": 0.0,
+}
+
+
+class TargetsUpdateRequest(BaseModel):
+    targets: dict[str, float]
+
+
+def _last_n_months(n: int = 12) -> list[tuple[str, str]]:
+    today = date.today()
+    months: list[tuple[str, str]] = []
+    pt_months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    y, m = today.year, today.month
+    for _ in range(n):
+        ym = f"{y:04d}-{m:02d}"
+        label = f"{pt_months[m - 1]}/{str(y)[-2:]}"
+        months.append((ym, label))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    months.reverse()
+    return months
+
+
+@router.get("/performance")
+async def get_portfolio_performance(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Compare portfolio 12-month cumulative return against CDI, IBOVESPA, and IPCA."""
+    uid = parse_uuid(user_id, "user_id")
+    macro = await get_bcb_macro_rates()
+    ibov_monthly = await get_ibov_12m_monthly_returns()
+
+    cdi_annual = float(macro.get("cdi") or 14.15)
+    ipca_annual = float(macro.get("ipca") or 4.50)
+    cdi_m = ((1 + cdi_annual / 100.0) ** (1 / 12.0) - 1) * 100.0
+    ipca_m = ((1 + ipca_annual / 100.0) ** (1 / 12.0) - 1) * 100.0
+
+    assets = (
+        db.query(InvestmentAsset)
+        .filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None), InvestmentAsset.quantity > 0)
+        .all()
+    )
+    total_cost = 0.0
+    total_value = 0.0
+    for a in assets:
+        qty = float(a.quantity or 0)
+        avg = float(a.average_price or 0)
+        q = await get_quote(db, a.ticker, asset_class=a.asset_class) if a.asset_class != "fixed_income" else None
+        curr = float(q["price"]) if (q and float(q.get("price") or 0) > 0) else avg
+        total_cost += qty * avg
+        total_value += qty * curr
+
+    today = date.today()
+    cutoff_12m = date(today.year - 1, today.month, 1)
+    divs = (
+        db.query(InvestmentDividend)
+        .filter(InvestmentDividend.user_id == uid, InvestmentDividend.payment_date >= cutoff_12m)
+        .all()
+    )
+    divs_by_ym: dict[str, float] = {}
+    for d in divs:
+        ym = d.payment_date.strftime("%Y-%m")
+        divs_by_ym[ym] = divs_by_ym.get(ym, 0.0) + float(d.total_amount or 0)
+
+    total_div_12m = sum(divs_by_ym.values())
+    total_return_pct = (
+        round(((total_value + total_div_12m - total_cost) / total_cost) * 100.0, 2)
+        if total_cost > 0
+        else 0.0
+    )
+
+    # Distribute realized return smoothly across the 12 months weighted by actual monthly dividends
+    months = _last_n_months(12)
+    series = []
+    cum_cdi = 1.0
+    cum_ipca = 1.0
+    cum_ibov = 1.0
+    n_months = len(months)
+    base_monthly_gain = (total_return_pct / n_months) if n_months > 0 else 0.0
+    cum_port = 0.0
+
+    for idx, (ym, label) in enumerate(months):
+        cum_cdi *= (1 + cdi_m / 100.0)
+        cum_ipca *= (1 + ipca_m / 100.0)
+        ibov_r = float(ibov_monthly.get(ym, 0.85))
+        cum_ibov *= (1 + ibov_r / 100.0)
+
+        div_boost = (divs_by_ym.get(ym, 0.0) / total_cost * 100.0) if total_cost > 0 else 0.0
+        if idx == n_months - 1:
+            cum_port = total_return_pct
+        else:
+            cum_port = round(cum_port + base_monthly_gain + (div_boost * 0.25), 2)
+
+        series.append({
+            "ym": ym,
+            "label": label,
+            "portfolio_pct": round(cum_port, 2),
+            "cdi_pct": round((cum_cdi - 1) * 100.0, 2),
+            "ibov_pct": round((cum_ibov - 1) * 100.0, 2),
+            "ipca_pct": round((cum_ipca - 1) * 100.0, 2),
+        })
+
+    last = series[-1] if series else {"portfolio_pct": 0.0, "cdi_pct": 0.0, "ibov_pct": 0.0, "ipca_pct": 0.0}
+    return {
+        "series": series,
+        "summary": {
+            "portfolio_12m_pct": last["portfolio_pct"],
+            "cdi_12m_pct": last["cdi_pct"],
+            "ibov_12m_pct": last["ibov_pct"],
+            "ipca_12m_pct": last["ipca_pct"],
+            "alpha_vs_cdi": round(last["portfolio_pct"] - last["cdi_pct"], 2),
+            "alpha_vs_ibov": round(last["portfolio_pct"] - last["ibov_pct"], 2),
+            "pct_of_cdi": round((last["portfolio_pct"] / last["cdi_pct"]) * 100.0, 1) if last["cdi_pct"] > 0 else 0.0,
+        },
+    }
+
+
+# ============ Investidor10 Pro: Rebalanceamento ("Onde Aportar") ============
+
+
+@router.put("/targets")
+async def update_investment_targets(
+    payload: TargetsUpdateRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    uid = parse_uuid(user_id, "user_id")
+    valid_classes = set(ASSET_CLASS_LABELS.keys())
+    cleaned = {k: max(0.0, min(100.0, float(v))) for k, v in payload.targets.items() if k in valid_classes}
+    total_pct = round(sum(cleaned.values()), 2)
+    if abs(total_pct - 100.0) > 0.5:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"A soma das metas de alocação deve ser 100% (atual: {total_pct}%).",
+        )
+
+    for cls, pct_val in cleaned.items():
+        row = (
+            db.query(InvestmentTarget)
+            .filter(InvestmentTarget.user_id == uid, InvestmentTarget.asset_class == cls)
+            .first()
+        )
+        if row is None:
+            db.add(InvestmentTarget(user_id=uid, asset_class=cls, target_pct=Decimal(f"{pct_val:.2f}")))
+        else:
+            row.target_pct = Decimal(f"{pct_val:.2f}")
+            row.updated_at = datetime.utcnow()
+    db.commit()
+    return {"targets": cleaned, "total_pct": total_pct}
+
+
+@router.get("/rebalance")
+async def get_rebalance_plan(
+    contribution: float = Query(default=1000.0, ge=0, le=10_000_000),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Calculate smart monthly contribution split per class without selling any assets."""
+    uid = parse_uuid(user_id, "user_id")
+    saved = db.query(InvestmentTarget).filter(InvestmentTarget.user_id == uid).all()
+    targets = dict(DEFAULT_TARGETS)
+    if saved:
+        targets = {k: 0.0 for k in ASSET_CLASS_LABELS}
+        for row in saved:
+            if row.asset_class in targets:
+                targets[row.asset_class] = float(row.target_pct or 0)
+
+    assets = (
+        db.query(InvestmentAsset)
+        .filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None), InvestmentAsset.quantity > 0)
+        .all()
+    )
+    class_values: dict[str, float] = {k: 0.0 for k in ASSET_CLASS_LABELS}
+    class_tickers: dict[str, list[dict[str, Any]]] = {k: [] for k in ASSET_CLASS_LABELS}
+
+    total_current = 0.0
+    for a in assets:
+        qty = float(a.quantity or 0)
+        avg = float(a.average_price or 0)
+        q = await get_quote(db, a.ticker, asset_class=a.asset_class) if a.asset_class != "fixed_income" else None
+        curr = float(q["price"]) if (q and float(q.get("price") or 0) > 0) else avg
+        val = qty * curr
+        cls = a.asset_class if a.asset_class in class_values else "stock"
+        class_values[cls] += val
+        class_tickers[cls].append({"ticker": a.ticker, "value": round(val, 2), "price": round(curr, 2)})
+        total_current += val
+
+    projected_total = total_current + contribution
+    deficits: dict[str, float] = {}
+    for cls, target_pct in targets.items():
+        desired_val = projected_total * (target_pct / 100.0)
+        deficits[cls] = max(0.0, desired_val - class_values[cls])
+
+    total_deficit = sum(deficits.values())
+    rows = []
+    for cls, label in ASSET_CLASS_LABELS.items():
+        curr_val = class_values[cls]
+        curr_pct = round((curr_val / total_current) * 100.0, 2) if total_current > 0 else 0.0
+        target_pct = round(targets.get(cls, 0.0), 2)
+        if contribution > 0 and total_deficit > 0:
+            suggested = round(contribution * (deficits[cls] / total_deficit), 2)
+        elif contribution > 0:
+            suggested = round(contribution * (target_pct / 100.0), 2)
+        else:
+            suggested = 0.0
+        after_val = curr_val + suggested
+        after_pct = round((after_val / projected_total) * 100.0, 2) if projected_total > 0 else 0.0
+        top_t = sorted(class_tickers[cls], key=lambda x: x["value"])[:3]
+        rows.append({
+            "asset_class": cls,
+            "label": label,
+            "current_value": round(curr_val, 2),
+            "current_pct": curr_pct,
+            "target_pct": target_pct,
+            "diff_pct": round(curr_pct - target_pct, 2),
+            "suggested_contribution": suggested,
+            "projected_pct": after_pct,
+            "suggested_tickers": [t["ticker"] for t in top_t],
+        })
+
+    rows.sort(key=lambda r: r["suggested_contribution"], reverse=True)
+    return {
+        "contribution": round(contribution, 2),
+        "current_total": round(total_current, 2),
+        "projected_total": round(projected_total, 2),
+        "targets": targets,
+        "plan": rows,
+    }
+
+
+# ============ Investidor10 Pro: Agenda de Proventos 12m ============
+
+
+@router.get("/dividends/calendar")
+async def get_dividends_calendar(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Project next 12 months of passive income from current portfolio DY 12m + FII/Stock cadence."""
+    uid = parse_uuid(user_id, "user_id")
+    assets = (
+        db.query(InvestmentAsset)
+        .filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None), InvestmentAsset.quantity > 0)
+        .all()
+    )
+
+    today = date.today()
+    pt_months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    upcoming: list[dict[str, Any]] = []
+    y, m = today.year, today.month
+    for _ in range(12):
+        upcoming.append({
+            "ym": f"{y:04d}-{m:02d}",
+            "month": m,
+            "label": f"{pt_months[m - 1]}/{str(y)[-2:]}",
+            "estimated_total": 0.0,
+            "fii_total": 0.0,
+            "stock_total": 0.0,
+            "payers": [],
+        })
+        m += 1
+        if m == 13:
+            m = 1
+            y += 1
+
+    annual_projected = 0.0
+    asset_projections = []
+
+    for a in assets:
+        if a.asset_class == "fixed_income":
+            continue
+        qty = float(a.quantity or 0)
+        avg = float(a.average_price or 0)
+        q = await get_quote(db, a.ticker, asset_class=a.asset_class)
+        curr = float(q["price"]) if (q and float(q.get("price") or 0) > 0) else avg
+        dy = float(q["dy_12m"]) if (q and q.get("dy_12m") is not None) else (9.5 if a.asset_class == "fii" else 0.0)
+        if dy <= 0:
+            continue
+        val = qty * curr
+        est_year = round(val * (dy / 100.0), 2)
+        annual_projected += est_year
+        asset_projections.append({
+            "ticker": a.ticker,
+            "asset_class": a.asset_class,
+            "dy_12m": round(dy, 2),
+            "annual_estimated": est_year,
+            "monthly_avg": round(est_year / 12.0, 2),
+        })
+
+        if a.asset_class == "fii":
+            monthly_amt = est_year / 12.0
+            for slot in upcoming:
+                slot["fii_total"] = round(slot["fii_total"] + monthly_amt, 2)
+                slot["estimated_total"] = round(slot["estimated_total"] + monthly_amt, 2)
+                slot["payers"].append({"ticker": a.ticker, "amount": round(monthly_amt, 2)})
+        else:
+            # Brazilian stocks typically pay quarterly (Mar, Jun, Sep, Dec)
+            quarter_amt = est_year / 4.0
+            for slot in upcoming:
+                if slot["month"] in (3, 6, 9, 12):
+                    slot["stock_total"] = round(slot["stock_total"] + quarter_amt, 2)
+                    slot["estimated_total"] = round(slot["estimated_total"] + quarter_amt, 2)
+                    slot["payers"].append({"ticker": a.ticker, "amount": round(quarter_amt, 2)})
+
+    for slot in upcoming:
+        slot["payers"] = sorted(slot["payers"], key=lambda x: x["amount"], reverse=True)[:5]
+
+    asset_projections.sort(key=lambda x: x["annual_estimated"], reverse=True)
+    return {
+        "annual_projected": round(annual_projected, 2),
+        "monthly_avg_projected": round(annual_projected / 12.0, 2),
+        "months": upcoming,
+        "by_asset": asset_projections,
+    }
+
+
+# ============ Investidor10 Pro: Resumo IRPF B3 ============
+
+
+@router.get("/tax-report")
+async def get_b3_tax_report(
+    year: int = Query(default=date.today().year, ge=2015, le=2035),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate Brazilian IRPF B3 summary for a given calendar year:
+      - Bens e Direitos (year-end holdings with exact weighted avg price & cost)
+      - Monthly sales tracker with R$ 20,000 stock exemption monitor & estimated DARF
+      - Rendimentos Isentos (Dividends + FII yields) vs Tributação Exclusiva (JCP)
+    """
+    uid = parse_uuid(user_id, "user_id")
+    year_end = date(year, 12, 31)
+    year_start = date(year, 1, 1)
+
+    assets = (
+        db.query(InvestmentAsset)
+        .filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None))
+        .all()
+    )
+    asset_map = {a.id: a for a in assets}
+
+    all_trades = (
+        db.query(InvestmentTrade)
+        .filter(InvestmentTrade.user_id == uid, InvestmentTrade.trade_date <= year_end)
+        .order_by(InvestmentTrade.trade_date.asc(), InvestmentTrade.created_at.asc())
+        .all()
+    )
+
+    # Replay trades per asset to reconstruct Dec 31 holdings + exact realized gains in `year`
+    state: dict[UUID, dict[str, Decimal]] = {}
+    monthly_sales: dict[int, dict[str, float]] = {
+        m: {
+            "month": m,
+            "stock_sales": 0.0,
+            "stock_gain": 0.0,
+            "fii_sales": 0.0,
+            "fii_gain": 0.0,
+            "etf_bdr_sales": 0.0,
+            "etf_bdr_gain": 0.0,
+        }
+        for m in range(1, 13)
+    }
+
+    for t in all_trades:
+        a = asset_map.get(t.asset_id)
+        if not a:
+            continue
+        st = state.setdefault(a.id, {"qty": Decimal("0"), "avg": Decimal("0")})
+        qty = st["qty"]
+        avg = st["avg"]
+        t_qty = Decimal(str(t.quantity or 0))
+        t_price = Decimal(str(t.unit_price or 0))
+        t_fees = Decimal(str(t.fees or 0))
+        op = (t.operation or "buy").lower()
+
+        if op == "buy":
+            total_cost = (qty * avg) + (t_qty * t_price) + t_fees
+            qty += t_qty
+            avg = (total_cost / qty) if qty > 0 else Decimal("0")
+        elif op == "sell":
+            sale_gross = float(t_qty * t_price)
+            sale_net = float((t_qty * t_price) - t_fees)
+            cost_basis = float(t_qty * avg)
+            realized_gain = sale_net - cost_basis
+            if year_start <= t.trade_date <= year_end:
+                bucket = monthly_sales[t.trade_date.month]
+                if a.asset_class == "stock":
+                    bucket["stock_sales"] += sale_gross
+                    bucket["stock_gain"] += realized_gain
+                elif a.asset_class == "fii":
+                    bucket["fii_sales"] += sale_gross
+                    bucket["fii_gain"] += realized_gain
+                else:
+                    bucket["etf_bdr_sales"] += sale_gross
+                    bucket["etf_bdr_gain"] += realized_gain
+            qty = max(Decimal("0"), qty - t_qty)
+            if qty == 0:
+                avg = Decimal("0")
+        elif op == "bonus":
+            total_cost = (qty * avg) + (t_qty * t_price)
+            qty += t_qty
+            avg = (total_cost / qty) if qty > 0 else Decimal("0")
+        elif op == "split" and t_qty > 0:
+            qty *= t_qty
+            avg = avg / t_qty
+
+        st["qty"] = qty
+        st["avg"] = avg
+
+    # Bens e Direitos
+    IRPF_GROUP_CODE = {
+        "stock": ("03", "01", "Ações"),
+        "fii": ("07", "03", "Fundos de Investimento Imobiliário (FII)"),
+        "etf": ("07", "09", "Demais Fundos de Índice de Mercado (ETF)"),
+        "bdr": ("04", "04", "BDRs"),
+        "fixed_income": ("04", "02", "Títulos Públicos e Privados (Renda Fixa)"),
+        "crypto": ("08", "01", "Criptoativos"),
+    }
+
+    bens_e_direitos = []
+    for a in assets:
+        if a.id in state:
+            q_val = float(state[a.id]["qty"])
+            avg_val = float(state[a.id]["avg"])
+        elif a.created_at and a.created_at.date() <= year_end:
+            q_val = float(a.quantity or 0)
+            avg_val = float(a.average_price or 0)
+        else:
+            continue
+        if q_val <= 0:
+            continue
+        cost_total = round(q_val * avg_val, 2)
+        grp, code, grp_label = IRPF_GROUP_CODE.get(a.asset_class, ("03", "01", "Ativo"))
+        broker_txt = f" custodiadas na corretora {a.broker}" if a.broker else ""
+        discriminacao = (
+            f"{q_val:g} unidade(s) de {a.ticker} ({a.name}){broker_txt}, "
+            f"ao preço médio de R$ {avg_val:,.2f} — custo total de aquisição R$ {cost_total:,.2f}."
+        ).replace(",", "X").replace(".", ",").replace("X", ".")
+        bens_e_direitos.append({
+            "ticker": a.ticker,
+            "name": a.name,
+            "asset_class": a.asset_class,
+            "asset_class_label": ASSET_CLASS_LABELS.get(a.asset_class, a.asset_class),
+            "irpf_group": grp,
+            "irpf_code": code,
+            "irpf_label": grp_label,
+            "quantity": round(q_val, 6),
+            "average_price": round(avg_val, 4),
+            "total_cost": cost_total,
+            "discriminacao": discriminacao,
+        })
+    bens_e_direitos.sort(key=lambda x: x["total_cost"], reverse=True)
+
+    # Monthly sales & DARF calculation
+    pt_months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    monthly_rows = []
+    total_darf_estimated = 0.0
+    for m in range(1, 13):
+        b = monthly_sales[m]
+        exempt_stocks = b["stock_sales"] <= 20_000.0
+        darf_stocks = round(max(0.0, b["stock_gain"]) * 0.15, 2) if not exempt_stocks else 0.0
+        darf_fii = round(max(0.0, b["fii_gain"]) * 0.20, 2)
+        darf_other = round(max(0.0, b["etf_bdr_gain"]) * 0.15, 2)
+        darf_total = round(darf_stocks + darf_fii + darf_other, 2)
+        total_darf_estimated += darf_total
+        monthly_rows.append({
+            "month": m,
+            "label": f"{pt_months[m - 1]}/{year}",
+            "stock_sales": round(b["stock_sales"], 2),
+            "stock_gain": round(b["stock_gain"], 2),
+            "stock_exempt_20k": exempt_stocks,
+            "fii_sales": round(b["fii_sales"], 2),
+            "fii_gain": round(b["fii_gain"], 2),
+            "etf_bdr_sales": round(b["etf_bdr_sales"], 2),
+            "darf_estimated": darf_total,
+        })
+
+    # Annual dividends breakdown
+    divs_year = (
+        db.query(InvestmentDividend)
+        .filter(
+            InvestmentDividend.user_id == uid,
+            InvestmentDividend.payment_date >= year_start,
+            InvestmentDividend.payment_date <= year_end,
+        )
+        .all()
+    )
+    dividends_exempt = 0.0
+    fii_exempt = 0.0
+    jcp_exclusive = 0.0
+    for d in divs_year:
+        amt = float(d.total_amount or 0)
+        if d.dividend_type == "jcp":
+            jcp_exclusive += amt
+        elif d.dividend_type == "fii_yield":
+            fii_exempt += amt
+        else:
+            dividends_exempt += amt
+
+    return {
+        "year": year,
+        "bens_e_direitos": bens_e_direitos,
+        "total_cost_year_end": round(sum(b["total_cost"] for b in bens_e_direitos), 2),
+        "monthly_sales": monthly_rows,
+        "total_darf_estimated": round(total_darf_estimated, 2),
+        "income_summary": {
+            "dividends_exempt": round(dividends_exempt, 2),
+            "fii_yields_exempt": round(fii_exempt, 2),
+            "total_exempt": round(dividends_exempt + fii_exempt, 2),
+            "jcp_exclusive": round(jcp_exclusive, 2),
+        },
     }

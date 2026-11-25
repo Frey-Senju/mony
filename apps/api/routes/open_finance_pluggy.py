@@ -53,6 +53,12 @@ from services.pluggy_client import (
     fetch_pluggy_transactions,
     is_pluggy_configured,
 )
+from services.rules_engine import (
+    detect_and_link_paired_transfers,
+    is_internal_transfer_text,
+    load_active_rules,
+    match_user_rule,
+)
 from utils.auth import get_current_user_from_header
 from utils.uuid_utils import parse_uuid
 
@@ -192,6 +198,7 @@ async def _sync_pluggy_account_txs(
 
     categories = ensure_default_categories(db, uid)
     cat_names = [c.name for c in categories]
+    active_rules = load_active_rules(db, uid)
 
     acct_fp = linked.account_fingerprint or compute_account_fingerprint(
         mony_account.name,
@@ -237,10 +244,24 @@ async def _sync_pluggy_account_txs(
             reconciled += 1
             continue
 
+        matched_rule = match_user_rule(active_rules, item["description"], item["merchant_name"])
+        tx_type = item["type"]
+        rule_category: Optional[str] = None
+        if matched_rule is not None:
+            matched_rule.matches_count = int(matched_rule.matches_count or 0) + 1
+            if matched_rule.action == "mark_transfer":
+                tx_type = TransactionType.TRANSFER
+            elif matched_rule.action == "categorize" and matched_rule.category_name:
+                rule_category = matched_rule.category_name
+        elif tx_type in (TransactionType.EXPENSE, TransactionType.INCOME) and is_internal_transfer_text(
+            item["description"], item["merchant_name"]
+        ):
+            tx_type = TransactionType.TRANSFER
+
         tx = Transaction(
             user_id=uid,
             account_id=mony_account.id,
-            type=item["type"],
+            type=tx_type,
             amount=item["amount"],
             currency=item["currency"],
             description=item["description"],
@@ -258,16 +279,19 @@ async def _sync_pluggy_account_txs(
         db.add(tx)
         db.flush()
 
-        cat_label = _classify_category(
+        cat_label = rule_category or _classify_category(
             f"{item['description']} {item['merchant_name'] or ''}",
             cat_names,
-            item["type"].value,
+            tx_type.value,
         )
         cat = _resolve_category(db, uid, category_name=cat_label)
         if cat is not None:
             _set_transaction_category(db, tx, cat)
 
         inserted += 1
+
+    if inserted > 0:
+        detect_and_link_paired_transfers(db, uid, days_back=90)
 
     linked.last_sync_at = datetime.utcnow()
     linked.last_sync_attempt_at = datetime.utcnow()

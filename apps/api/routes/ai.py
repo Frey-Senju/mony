@@ -26,6 +26,10 @@ from database.models import (
     Budget,
     Category,
     Goal,
+    InvestmentAsset,
+    InvestmentDividend,
+    MarketQuoteCache,
+    OFLinkedAccount,
     Receipt,
     Transaction,
     TransactionCategory,
@@ -42,6 +46,11 @@ from services.ai_analyzer import (
     analyze_document,
     chat_with_financial_context,
     get_active_ai_provider,
+)
+from services.rules_engine import (
+    is_internal_transfer_text,
+    load_active_rules,
+    match_user_rule,
 )
 from utils.auth import get_current_user_from_header
 from utils.uuid_utils import parse_uuid
@@ -248,6 +257,7 @@ async def import_analyzed_transactions(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada.")
 
     ensure_default_categories(db, uid)
+    active_rules = load_active_rules(db, uid)
 
     imported_ids: list[str] = []
     skipped_duplicates = 0
@@ -275,6 +285,19 @@ async def import_analyzed_transactions(
             tx_type = TransactionType(item.type)
         except ValueError:
             tx_type = TransactionType.EXPENSE
+
+        chosen_category = item.category_name or "Outros"
+        matched_rule = match_user_rule(active_rules, item.description, item.merchant_name)
+        if matched_rule is not None:
+            matched_rule.matches_count = int(matched_rule.matches_count or 0) + 1
+            if matched_rule.action == "mark_transfer":
+                tx_type = TransactionType.TRANSFER
+            elif matched_rule.action == "categorize" and matched_rule.category_name:
+                chosen_category = matched_rule.category_name
+        elif tx_type in (TransactionType.EXPENSE, TransactionType.INCOME) and is_internal_transfer_text(
+            item.description, item.merchant_name
+        ):
+            tx_type = TransactionType.TRANSFER
 
         notes_parts = []
         if item.installment_number and item.installment_total:
@@ -305,7 +328,7 @@ async def import_analyzed_transactions(
         db.add(tx)
         db.flush()
 
-        cat = _resolve_category(db, uid, category_name=item.category_name or "Outros")
+        cat = _resolve_category(db, uid, category_name=chosen_category)
         if cat is not None:
             _set_transaction_category(db, tx, cat)
 
@@ -423,15 +446,125 @@ async def ai_chat(
         for g in goals
     ]
 
+    # Enrich with B3 Investments Portfolio + Dividends 12m
+    inv_assets = (
+        db.query(InvestmentAsset)
+        .filter(
+            InvestmentAsset.user_id == uid,
+            InvestmentAsset.deleted_at.is_(None),
+            InvestmentAsset.quantity > 0,
+        )
+        .all()
+    )
+    tickers = [a.ticker for a in inv_assets]
+    quote_map: dict[str, MarketQuoteCache] = {}
+    if tickers:
+        cached_quotes = (
+            db.query(MarketQuoteCache)
+            .filter(MarketQuoteCache.ticker.in_(tickers))
+            .all()
+        )
+        quote_map = {q.ticker: q for q in cached_quotes}
+
+    cutoff_12m = date(today.year - 1, today.month, min(today.day, 28))
+    inv_divs_12m = (
+        db.query(InvestmentDividend)
+        .filter(
+            InvestmentDividend.user_id == uid,
+            InvestmentDividend.payment_date >= cutoff_12m,
+        )
+        .all()
+    )
+    div_by_asset: dict[UUID, float] = {}
+    for d in inv_divs_12m:
+        div_by_asset[d.asset_id] = div_by_asset.get(d.asset_id, 0.0) + float(d.total_amount or 0)
+
+    inv_total_value = 0.0
+    inv_total_cost = 0.0
+    inv_by_class: dict[str, float] = {}
+    inv_positions = []
+    for a in inv_assets:
+        qty = float(a.quantity or 0)
+        avg = float(a.average_price or 0)
+        q = quote_map.get(a.ticker)
+        curr = float(q.price) if (q and float(q.price or 0) > 0 and a.asset_class != "fixed_income") else avg
+        val = qty * curr
+        cost = qty * avg
+        gain_pct = round(((val - cost) / cost * 100), 2) if cost > 0 else 0.0
+        inv_total_value += val
+        inv_total_cost += cost
+        inv_by_class[a.asset_class] = inv_by_class.get(a.asset_class, 0.0) + val
+        inv_positions.append({
+            "ticker": a.ticker,
+            "class": a.asset_class,
+            "qty": round(qty, 4),
+            "avg_price": round(avg, 2),
+            "current_price": round(curr, 2),
+            "value": round(val, 2),
+            "gain_pct": gain_pct,
+            "dy_12m": float(q.dy_12m) if (q and q.dy_12m is not None) else None,
+            "dividends_12m": round(div_by_asset.get(a.id, 0.0), 2),
+        })
+    inv_positions.sort(key=lambda x: x["value"], reverse=True)
+    total_dividends_12m = round(sum(div_by_asset.values()), 2)
+
+    # Annual Cashflow + Emergency Reserve context (YTD)
+    year_start = date(today.year, 1, 1)
+    ytd_txs = (
+        db.query(Transaction.type, func.coalesce(func.sum(Transaction.amount), 0))
+        .filter(
+            and_(
+                Transaction.user_id == uid,
+                Transaction.deleted_at.is_(None),
+                Transaction.transaction_date >= year_start,
+                Transaction.type.in_([TransactionType.INCOME, TransactionType.EXPENSE]),
+            )
+        )
+        .group_by(Transaction.type)
+        .all()
+    )
+    ytd_map = {t.value if hasattr(t, "value") else str(t): float(s) for t, s in ytd_txs}
+    ytd_income = ytd_map.get("income", 0.0)
+    ytd_expenses = ytd_map.get("expense", 0.0)
+    avg_monthly_exp = round(ytd_expenses / max(today.month, 1), 2)
+    savings_rate_ytd = round(((ytd_income - ytd_expenses) / ytd_income * 100), 1) if ytd_income > 0 else 0.0
+    emergency_months = round((total_balance + inv_by_class.get("fixed_income", 0.0)) / avg_monthly_exp, 1) if avg_monthly_exp > 0 else 0.0
+
+    pluggy_linked_count = (
+        db.query(OFLinkedAccount)
+        .filter(OFLinkedAccount.user_id == uid, OFLinkedAccount.provider == "pluggy", OFLinkedAccount.is_active.is_(True))
+        .count()
+    )
+
     context = {
         "current_month": today.strftime("%m/%Y"),
         "total_balance": round(total_balance, 2),
+        "net_worth_total": round(total_balance + inv_total_value, 2),
         "month_income": round(month_income, 2),
         "month_expenses": round(month_expenses, 2),
+        "cashflow_ytd": {
+            "year": today.year,
+            "ytd_income": round(ytd_income, 2),
+            "ytd_expenses": round(ytd_expenses, 2),
+            "avg_monthly_expense": avg_monthly_exp,
+            "savings_rate_pct": savings_rate_ytd,
+            "emergency_reserve_months": emergency_months,
+        },
         "accounts": [{"name": a.name, "type": a.type.value if hasattr(a.type, "value") else str(a.type), "balance": float(a.balance or 0)} for a in accounts],
+        "open_finance_pluggy_accounts": pluggy_linked_count,
         "top_categories": top_categories,
         "budgets": budget_summaries,
         "goals": goal_summaries,
+        "investments": {
+            "total_value": round(inv_total_value, 2),
+            "total_cost": round(inv_total_cost, 2),
+            "total_gain_pct": round(((inv_total_value - inv_total_cost) / inv_total_cost * 100), 2) if inv_total_cost > 0 else 0.0,
+            "dividends_12m": total_dividends_12m,
+            "monthly_avg_dividends": round(total_dividends_12m / 12.0, 2),
+            "yoc_pct": round((total_dividends_12m / inv_total_cost * 100), 2) if inv_total_cost > 0 else 0.0,
+            "allocation_by_class": {k: round(v, 2) for k, v in inv_by_class.items()},
+            "top_assets": inv_positions[:12],
+        },
     }
 
     return await chat_with_financial_context(

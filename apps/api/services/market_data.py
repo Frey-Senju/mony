@@ -299,3 +299,47 @@ async def get_bcb_macro_rates() -> dict[str, float]:
     except Exception:  # noqa: BLE001
         pass
     return {"cdi": _bcb_cache["cdi"], "ipca": _bcb_cache["ipca"]}
+
+
+_ibov_cache: dict[str, Any] = {"ts": 0.0, "monthly": {}}
+
+
+async def get_ibov_12m_monthly_returns() -> dict[str, float]:
+    """Fetch 12-month monthly % returns for IBOVESPA (^BVSP) via Yahoo Finance (6h cache)."""
+    now = time.time()
+    if (now - _ibov_cache["ts"] < 6 * 3600 and _ibov_cache["monthly"]) or os.getenv("PYTEST_CURRENT_TEST"):
+        return dict(_ibov_cache["monthly"])
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=HTTP_TIMEOUT,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; MonyFinance/1.0)"},
+        ) as client:
+            resp = await client.get(
+                "https://query1.finance.yahoo.com/v8/finance/chart/%5EBVSP",
+                params={"range": "15mo", "interval": "1mo"},
+            )
+            if resp.status_code == 200:
+                chart = (resp.json().get("chart") or {}).get("result") or []
+                if chart:
+                    node = chart[0]
+                    timestamps = node.get("timestamp") or []
+                    closes = (((node.get("indicators") or {}).get("quote") or [{}])[0].get("close") or [])
+                    month_close: dict[str, float] = {}
+                    for ts, cl in zip(timestamps, closes):
+                        if cl is not None and float(cl) > 0:
+                            ym = datetime.utcfromtimestamp(int(ts)).strftime("%Y-%m")
+                            month_close[ym] = float(cl)
+                    ordered = sorted(month_close.items())
+                    monthly: dict[str, float] = {}
+                    for idx in range(1, len(ordered)):
+                        prev_val = ordered[idx - 1][1]
+                        ym, curr_val = ordered[idx]
+                        if prev_val > 0:
+                            monthly[ym] = round(((curr_val - prev_val) / prev_val) * 100, 2)
+                    _ibov_cache["monthly"] = monthly
+                    _ibov_cache["ts"] = now
+                    return dict(monthly)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("IBOV 12m fetch failed: %s", exc)
+    return dict(_ibov_cache["monthly"])

@@ -898,9 +898,40 @@ async def chat_with_financial_context(
     def brl(v: float) -> str:
         return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-    if any(k in n for k in ("saldo", "conta", "quanto tenho", "patrimonio")):
+    if any(k in n for k in ("carteira", "investimento", "acao", "acoes", "fii", "dividendo", "provento", "b3", "ticker", "yoc")):
+        inv = context.get("investments") or {}
+        inv_val = inv.get("total_value", 0.0)
+        inv_cost = inv.get("total_cost", 0.0)
+        inv_pct = inv.get("total_gain_pct", 0.0)
+        divs_12m = inv.get("dividends_12m", 0.0)
+        top_assets = inv.get("top_assets") or []
+        if not top_assets:
+            reply = "Você ainda não cadastrou ativos na carteira B3. Acesse **Investimentos** no menu lateral para lançar ordens, importar da B3 (.xlsx/.csv) ou sincronizar via Pluggy!"
+        else:
+            lines = [
+                f"**Resumo da sua Carteira B3:**",
+                f"- Patrimônio investido: **{brl(inv_val)}** (custo {brl(inv_cost)} · **{inv_pct:+.2f}%**)",
+                f"- Proventos (12 meses): **{brl(divs_12m)}** (média {brl(inv.get('monthly_avg_dividends', 0))}/mês · YoC **{inv.get('yoc_pct', 0):.2f}%**)",
+                "\n**Principais ativos:**",
+            ]
+            for a in top_assets[:5]:
+                lines.append(f"- **{a['ticker']}**: {brl(a['value'])} ({a['gain_pct']:+.2f}%)")
+            reply = "\n".join(lines)
+    elif any(k in n for k in ("reserva", "cashflow", "poupanca", "emergencia")):
+        cf = context.get("cashflow_ytd") or {}
+        reply = (
+            f"**Cashflow {cf.get('year', '')} & Reserva de Emergência:**\n"
+            f"- Receitas acumuladas no ano: **{brl(cf.get('ytd_income', 0))}**\n"
+            f"- Despesas acumuladas no ano: **{brl(cf.get('ytd_expenses', 0))}** (média {brl(cf.get('avg_monthly_expense', 0))}/mês)\n"
+            f"- Taxa de poupança YTD: **{cf.get('savings_rate_pct', 0)}%**\n"
+            f"- Reserva estimada (contas + renda fixa): **{cf.get('emergency_reserve_months', 0)} meses** de custo de vida."
+        )
+    elif any(k in n for k in ("saldo", "conta", "quanto tenho", "patrimonio")):
         accts = context.get("accounts", [])
-        lines = [f"Seu saldo consolidado atual é **{brl(bal)}** distribuído em {len(accts)} conta(s):"]
+        net_worth = context.get("net_worth_total", bal)
+        lines = [
+            f"Seu saldo em contas é **{brl(bal)}** e seu patrimônio total (contas + carteira B3) é **{brl(net_worth)}**:"
+        ]
         for a in accts:
             lines.append(f"- **{a['name']}**: {brl(a['balance'])}")
         reply = "\n".join(lines)
