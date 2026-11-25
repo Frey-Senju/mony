@@ -42,11 +42,15 @@ export interface LinkedAccount {
 }
 
 export interface PluggyStatusResponse {
-  provider: string
+  provider?: string
   mode: 'live' | 'sandbox'
   configured: boolean
-  linked_pluggy_accounts: number
-  deduplication_layers: string[]
+  meu_pluggy_only?: boolean
+  available_live_connectors?: number
+  connected_accounts?: number
+  linked_pluggy_accounts?: number
+  dedup_engine?: string
+  deduplication_layers?: string[]
 }
 
 export interface PluggyConnectTokenResponse {
@@ -225,7 +229,7 @@ export async function linkPluggyItem(
   token: string,
   itemId: string,
   institutionName?: string,
-  daysBack = 90
+  lookbackDays = 90
 ): Promise<PluggyLinkItemResponse> {
   const res = await fetch(`${API_URL}/open-finance/pluggy/items`, {
     method: 'POST',
@@ -233,7 +237,7 @@ export async function linkPluggyItem(
     body: JSON.stringify({
       item_id: itemId,
       institution_name: institutionName,
-      days_back: daysBack,
+      lookback_days: lookbackDays,
     }),
   })
   if (!res.ok) {

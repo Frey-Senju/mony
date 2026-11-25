@@ -48,6 +48,7 @@ async def create_connect_token(
     client_user_id: str,
     item_id: Optional[str] = None,
     webhook_url: Optional[str] = None,
+    oauth_redirect_uri: Optional[str] = None,
 ) -> dict[str, Any]:
     """Create a Pluggy Connect Widget accessToken for the frontend."""
     if not is_pluggy_configured():
@@ -61,11 +62,15 @@ async def create_connect_token(
     body: dict[str, Any] = {
         "options": {
             "clientUserId": client_user_id,
-            "avoidDuplicates": True,
+            # Let Mony's 3-layer dedup engine handle reconnections gracefully
+            # instead of blocking the user with Pluggy's ITEM_USER_ALREADY_EXISTS error
+            "avoidDuplicates": False,
         }
     }
     if webhook_url:
         body["options"]["webhookUrl"] = webhook_url
+    if oauth_redirect_uri:
+        body["options"]["oauthRedirectUri"] = oauth_redirect_uri
     if item_id:
         body["itemId"] = item_id
 
@@ -82,6 +87,25 @@ async def create_connect_token(
             "mode": "live",
             "item_id": item_id,
         }
+
+
+async def fetch_pluggy_connectors(include_sandbox: bool = False) -> list[dict[str, Any]]:
+    """Return available Pluggy connectors for this application (helps UI detect MeuPluggy-only plans)."""
+    if not is_pluggy_configured() or os.getenv("PYTEST_CURRENT_TEST"):
+        return []
+    try:
+        api_key = await get_pluggy_api_key()
+        async with httpx.AsyncClient(timeout=12.0) as client:
+            resp = await client.get(
+                f"{PLUGGY_BASE_URL}/connectors",
+                params={"countries": "BR", "sandbox": str(include_sandbox).lower()},
+                headers={"X-API-KEY": api_key},
+            )
+            if resp.status_code == 200:
+                return resp.json().get("results") or []
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Pluggy connectors lookup failed: %s", exc)
+    return []
 
 
 async def fetch_pluggy_item(item_id: str) -> dict[str, Any]:

@@ -15,6 +15,9 @@ import {
   Layers,
   Link2,
   KeyRound,
+  ExternalLink,
+  AlertCircle,
+  Info,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { InstitutionCard } from '@/components/open-finance/institution-card'
@@ -52,7 +55,7 @@ export default function ConnectionsPage() {
 }
 
 function ConnectionsContent() {
-  const { tokens } = useAuth()
+  const { tokens, refreshToken } = useAuth()
   const searchParams = useSearchParams()
 
   const [institutions, setInstitutions] = useState<Institution[]>([])
@@ -60,7 +63,7 @@ function ConnectionsContent() {
   const [pluggyStatus, setPluggyStatus] = useState<PluggyStatusResponse | null>(null)
   const [lastDedupReport, setLastDedupReport] = useState<PluggyLinkItemResponse | null>(null)
   const [connectToken, setConnectToken] = useState<string | null>(null)
-  const [includeSandbox, setIncludeSandbox] = useState(false)
+  const [includeSandbox, setIncludeSandbox] = useState(true)
   const [manualItemId, setManualItemId] = useState('')
   const [showManualItemImport, setShowManualItemImport] = useState(false)
   const [search, setSearch] = useState('')
@@ -77,18 +80,106 @@ function ConnectionsContent() {
     message: string
   } | null>(null)
 
-  const accessToken = tokens?.access_token || ''
+  const getValidToken = useCallback(async (forceRefresh = false): Promise<string> => {
+    if (!forceRefresh && tokens?.access_token) return tokens.access_token
+    try {
+      const fresh = await refreshToken()
+      if (fresh?.access_token) return fresh.access_token
+    } catch {
+      // fall through
+    }
+    return tokens?.access_token || ''
+  }, [tokens?.access_token, refreshToken])
+
+  // Auto-refresh JWT transparently on 401/expired token
+  const withFreshAuth = useCallback(
+    async <T,>(fn: (token: string) => Promise<T>): Promise<T> => {
+      const tok = await getValidToken(false)
+      if (!tok) throw new Error('Sessão expirada. Faça login novamente.')
+      try {
+        return await fn(tok)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : ''
+        if (/401|expired|token|unauthorized|credentials/i.test(msg)) {
+          const fresh = await getValidToken(true)
+          if (fresh && fresh !== tok) {
+            return await fn(fresh)
+          }
+        }
+        throw err
+      }
+    },
+    [getValidToken]
+  )
 
   const showNotification = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
     setNotification({ type, message })
-    setTimeout(() => setNotification(null), 8000)
+    if (type !== 'error') {
+      setTimeout(() => setNotification(null), 10000)
+    }
   }, [])
 
-  // Handle callback query params (success/error from OAuth flow)
+  const fetchPluggyStatus = useCallback(() => {
+    if (!tokens?.access_token) return
+    withFreshAuth((tok) => getPluggyStatus(tok))
+      .then(setPluggyStatus)
+      .catch(() => setPluggyStatus(null))
+  }, [tokens?.access_token, withFreshAuth])
+
+  const fetchLinkedAccounts = useCallback(() => {
+    if (!tokens?.access_token) return
+    setLoadingAccounts(true)
+    withFreshAuth((tok) => listLinkedAccounts(tok))
+      .then(setLinkedAccounts)
+      .catch(() => showNotification('error', 'Erro ao buscar contas vinculadas'))
+      .finally(() => setLoadingAccounts(false))
+  }, [tokens?.access_token, withFreshAuth, showNotification])
+
+  const finalizePluggyLink = useCallback(
+    async (itemId: string, institutionName?: string) => {
+      const report = await withFreshAuth((tok) =>
+        linkPluggyItem(tok, itemId, institutionName, 90)
+      )
+      setLastDedupReport(report)
+      if (report.accounts_linked === 0 && report.accounts_reused === 0) {
+        showNotification(
+          'warning',
+          `${report.institution_name} conectado (Item ${report.item_id}), mas ainda sincronizando contas na Pluggy. Aguarde alguns segundos e clique em Atualizar / Sync.`
+        )
+      } else {
+        showNotification(
+          'success',
+          `${report.institution_name}: ${report.accounts_linked} conta(s) nova(s) · ${report.accounts_reused} reutilizada(s) · ${report.transactions_inserted} lançamento(s) · ${report.transactions_skipped_dedup} duplicata(s) evitada(s) · ${report.transactions_reconciled} conciliado(s).`
+        )
+      }
+      fetchLinkedAccounts()
+      fetchPluggyStatus()
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('mony:transactions-updated'))
+      }
+    },
+    [withFreshAuth, showNotification, fetchLinkedAccounts, fetchPluggyStatus]
+  )
+
+  // Handle callback query params (OAuth return from Pluggy or legacy Open Finance)
   useEffect(() => {
+    const itemIdParam = searchParams.get('itemId') || searchParams.get('item_id')
     const successParam = searchParams.get('success')
     const errorParam = searchParams.get('error')
     const warningParam = searchParams.get('warning')
+
+    if (itemIdParam && tokens?.access_token) {
+      setPluggyLoading(true)
+      finalizePluggyLink(itemIdParam)
+        .catch((err) =>
+          showNotification(
+            'error',
+            err instanceof Error ? err.message : 'Erro ao finalizar conexão Pluggy após retorno OAuth'
+          )
+        )
+        .finally(() => setPluggyLoading(false))
+      return
+    }
 
     if (successParam === 'true') {
       showNotification('success', 'Conta vinculada com sucesso!')
@@ -106,71 +197,40 @@ function ConnectionsContent() {
         'Conta autorizada, mas não foi possível buscar os dados. Tente sincronizar mais tarde.'
       )
     }
-  }, [searchParams, showNotification])
-
-  const fetchPluggyStatus = useCallback(() => {
-    if (!accessToken) return
-    getPluggyStatus(accessToken)
-      .then(setPluggyStatus)
-      .catch(() => setPluggyStatus(null))
-  }, [accessToken])
+  }, [searchParams, tokens?.access_token, finalizePluggyLink, showNotification])
 
   useEffect(() => {
     fetchPluggyStatus()
   }, [fetchPluggyStatus])
 
   useEffect(() => {
-    if (!accessToken) return
+    if (!tokens?.access_token) return
     setLoadingInstitutions(true)
-    listInstitutions(accessToken, search || undefined)
+    withFreshAuth((tok) => listInstitutions(tok, search || undefined))
       .then(setInstitutions)
-      .catch(() => showNotification('error', 'Erro ao buscar instituições'))
+      .catch(() => undefined)
       .finally(() => setLoadingInstitutions(false))
-  }, [accessToken, search, showNotification])
-
-  const fetchLinkedAccounts = useCallback(() => {
-    if (!accessToken) return
-    setLoadingAccounts(true)
-    listLinkedAccounts(accessToken)
-      .then(setLinkedAccounts)
-      .catch(() => showNotification('error', 'Erro ao buscar contas vinculadas'))
-      .finally(() => setLoadingAccounts(false))
-  }, [accessToken, showNotification])
+  }, [tokens?.access_token, search, withFreshAuth])
 
   useEffect(() => {
     fetchLinkedAccounts()
   }, [fetchLinkedAccounts])
 
-  const finalizePluggyLink = async (itemId: string, institutionName?: string) => {
-    const report = await linkPluggyItem(accessToken, itemId, institutionName, 90)
-    setLastDedupReport(report)
-    showNotification(
-      'success',
-      `${report.institution_name}: ${report.accounts_linked} nova(s) · ${report.accounts_reused} reutilizada(s) · ${report.transactions_inserted} lançamento(s) · ${report.transactions_skipped_dedup} duplicata(s) evitada(s) · ${report.transactions_reconciled} conciliado(s).`
-    )
-    fetchLinkedAccounts()
-    fetchPluggyStatus()
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new Event('mony:transactions-updated'))
-    }
-  }
-
   const handlePluggyConnect = async () => {
-    if (!accessToken) return
     setPluggyLoading(true)
+    setNotification(null)
     try {
-      const tokenRes = await createPluggyConnectToken(accessToken)
+      const tokenRes = await withFreshAuth((tok) => createPluggyConnectToken(tok))
       if (tokenRes.mode === 'live') {
         setConnectToken(tokenRes.access_token)
       } else {
-        // Hybrid sandbox mode fallback when credentials are not configured
         await finalizePluggyLink(`sandbox-nubank-item-${Date.now()}`, 'Nubank (Open Finance)')
         setPluggyLoading(false)
       }
     } catch (err) {
       showNotification(
         'error',
-        err instanceof Error ? err.message : 'Erro ao conectar via Pluggy Open Finance'
+        err instanceof Error ? err.message : 'Erro ao iniciar Pluggy Open Finance'
       )
       setPluggyLoading(false)
     }
@@ -179,8 +239,9 @@ function ConnectionsContent() {
   const handleManualItemImport = async (e: React.FormEvent) => {
     e.preventDefault()
     const trimmed = manualItemId.trim()
-    if (!trimmed || !accessToken) return
+    if (!trimmed) return
     setPluggyLoading(true)
+    setNotification(null)
     try {
       await finalizePluggyLink(trimmed)
       setManualItemId('')
@@ -196,13 +257,9 @@ function ConnectionsContent() {
   }
 
   const handleSimulateReconnect = async () => {
-    if (!accessToken) return
     setPluggyLoading(true)
     try {
-      await finalizePluggyLink(
-        `sandbox-nubank-reconnect-${Date.now()}`,
-        'Nubank (Open Finance)'
-      )
+      await finalizePluggyLink(`sandbox-nubank-reconnect-${Date.now()}`, 'Nubank (Open Finance)')
     } catch (err) {
       showNotification(
         'error',
@@ -214,10 +271,9 @@ function ConnectionsContent() {
   }
 
   const handleConnect = async (institution: Institution) => {
-    if (!accessToken) return
     setConnectingId(institution.id)
     try {
-      const consent = await initiateConsent(accessToken, institution.id)
+      const consent = await withFreshAuth((tok) => initiateConsent(tok, institution.id))
       window.location.href = consent.authorization_url
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro ao iniciar conexão'
@@ -227,11 +283,10 @@ function ConnectionsContent() {
   }
 
   const handleSync = async (account: LinkedAccount) => {
-    if (!accessToken) return
     setSyncingAccountId(account.id)
     try {
       if (account.provider === 'pluggy') {
-        const res = await syncPluggyAccount(accessToken, account.id)
+        const res = await withFreshAuth((tok) => syncPluggyAccount(tok, account.id))
         showNotification(
           'success',
           `Sincronizado (3 camadas): ${res.transactions_inserted} nova(s) · ${res.transactions_skipped_dedup} duplicata(s) evitada(s) · ${res.transactions_reconciled} conciliada(s).`
@@ -241,7 +296,7 @@ function ConnectionsContent() {
           window.dispatchEvent(new Event('mony:transactions-updated'))
         }
       } else {
-        const result = await triggerSync(accessToken, account.id)
+        const result = await withFreshAuth((tok) => triggerSync(tok, account.id))
         showNotification(
           'success',
           `Sync iniciado (${result.accounts_queued} conta${result.accounts_queued > 1 ? 's' : ''}).`
@@ -257,10 +312,10 @@ function ConnectionsContent() {
   }
 
   const handleDisconnectConfirm = async () => {
-    if (!disconnectTarget || !accessToken) return
+    if (!disconnectTarget) return
     setDisconnecting(true)
     try {
-      await unlinkAccount(accessToken, disconnectTarget.id)
+      await withFreshAuth((tok) => unlinkAccount(tok, disconnectTarget.id))
       showNotification(
         'success',
         'Conta desvinculada. Se reconectar depois, suas contas e lançamentos não serão duplicados.'
@@ -282,6 +337,12 @@ function ConnectionsContent() {
     warning: 'bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300',
   }
 
+  const directPluggyUrl = connectToken
+    ? `https://connect.pluggy.ai/?connect_token=${encodeURIComponent(connectToken)}${
+        includeSandbox ? '&include_sandbox=true' : ''
+      }`
+    : null
+
   return (
     <div className="min-h-screen py-8 px-4 sm:px-6">
       {/* Official Pluggy Connect Modal */}
@@ -289,13 +350,20 @@ function ConnectionsContent() {
         <PluggyConnect
           connectToken={connectToken}
           includeSandbox={includeSandbox}
+          language="pt"
+          onOpen={() => {
+            setPluggyLoading(false)
+          }}
           onSuccess={async (itemData) => {
             setConnectToken(null)
+            setPluggyLoading(true)
             try {
               const itemId = itemData?.item?.id
               const connectorName = itemData?.item?.connector?.name
               if (itemId) {
                 await finalizePluggyLink(itemId, connectorName)
+              } else {
+                showNotification('warning', 'Pluggy finalizou sem retornar o Item ID. Tente novamente.')
               }
             } catch (err) {
               showNotification(
@@ -309,7 +377,17 @@ function ConnectionsContent() {
           onError={(err) => {
             setConnectToken(null)
             setPluggyLoading(false)
-            showNotification('error', err?.message || 'Erro no widget Pluggy Connect')
+            showNotification(
+              'error',
+              err?.message || 'Erro no widget Pluggy Connect. Tente novamente ou use o link em nova aba.'
+            )
+          }}
+          onLoadError={(err) => {
+            setPluggyLoading(false)
+            showNotification(
+              'error',
+              `O navegador bloqueou o popup do Pluggy Connect (${err?.message || 'iframe bloqueado'}). Clique em "Abrir Pluggy em Nova Aba" abaixo!`
+            )
           }}
           onClose={() => {
             setConnectToken(null)
@@ -352,10 +430,22 @@ function ConnectionsContent() {
         {/* Notification */}
         {notification && (
           <div
+            role={notification.type === 'error' ? 'alert' : 'status'}
             className={`glass-card border rounded-2xl px-4 py-3 text-sm font-medium flex items-center gap-2.5 ${notificationColors[notification.type]}`}
           >
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            <span>{notification.message}</span>
+            {notification.type === 'error' ? (
+              <AlertCircle className="w-4 h-4 shrink-0" />
+            ) : (
+              <CheckCircle2 className="w-4 h-4 shrink-0" />
+            )}
+            <span className="flex-1">{notification.message}</span>
+            <button
+              type="button"
+              onClick={() => setNotification(null)}
+              className="text-xs underline opacity-75 hover:opacity-100"
+            >
+              Fechar
+            </button>
           </div>
         )}
 
@@ -376,8 +466,10 @@ function ConnectionsContent() {
                   }`}
                 >
                   {pluggyStatus?.mode === 'live'
-                    ? 'Modo Live Ativo (Bancos Reais)'
-                    : 'Modo Híbrido Sandbox (Pronto para chaves Live)'}
+                    ? pluggyStatus.meu_pluggy_only
+                      ? 'Modo Live Ativo · Meu Pluggy + Sandbox'
+                      : 'Modo Live Ativo (Bancos Reais)'
+                    : 'Modo Híbrido Sandbox'}
                 </span>
               </div>
               <h2 className="text-lg font-bold text-[var(--text-primary)]">
@@ -393,19 +485,21 @@ function ConnectionsContent() {
             <div className="flex flex-col items-end gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <button
+                  type="button"
                   onClick={handlePluggyConnect}
                   disabled={pluggyLoading}
-                  className="liquid-btn px-4 py-2.5 rounded-2xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
+                  className="liquid-btn liquid-btn-primary px-4 py-2.5 rounded-2xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
                 >
                   <Link2 className="w-4 h-4" />
                   {pluggyLoading
                     ? 'Abrindo Pluggy...'
                     : pluggyStatus?.mode === 'live'
-                      ? 'Conectar Banco Real (Pluggy)'
-                      : 'Conectar Banco (Pluggy Sandbox)'}
+                      ? 'Conectar Banco via Pluggy'
+                      : 'Conectar Banco (Sandbox)'}
                 </button>
 
                 <button
+                  type="button"
                   onClick={() => setShowManualItemImport((v) => !v)}
                   className="glass-btn px-3 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-1.5 text-[var(--text-primary)]"
                   title="Importar uma conta já conectada no Meu Pluggy ou Dashboard Pluggy pelo Item ID"
@@ -416,10 +510,10 @@ function ConnectionsContent() {
 
                 {pluggyStatus?.mode !== 'live' && (
                   <button
+                    type="button"
                     onClick={handleSimulateReconnect}
                     disabled={pluggyLoading}
                     className="glass-btn px-3.5 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-1.5 text-[var(--text-primary)] disabled:opacity-50"
-                    title="Simula desconectar e reconectar o mesmo banco com novo item_id para comprovar 0 duplicatas"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${pluggyLoading ? 'animate-spin' : ''}`} />
                     Testar Reconexão
@@ -435,11 +529,69 @@ function ConnectionsContent() {
                     onChange={(e) => setIncludeSandbox(e.target.checked)}
                     className="rounded accent-[var(--accent)]"
                   />
-                  Incluir banco de teste (Pluggy Sandbox) no widget
+                  Mostrar bancos de teste (Pluggy Bank / Sandbox Open Finance) no widget
                 </label>
               )}
             </div>
           </div>
+
+          {/* Direct fallback link if browser/adblocker blocks iframe */}
+          {directPluggyUrl && (
+            <div className="glass-card rounded-2xl p-3.5 border border-[var(--accent)]/40 bg-[var(--accent-soft)]/30 flex flex-wrap items-center justify-between gap-3">
+              <span className="text-xs text-[var(--text-primary)]">
+                O modal da Pluggy não abriu ou foi bloqueado por extensão/adblocker?
+              </span>
+              <a
+                href={directPluggyUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="liquid-btn liquid-btn-primary px-3.5 py-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Abrir Pluggy em Nova Aba
+              </a>
+            </div>
+          )}
+
+          {/* Clear 2-step guide specifically for Pluggy's Free Personal (MeuPluggy) Plan */}
+          {pluggyStatus?.mode === 'live' && pluggyStatus.meu_pluggy_only && (
+            <div className="glass-card rounded-2xl p-4 border border-sky-500/30 bg-sky-500/5 space-y-2">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <p className="text-xs font-bold text-sky-700 dark:text-sky-300 flex items-center gap-1.5">
+                  <Info className="w-4 h-4 shrink-0" />
+                  Como conectar seus bancos reais no plano gratuito da Pluggy (2 passos rápidos):
+                </p>
+                <a
+                  href="https://meu.pluggy.ai"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs font-semibold text-sky-600 dark:text-sky-400 inline-flex items-center gap-1 hover:underline"
+                >
+                  Abrir meu.pluggy.ai
+                  <ExternalLink className="w-3 h-3" />
+                </a>
+              </div>
+              <ol className="text-xs text-[var(--text-secondary)] space-y-1 list-decimal list-inside">
+                <li>
+                  No plano pessoal gratuito da Pluggy, seus bancos reais (Nubank, Itaú, Inter, BB, Bradesco, XP, etc.) são conectados primeiro dentro do{' '}
+                  <a
+                    href="https://meu.pluggy.ai"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-[var(--accent)] hover:underline"
+                  >
+                    meu.pluggy.ai
+                  </a>
+                  .
+                </li>
+                <li>
+                  Depois, clique em <strong className="text-[var(--text-primary)]">Conectar Banco via Pluggy</strong> acima e selecione{' '}
+                  <strong className="text-[var(--text-primary)]">MeuPluggy</strong> para trazer todas as suas contas e cartões reais para o Mony (ou escolha{' '}
+                  <strong className="text-[var(--text-primary)]">Pluggy Bank</strong> para testar agora com dados simulados).
+                </li>
+              </ol>
+            </div>
+          )}
 
           {/* Optional Direct Item ID Importer (Meu Pluggy) */}
           {showManualItemImport && (
@@ -462,7 +614,7 @@ function ConnectionsContent() {
               <button
                 type="submit"
                 disabled={pluggyLoading || !manualItemId.trim()}
-                className="liquid-btn px-4 py-2 rounded-xl text-xs font-semibold mt-4 sm:mt-5 disabled:opacity-50"
+                className="liquid-btn liquid-btn-primary px-4 py-2 rounded-xl text-xs font-semibold mt-4 sm:mt-5 disabled:opacity-50"
               >
                 {pluggyLoading ? 'Importando...' : 'Sincronizar Item'}
               </button>
@@ -560,6 +712,7 @@ function ConnectionsContent() {
               Contas Vinculadas ({linkedAccounts.length})
             </h2>
             <button
+              type="button"
               onClick={fetchLinkedAccounts}
               className="glass-btn px-3 py-1.5 rounded-xl text-xs font-medium text-[var(--text-secondary)] flex items-center gap-1.5"
             >
@@ -573,7 +726,7 @@ function ConnectionsContent() {
           ) : linkedAccounts.length === 0 ? (
             <div className="text-sm text-[var(--text-secondary)] p-6 border border-dashed border-[var(--glass-border)] rounded-2xl text-center">
               Nenhuma conta vinculada ainda. Clique em{' '}
-              <strong className="text-[var(--text-primary)]">Conectar Banco</strong> acima para começar.
+              <strong className="text-[var(--text-primary)]">Conectar Banco via Pluggy</strong> acima para começar.
             </div>
           ) : (
             <div className="space-y-2.5">
@@ -609,6 +762,7 @@ function ConnectionsContent() {
               </p>
             </div>
             <button
+              type="button"
               onClick={() => setShowLegacyBanks((v) => !v)}
               className="glass-btn px-3 py-1.5 rounded-xl text-xs font-medium text-[var(--text-primary)]"
             >

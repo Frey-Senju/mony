@@ -13,11 +13,12 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+import asyncio
 import logging
 import os
 import re
 from typing import Any, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
@@ -49,6 +50,7 @@ from services.dedup_engine import (
 from services.pluggy_client import (
     create_connect_token,
     fetch_pluggy_accounts,
+    fetch_pluggy_connectors,
     fetch_pluggy_item,
     fetch_pluggy_transactions,
     is_pluggy_configured,
@@ -320,9 +322,18 @@ async def pluggy_status(
         .all()
     )
     items = sorted({a.external_item_id for a in linked if a.external_item_id})
+    configured = is_pluggy_configured()
+    connectors = await fetch_pluggy_connectors(include_sandbox=False) if configured else []
+    meu_pluggy_only = bool(
+        configured
+        and len(connectors) == 1
+        and (connectors[0].get("id") == 200 or "meupluggy" in str(connectors[0].get("name", "")).lower())
+    )
     return {
-        "configured": is_pluggy_configured(),
-        "mode": "live" if is_pluggy_configured() else "sandbox",
+        "configured": configured,
+        "mode": "live" if configured else "sandbox",
+        "meu_pluggy_only": meu_pluggy_only,
+        "available_live_connectors": len(connectors),
         "connected_accounts": len(linked),
         "connected_items": items,
         "dedup_engine": "3-layer-reconnect-safe",
@@ -336,12 +347,15 @@ async def pluggy_connect_token(
 ):
     """Generate a short-lived Pluggy Connect Widget token for the user."""
     backend_url = os.getenv("BACKEND_PUBLIC_URL", "https://mony-api-one.vercel.app").rstrip("/")
+    frontend_url = os.getenv("FRONTEND_URL", "https://mony-kappa.vercel.app").rstrip("/")
     webhook_url = f"{backend_url}/open-finance/pluggy/webhook"
+    oauth_redirect_uri = f"{frontend_url}/settings/connections"
     try:
         return await create_connect_token(
             client_user_id=str(user_id),
             item_id=payload.item_id if payload else None,
             webhook_url=webhook_url,
+            oauth_redirect_uri=oauth_redirect_uri,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("Pluggy connect_token failed")
@@ -365,7 +379,14 @@ async def register_pluggy_item(
     bank NEVER creates duplicate accounts or duplicate transactions.
     """
     uid = parse_uuid(user_id, "user_id")
-    item_data = await fetch_pluggy_item(payload.item_id)
+    try:
+        item_data = await fetch_pluggy_item(payload.item_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Não foi possível localizar o Item '{payload.item_id}' na Pluggy: {exc}",
+        ) from exc
+
     connector = item_data.get("connector") or {}
     inst_name = payload.institution_name or connector.get("name") or "Instituição Open Finance"
     inst = _get_or_create_institution(
@@ -375,21 +396,28 @@ async def register_pluggy_item(
         logo_url=connector.get("imageUrl"),
     )
 
-    # Create or reuse authorized consent record for this item
+    # Create authorized consent record with unique state_token
     consent = OFConsent(
         user_id=uid,
         institution_id=inst.id,
         external_consent_id=payload.item_id,
         status=ConsentStatus.AUTHORIZED,
         permissions=["accounts", "transactions", "credit_cards", "investments"],
-        state_token=payload.item_id[:64],
+        state_token=f"{payload.item_id[:48]}-{uuid4().hex[:12]}"[:64],
         authorization_url="https://connect.pluggy.ai",
         expires_at=datetime.utcnow() + timedelta(days=365),
     )
     db.add(consent)
     db.flush()
 
+    # Freshly connected Pluggy items can take 1-3s to expose accounts while UPDATING
     pluggy_accounts = await fetch_pluggy_accounts(payload.item_id)
+    if not pluggy_accounts and is_pluggy_configured() and not payload.item_id.startswith("sandbox-") and not os.getenv("PYTEST_CURRENT_TEST"):
+        for _ in range(3):
+            await asyncio.sleep(2.0)
+            pluggy_accounts = await fetch_pluggy_accounts(payload.item_id)
+            if pluggy_accounts:
+                break
     since = date.today() - timedelta(days=payload.lookback_days)
 
     accounts_linked = 0
