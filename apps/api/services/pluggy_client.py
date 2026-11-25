@@ -218,29 +218,47 @@ async def fetch_pluggy_transactions(
 
     api_key = await get_pluggy_api_key()
     all_txs: list[dict[str, Any]] = []
-    page = 1
-    params: dict[str, Any] = {"accountId": account_id, "pageSize": 500}
-    if from_date:
-        params["from"] = from_date.isoformat()
-    if to_date:
-        params["to"] = to_date.isoformat()
+    # Pluggy /v2/transactions uses cursor pagination and accepts only `accountId` (and `after` via `next`)
+    params: dict[str, Any] = {"accountId": account_id}
+    from_iso = from_date.isoformat() if from_date else None
+    to_iso = to_date.isoformat() if to_date else None
 
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
-        while page <= 10:
-            params["page"] = page
+        next_url: Optional[str] = f"{PLUGGY_BASE_URL}/v2/transactions"
+        first_call = True
+        for _ in range(10):
+            if not next_url:
+                break
             resp = await client.get(
-                f"{PLUGGY_BASE_URL}/transactions",
-                params=params,
+                next_url,
+                params=params if first_call else None,
                 headers={"X-API-KEY": api_key},
             )
+            first_call = False
             resp.raise_for_status()
             payload = resp.json()
-            results = payload.get("results", [])
-            all_txs.extend(results)
-            total_pages = int(payload.get("totalPages", 1) or 1)
-            if page >= total_pages or not results:
+            results = payload.get("results") or []
+            for tx in results:
+                tx_dt_str = str(tx.get("date") or "")[:10]
+                if from_iso and tx_dt_str and tx_dt_str < from_iso:
+                    continue
+                if to_iso and tx_dt_str and tx_dt_str > to_iso:
+                    continue
+                all_txs.append(tx)
+            nxt = payload.get("next")
+            if not nxt or not results:
                 break
-            page += 1
+            if isinstance(nxt, str):
+                if nxt.startswith("http"):
+                    next_url = nxt
+                elif nxt.startswith("/"):
+                    next_url = f"{PLUGGY_BASE_URL}{nxt}"
+                elif nxt.startswith("?"):
+                    next_url = f"{PLUGGY_BASE_URL}/v2/transactions{nxt}"
+                else:
+                    next_url = f"{PLUGGY_BASE_URL}/v2/transactions?{nxt}"
+            else:
+                break
     return all_txs
 
 
