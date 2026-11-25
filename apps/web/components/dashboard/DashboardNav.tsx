@@ -20,11 +20,14 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Paperclip,
+  Repeat,
+  UserCircle,
 } from 'lucide-react'
 import { useAppearance } from '@/app/_theme/provider'
 import { useAuth } from '@/stores/auth/useAuth'
 import { MonyLogo } from '@/components/brand/MonyLogo'
 import { MonyAIDrawer } from '@/components/ai/MonyAIDrawer'
+import { NotificationBell } from '@/components/dashboard/NotificationBell'
 
 interface NavItem {
   href: string
@@ -36,6 +39,7 @@ interface NavItem {
 const PRIMARY_ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', testId: 'nav-dashboard', icon: <LayoutDashboard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/accounts', label: 'Contas', testId: 'nav-accounts', icon: <Wallet className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/dashboard/recurring', label: 'Recorrentes', testId: 'nav-recurring', icon: <Repeat className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/reports', label: 'Relatórios', testId: 'nav-reports', icon: <BarChart3 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/budgets', label: 'Budgets', testId: 'nav-budgets', icon: <PieChart className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/insights', label: 'Insights', testId: 'nav-insights', icon: <Sparkles className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
@@ -43,6 +47,7 @@ const PRIMARY_ITEMS: NavItem[] = [
 ]
 
 const SECONDARY_ITEMS: NavItem[] = [
+  { href: '/settings/profile', label: 'Perfil & 2FA', testId: 'nav-profile', icon: <UserCircle className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/settings/connections', label: 'Conexões', testId: 'nav-connections', icon: <Landmark className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/settings/appearance', label: 'Aparência', testId: 'nav-appearance', icon: <Palette className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
 ]
@@ -197,12 +202,15 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         {/* Bottom User & Logout */}
         <div className="p-2.5 border-t border-white/45 dark:border-white/10 space-y-1.5">
           {!collapsed && user?.full_name && (
-            <div className="px-3 py-1.5 rounded-xl bg-white/40 dark:bg-white/5 text-xs">
+            <Link
+              href="/settings/profile"
+              className="block px-3 py-1.5 rounded-xl bg-white/40 dark:bg-white/5 hover:bg-white/65 dark:hover:bg-white/10 transition text-xs"
+            >
               <p className="font-semibold text-slate-900 dark:text-white truncate">{user.full_name}</p>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                Plano {user.plan || 'BASIC'}
+                Plano {user.plan || 'BASIC'} · Perfil
               </p>
-            </div>
+            </Link>
           )}
           <button
             type="button"
@@ -249,8 +257,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               </span>
             </div>
 
-            {/* Right: Prominent "Falar com a IA" & "Importar Fatura" pills (VisionOS top actions) */}
+            {/* Right: Alerts Bell + "Importar Fatura" & "Falar com a IA" pills (VisionOS top actions) */}
             <div className="flex items-center gap-2">
+              <NotificationBell />
+
               <button
                 type="button"
                 onClick={() => openAI('import')}

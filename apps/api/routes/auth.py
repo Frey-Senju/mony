@@ -141,6 +141,11 @@ class UserProfileUpdateRequest(BaseModel):
     timezone: Optional[str] = Field(default=None, max_length=50)
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 def _serialize_user(user: User) -> UserProfileResponse:
     plan_value = user.plan.value.upper() if hasattr(user.plan, "value") else str(user.plan or "BASIC").upper()
     return UserProfileResponse(
@@ -341,6 +346,36 @@ async def update_current_user_profile(
     db.commit()
     db.refresh(user)
     return _serialize_user(user)
+
+
+@router.post("/change-password", status_code=200)
+async def change_password(
+    payload: ChangePasswordRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Change password for the currently authenticated user after verifying current password."""
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid, User.deleted_at.is_(None)).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Senha atual incorreta",
+        )
+
+    if len(payload.new_password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A nova senha deve ter pelo menos 8 caracteres",
+        )
+
+    user.password_hash = hash_password(payload.new_password)
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    return {"message": "Senha alterada com sucesso"}
 
 
 # ============ Endpoint 3: Refresh Token ============

@@ -744,3 +744,40 @@ class Budget(Base):
 
     def __repr__(self):
         return f"<Budget {self.category} {self.limit_amount}>"
+
+
+class RecurringRule(Base):
+    """Recurring income or fixed-expense rule with monthly generation tracking."""
+
+    __tablename__ = "recurring_rules"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    account_id = Column(PG_UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    type = Column(SQLEnum(TransactionType), nullable=False, default=TransactionType.EXPENSE)
+    amount = Column(Numeric(15, 2), nullable=False)
+    currency = Column(String(3), nullable=False, default="BRL")
+    description = Column(String(255), nullable=False)
+    merchant_name = Column(String(255), nullable=True)
+    category_name = Column(String(100), nullable=True)
+    payment_method = Column(String(30), nullable=True)
+    frequency = Column(String(20), nullable=False, default="monthly")  # monthly | weekly | yearly
+    day_of_month = Column(Integer, nullable=False, default=5)
+    is_active = Column(Boolean, nullable=False, default=True)
+    auto_create = Column(Boolean, nullable=False, default=True)
+    last_generated_month = Column(String(7), nullable=True)  # YYYY-MM
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_recurring_amount_positive"),
+        CheckConstraint("day_of_month >= 1 AND day_of_month <= 31", name="ck_recurring_day_range"),
+        Index("idx_recurring_rules_user_active", "user_id", "is_active"),
+    )
+
+    user = relationship("User")
+    account = relationship("Account")
+
+    def __repr__(self):
+        return f"<RecurringRule {self.description} {self.amount} day={self.day_of_month}>"
