@@ -10,6 +10,8 @@ import {
   CheckCheck,
   X,
   Sparkles,
+  BellRing,
+  BellOff,
 } from 'lucide-react'
 import { useAuth } from '@/stores/auth/useAuth'
 
@@ -33,7 +35,96 @@ export function NotificationBell() {
   const [items, setItems] = useState<NotificationItem[]>([])
   const [unread, setUnread] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [pushSupported, setPushSupported] = useState(false)
+  const [pushSubscribed, setPushSubscribed] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
+  const [pushFeedback, setPushFeedback] = useState<string | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const ok = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
+    setPushSupported(ok)
+    if (ok) {
+      navigator.serviceWorker.ready
+        .then((reg) => reg.pushManager.getSubscription())
+        .then((sub) => setPushSubscribed(Boolean(sub)))
+        .catch(() => undefined)
+    }
+  }, [])
+
+  const urlBase64ToUint8Array = (base64String: string) => {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4)
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/')
+    const rawData = window.atob(base64)
+    const outputArray = new Uint8Array(rawData.length)
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i)
+    }
+    return outputArray
+  }
+
+  const togglePushSubscription = async () => {
+    if (!token || !pushSupported || pushBusy) return
+    setPushBusy(true)
+    setPushFeedback(null)
+    try {
+      const reg = await navigator.serviceWorker.ready
+      const existing = await reg.pushManager.getSubscription()
+      if (existing) {
+        await fetch(`${API_URL}/push/unsubscribe?endpoint=${encodeURIComponent(existing.endpoint)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => undefined)
+        await existing.unsubscribe()
+        setPushSubscribed(false)
+        setPushFeedback('Push desativado neste dispositivo.')
+        return
+      }
+
+      const perm = await Notification.requestPermission()
+      if (perm !== 'granted') {
+        setPushFeedback('Permissão de notificação negada no navegador.')
+        return
+      }
+
+      const keyRes = await fetch(`${API_URL}/push/vapid-public-key`)
+      const keyData = await keyRes.json()
+      if (!keyData?.public_key) {
+        setPushFeedback('Chave VAPID ainda não configurada no servidor.')
+        return
+      }
+
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(keyData.public_key),
+      })
+      const jsonSub = sub.toJSON()
+      const saveRes = await fetch(`${API_URL}/push/subscribe`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          endpoint: jsonSub.endpoint,
+          keys: jsonSub.keys,
+          user_agent: navigator.userAgent.slice(0, 200),
+        }),
+      })
+      if (!saveRes.ok) throw new Error('Falha ao registrar dispositivo')
+      setPushSubscribed(true)
+      setPushFeedback('Push ativado! Enviando notificação de teste...')
+      await fetch(`${API_URL}/push/test`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined)
+    } catch (err) {
+      setPushFeedback(err instanceof Error ? err.message : 'Erro ao configurar Push')
+    } finally {
+      setPushBusy(false)
+    }
+  }
 
   const fetchNotifications = useCallback(async () => {
     if (!token) return
@@ -247,6 +338,37 @@ export function NotificationBell() {
               })
             )}
           </div>
+
+          {/* PWA Web Push Toggle Footer */}
+          {pushSupported && (
+            <div className="px-4 py-2.5 border-t border-white/40 dark:border-white/10 bg-white/30 dark:bg-white/5 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                  {pushSubscribed ? (
+                    <BellRing className="w-3.5 h-3.5 text-emerald-500" />
+                  ) : (
+                    <BellOff className="w-3.5 h-3.5 text-slate-400" />
+                  )}
+                  {pushSubscribed ? 'Push ativo neste dispositivo' : 'Alertas Push (Celular/PC)'}
+                </span>
+                <button
+                  type="button"
+                  onClick={togglePushSubscription}
+                  disabled={pushBusy}
+                  className="text-[11px] font-bold px-2.5 py-1 rounded-lg transition hover:opacity-80 disabled:opacity-50"
+                  style={{
+                    background: pushSubscribed ? 'rgba(239,68,68,0.12)' : 'var(--accent-soft)',
+                    color: pushSubscribed ? '#ef4444' : 'var(--accent)',
+                  }}
+                >
+                  {pushBusy ? '...' : pushSubscribed ? 'Desativar' : 'Ativar Push'}
+                </button>
+              </div>
+              {pushFeedback && (
+                <p className="text-[10px] text-slate-500 dark:text-slate-400">{pushFeedback}</p>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

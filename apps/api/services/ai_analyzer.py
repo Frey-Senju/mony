@@ -982,3 +982,137 @@ async def chat_with_financial_context(
         reply = "\n".join(lines)
 
     return {"reply": reply, "engine": "smart-parser", "llm_connected": False}
+
+
+async def parse_voice_transaction(
+    *,
+    audio_bytes: Optional[bytes],
+    mime_type: Optional[str],
+    transcript_text: Optional[str],
+    user_categories: list[str],
+    user_accounts: list[str],
+) -> dict[str, Any]:
+    """
+    Transcribe and parse a Portuguese voice command into a structured transaction.
+    Primary: Gemini 3.8 Flash native audio understanding when audio_bytes + GEMINI_API_KEY are available.
+    Fallback: Deterministic Portuguese parser on transcript_text (works offline & in tests).
+    """
+    provider, model = get_active_ai_provider()
+    today_iso = date.today().isoformat()
+
+    if provider == "gemini" and (audio_bytes or transcript_text) and not os.getenv("PYTEST_CURRENT_TEST"):
+        try:
+            api_key = os.environ["GEMINI_API_KEY"].strip()
+            prompt = (
+                "Você é o extrator de lançamentos por voz do app Mony (PT-BR). "
+                f"Hoje é {today_iso}. Categorias disponíveis: {', '.join(user_categories)}. "
+                f"Contas/cartões do usuário: {', '.join(user_accounts) if user_accounts else 'nenhuma listada'}. "
+                "Ouça o áudio (ou leia o texto) e retorne APENAS um JSON válido (sem markdown) no formato:\n"
+                '{"transcript": "texto transcrito", "description": "descrição curta", '
+                '"merchant_name": "estabelecimento ou null", "type": "expense|income|transfer", '
+                '"amount": 48.50, "category_name": "uma das categorias", '
+                '"payment_method": "credit_card|debit_card|pix|boleto|bank_transfer|cash|other", '
+                '"account_hint": "nome da conta/cartão citado ou null", '
+                '"installment_total": null, "transaction_date": "YYYY-MM-DD"}'
+            )
+            parts: list[dict[str, Any]] = [{"text": prompt}]
+            if audio_bytes:
+                safe_mime = (mime_type or "audio/webm").split(";")[0].strip()
+                parts.append({
+                    "inline_data": {
+                        "mime_type": safe_mime,
+                        "data": base64.b64encode(audio_bytes).decode("ascii"),
+                    }
+                })
+            elif transcript_text:
+                parts.append({"text": f"Comando falado: {transcript_text}"})
+
+            body, used_model = await _post_gemini_generate(
+                api_key=api_key,
+                model=model,
+                payload={
+                    "contents": [{"role": "user", "parts": parts}],
+                    "generationConfig": {"temperature": 0.1, "response_mime_type": "application/json"},
+                },
+                timeout=35.0,
+            )
+            raw_json = body["candidates"][0]["content"]["parts"][0]["text"]
+            parsed = json.loads(raw_json.strip().strip("`").replace("json\n", "", 1))
+            amt = abs(float(parsed.get("amount") or 0))
+            if amt > 0:
+                return {
+                    "engine": f"gemini:{used_model}",
+                    "transcript": str(parsed.get("transcript") or transcript_text or ""),
+                    "description": str(parsed.get("description") or "Lançamento por voz")[:255],
+                    "merchant_name": parsed.get("merchant_name"),
+                    "type": parsed.get("type") if parsed.get("type") in ("expense", "income", "transfer") else "expense",
+                    "amount": round(amt, 2),
+                    "category_name": parsed.get("category_name") or "Outros",
+                    "payment_method": parsed.get("payment_method") or "other",
+                    "account_hint": parsed.get("account_hint"),
+                    "installment_total": int(parsed["installment_total"]) if parsed.get("installment_total") else None,
+                    "transaction_date": str(parsed.get("transaction_date") or today_iso)[:10],
+                }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Gemini voice parsing failed, falling back to transcript parser: %s", exc)
+
+    # Deterministic Portuguese transcript parser fallback
+    raw = (transcript_text or "").strip()
+    if not raw:
+        raise ValueError("Não foi possível transcrever o áudio. Tente falar mais perto do microfone ou digitar o comando.")
+
+    norm = _norm(raw)
+    # Extract amount: "48,50", "R$ 120", "48 reais", "48 reais e 50"
+    amt = 0.0
+    m_reais = re.search(r"(\d+(?:[.,]\d{1,2})?)\s*(?:reais|real)(?:\s*e\s*(\d{1,2}))?", norm)
+    m_num = re.search(r"(?:r\$\s*)?(\d+(?:\.\d{3})*(?:,\d{1,2})|\d+(?:\.\d{1,2})?)", norm)
+    if m_reais:
+        base_val = float(m_reais.group(1).replace(",", "."))
+        cents = float(m_reais.group(2)) / 100.0 if m_reais.group(2) else 0.0
+        amt = round(base_val + cents, 2)
+    elif m_num:
+        amt = round(float(m_num.group(1).replace(".", "").replace(",", ".")), 2)
+
+    if amt <= 0:
+        raise ValueError(f"Não encontrei um valor em reais na fala: '{raw}'. Exemplo: 'Gastei 48 reais no almoço no cartão'.")
+
+    tx_type = "income" if any(k in norm for k in ("recebi", "ganhei", "salario", "vendi", "entrou", "pix recebido")) else "expense"
+    if any(k in norm for k in ("transferi", "pagamento fatura", "paguei a fatura")):
+        tx_type = "transfer"
+
+    pm = _detect_payment_method(raw, "other")
+    if "credito" in norm or "cartao" in norm:
+        pm = "credit_card"
+    elif "debito" in norm:
+        pm = "debit_card"
+    elif "pix" in norm:
+        pm = "pix"
+    elif "dinheiro" in norm:
+        pm = "cash"
+
+    inst_match = re.search(r"(?:em|parcelado\s+em)\s*(\d{1,2})\s*(?:x|vezes|parcelas)", norm)
+    inst_total = int(inst_match.group(1)) if inst_match and 2 <= int(inst_match.group(1)) <= 48 else None
+
+    account_hint = None
+    for acct_name in user_accounts:
+        if _norm(acct_name) and _norm(acct_name).split(" ")[0] in norm:
+            account_hint = acct_name
+            break
+
+    cat = _classify_category(raw, user_categories, tx_type)
+    desc = re.sub(r"^(?:gastei|paguei|comprei|recebi|lance|lanca|anota)\s+", "", raw, flags=re.IGNORECASE).strip()
+    desc = (desc[:120] or raw[:120]).capitalize()
+
+    return {
+        "engine": "smart-voice-parser",
+        "transcript": raw,
+        "description": desc,
+        "merchant_name": None,
+        "type": tx_type,
+        "amount": amt,
+        "category_name": cat,
+        "payment_method": pm,
+        "account_hint": account_hint,
+        "installment_total": inst_total,
+        "transaction_date": today_iso,
+    }

@@ -26,6 +26,7 @@ import {
   Calculator,
   TrendingUp,
   SlidersHorizontal,
+  CreditCard,
 } from 'lucide-react'
 import { useAppearance } from '@/app/_theme/provider'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -47,6 +48,7 @@ const PRIMARY_ITEMS: NavItem[] = [
   { href: '/dashboard/investments', label: 'Investimentos', testId: 'nav-investments', icon: <TrendingUp className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/simulators', label: 'Simuladores', testId: 'nav-simulators', icon: <Calculator className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/accounts', label: 'Contas', testId: 'nav-accounts', icon: <Wallet className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/dashboard/cards', label: 'Cartões', testId: 'nav-cards', icon: <CreditCard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/recurring', label: 'Recorrentes', testId: 'nav-recurring', icon: <Repeat className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/reports', label: 'Relatórios', testId: 'nav-reports', icon: <BarChart3 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/budgets', label: 'Budgets', testId: 'nav-budgets', icon: <PieChart className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },

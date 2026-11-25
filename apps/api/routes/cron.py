@@ -35,6 +35,7 @@ from routes.open_finance_pluggy import _sync_pluggy_account_txs
 from routes.recurring import _generate_rule_tx
 from services.market_data import get_quote
 from services.pluggy_client import is_pluggy_configured
+from services.push_service import send_push_to_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/cron", tags=["cron"])
@@ -79,6 +80,7 @@ async def run_daily_cron(
         "pluggy_txs_deduped": 0,
         "recurring_generated": 0,
         "alerts_users_checked": 0,
+        "push_sent": 0,
         "errors": [],
     }
 
@@ -177,13 +179,34 @@ async def run_daily_cron(
         db.rollback()
         report["errors"].append(f"recurring_stage:{exc}")
 
-    # 4. Run Smart Financial Alerts for active users
+    # 4. Run Smart Financial Alerts & send Web Push notifications to subscribed devices
     try:
+        from database.models import Notification
         active_users = db.query(User.id).filter(User.deleted_at.is_(None)).limit(100).all()
         for (uid,) in active_users:
             try:
                 _sync_smart_alerts(db, uid)
                 report["alerts_users_checked"] += 1
+                latest_unread = (
+                    db.query(Notification)
+                    .filter(
+                        Notification.user_id == uid,
+                        Notification.is_read.is_(False),
+                        Notification.created_at >= datetime.utcnow() - timedelta(hours=24),
+                    )
+                    .order_by(Notification.created_at.desc())
+                    .first()
+                )
+                if latest_unread is not None:
+                    pstats = send_push_to_user(
+                        db,
+                        uid,
+                        title=latest_unread.title,
+                        body=latest_unread.message,
+                        url="/dashboard",
+                        tag=f"mony-daily-{today.isoformat()}",
+                    )
+                    report["push_sent"] += pstats["sent"]
             except Exception as exc:  # noqa: BLE001
                 report["errors"].append(f"alerts:{uid}:{exc}")
         db.commit()

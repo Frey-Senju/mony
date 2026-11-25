@@ -11,6 +11,7 @@ from routes.ai import router as ai_router
 from routes.auth import router as auth_router
 from routes.budgets import router as budgets_router
 from routes.categories import router as categories_router
+from routes.credit_cards import router as credit_cards_router
 from routes.cron import router as cron_router
 from routes.goals import router as goals_router
 from routes.insights import router as insights_router
@@ -19,6 +20,7 @@ from routes.notifications import router as notifications_router
 from routes.open_finance import router as open_finance_router
 from routes.open_finance_pluggy import router as open_finance_pluggy_router
 from routes.open_finance_sync import router as open_finance_sync_router
+from routes.push import router as push_router
 from routes.recurring import router as recurring_router
 from routes.reports import router as reports_router
 from routes.rules import router as rules_router
@@ -99,6 +101,8 @@ app.include_router(notifications_router)
 app.include_router(investments_router)
 app.include_router(rules_router)
 app.include_router(cron_router)
+app.include_router(push_router)
+app.include_router(credit_cards_router)
 
 
 @app.get("/")

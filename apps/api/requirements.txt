@@ -24,3 +24,4 @@ alembic>=1.13.0
 celery[redis]>=5.3.0
 redis>=5.0.0
 pypdf>=4.0.0
+pywebpush>=2.0.0

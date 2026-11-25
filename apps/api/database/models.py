@@ -938,3 +938,56 @@ class InvestmentTarget(Base):
     )
 
     user = relationship("User")
+
+
+class CreditCard(Base):
+    """Dedicated credit card profile (limit, closing/due day, brand, linked account)."""
+
+    __tablename__ = "credit_cards"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    account_id = Column(PG_UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(100), nullable=False)
+    brand = Column(String(30), nullable=False, default="mastercard")  # mastercard | visa | elo | amex | other
+    last4 = Column(String(4), nullable=True)
+    credit_limit = Column(Numeric(15, 2), nullable=False, default=0)
+    closing_day = Column(Integer, nullable=False, default=10)
+    due_day = Column(Integer, nullable=False, default=17)
+    color = Column(String(24), nullable=False, default="#6366f1")
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("closing_day >= 1 AND closing_day <= 31", name="ck_cc_closing_day"),
+        CheckConstraint("due_day >= 1 AND due_day <= 31", name="ck_cc_due_day"),
+        Index("idx_credit_cards_user", "user_id", "is_active"),
+    )
+
+    user = relationship("User")
+    account = relationship("Account")
+
+
+class PushSubscription(Base):
+    """Browser/PWA Web Push subscription (RFC 8291 VAPID endpoint + keys)."""
+
+    __tablename__ = "push_subscriptions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(Text, nullable=False)
+    auth = Column(Text, nullable=False)
+    user_agent = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "endpoint", name="uq_push_sub_user_endpoint"),
+        Index("idx_push_sub_user_active", "user_id", "is_active"),
+    )
+
+    user = relationship("User")

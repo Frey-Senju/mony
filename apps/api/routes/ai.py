@@ -46,6 +46,7 @@ from services.ai_analyzer import (
     analyze_document,
     chat_with_financial_context,
     get_active_ai_provider,
+    parse_voice_transaction,
 )
 from services.rules_engine import (
     is_internal_transfer_text,
@@ -572,3 +573,115 @@ async def ai_chat(
         context=context,
         history=[m.model_dump() for m in payload.history],
     )
+
+
+@router.post("/voice-transaction")
+async def voice_transaction(
+    audio: Optional[UploadFile] = File(default=None),
+    transcript: Optional[str] = Form(default=None),
+    account_id: Optional[str] = Form(default=None),
+    auto_save: bool = Form(default=False),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Parse a spoken Portuguese expense/income (audio file or transcript) and optionally save immediately."""
+    uid = parse_uuid(user_id, "user_id")
+    audio_bytes = await audio.read() if audio is not None else None
+    if audio_bytes and len(audio_bytes) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Áudio excede 10 MB.")
+    if not audio_bytes and not (transcript or "").strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Envie um áudio ou transcrição de voz.")
+
+    categories = ensure_default_categories(db, uid)
+    cat_names = [c.name for c in categories]
+    accounts = (
+        db.query(Account)
+        .filter(Account.user_id == uid, Account.deleted_at.is_(None))
+        .order_by(Account.is_default.desc(), Account.created_at.asc())
+        .all()
+    )
+
+    try:
+        parsed = await parse_voice_transaction(
+            audio_bytes=audio_bytes,
+            mime_type=audio.content_type if audio else None,
+            transcript_text=transcript,
+            user_categories=cat_names,
+            user_accounts=[a.name for a in accounts],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+
+    # Apply user's auto-categorization & internal-transfer rules
+    active_rules = load_active_rules(db, uid)
+    matched_rule = match_user_rule(active_rules, parsed["description"], parsed.get("merchant_name"))
+    if matched_rule is not None:
+        if matched_rule.action == "mark_transfer":
+            parsed["type"] = "transfer"
+        elif matched_rule.action == "categorize" and matched_rule.category_name:
+            parsed["category_name"] = matched_rule.category_name
+    elif parsed["type"] in ("expense", "income") and is_internal_transfer_text(
+        parsed["description"], parsed.get("merchant_name")
+    ):
+        parsed["type"] = "transfer"
+
+    # Resolve target account (explicit -> hint match -> default account)
+    target_acct: Optional[Account] = None
+    if account_id:
+        aid = parse_uuid(account_id, "account_id")
+        target_acct = next((a for a in accounts if a.id == aid), None)
+    if target_acct is None and parsed.get("account_hint"):
+        hint = parsed["account_hint"].lower()
+        target_acct = next((a for a in accounts if hint in a.name.lower() or a.name.lower() in hint), None)
+    if target_acct is None and accounts:
+        target_acct = accounts[0]
+
+    parsed["account_id"] = str(target_acct.id) if target_acct else None
+    parsed["account_name"] = target_acct.name if target_acct else None
+
+    saved_id = None
+    if auto_save:
+        if target_acct is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Crie uma conta antes de lançar por voz.")
+        try:
+            tx_type = TransactionType(parsed["type"])
+        except ValueError:
+            tx_type = TransactionType.EXPENSE
+        try:
+            tx_date = date.fromisoformat(parsed["transaction_date"])
+        except ValueError:
+            tx_date = date.today()
+        amt_dec = Decimal(f"{float(parsed['amount']):.2f}")
+        inst_tot = parsed.get("installment_total")
+        tx = Transaction(
+            user_id=uid,
+            account_id=target_acct.id,
+            type=tx_type,
+            amount=amt_dec,
+            currency=target_acct.currency or "BRL",
+            description=parsed["description"][:255],
+            merchant_name=(parsed.get("merchant_name") or "")[:255] or None,
+            notes="Lançado por Voz · Mony IA",
+            transaction_date=tx_date,
+            statement_month=tx_date.strftime("%Y-%m"),
+            payment_method=parsed.get("payment_method") or "other",
+            installment_number=1 if inst_tot else None,
+            installment_total=inst_tot,
+            source="manual",
+        )
+        db.add(tx)
+        db.flush()
+        cat = _resolve_category(db, uid, category_name=parsed["category_name"])
+        if cat is not None:
+            _set_transaction_category(db, tx, cat)
+        target_acct.balance = Decimal(str(target_acct.balance or 0)) + _balance_delta(tx_type, amt_dec)
+        if matched_rule is not None:
+            matched_rule.matches_count = int(matched_rule.matches_count or 0) + 1
+        db.commit()
+        saved_id = str(tx.id)
+
+    return {
+        "parsed": parsed,
+        "saved": bool(saved_id),
+        "transaction_id": saved_id,
+    }

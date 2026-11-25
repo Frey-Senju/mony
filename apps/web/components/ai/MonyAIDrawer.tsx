@@ -15,6 +15,8 @@ import {
   Trash2,
   Upload,
   Camera,
+  Mic,
+  Square,
 } from 'lucide-react'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories } from '@/hooks/useCategories'
@@ -160,6 +162,25 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
   const [chatLoading, setChatLoading] = useState(false)
   const chatEndRef = useRef<HTMLDivElement>(null)
 
+  // Voice Transaction state (Gemini Multimodal Audio)
+  const [recording, setRecording] = useState(false)
+  const [voiceParsing, setVoiceParsing] = useState(false)
+  const [voiceSaving, setVoiceSaving] = useState(false)
+  const [voiceDraft, setVoiceDraft] = useState<{
+    transcript: string
+    description: string
+    type: string
+    amount: number
+    category_name: string
+    payment_method: string
+    account_id?: string | null
+    account_name?: string | null
+    installment_total?: number | null
+    transaction_date: string
+  } | null>(null)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+
   // File Analyzer & Import state
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [selectedAccountId, setSelectedAccountId] = useState('')
@@ -258,6 +279,137 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
     },
     [token, chatLoading, messages, authFetch]
   )
+
+  const stopRecordingAndParse = useCallback(() => {
+    const rec = mediaRecorderRef.current
+    if (rec && rec.state !== 'inactive') {
+      rec.stop()
+    }
+    setRecording(false)
+  }, [])
+
+  const toggleVoiceRecording = useCallback(async () => {
+    if (!token) return
+    if (recording) {
+      stopRecordingAndParse()
+      return
+    }
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: 'Seu navegador não suporta gravação de microfone. Digite o comando (ex.: *"Gastei 48 reais no almoço no cartão"*).',
+        },
+      ])
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mimeType =
+        typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : 'audio/mp4'
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
+      audioChunksRef.current = []
+      recorder.ondataavailable = (ev) => {
+        if (ev.data && ev.data.size > 0) audioChunksRef.current.push(ev.data)
+      }
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop())
+        const blob = new Blob(audioChunksRef.current, { type: mimeType || 'audio/webm' })
+        if (blob.size < 200) return
+        setVoiceParsing(true)
+        try {
+          const fd = new FormData()
+          fd.append('audio', blob, mimeType === 'audio/mp4' ? 'voice.m4a' : 'voice.webm')
+          if (selectedAccountId) fd.append('account_id', selectedAccountId)
+          fd.append('auto_save', 'false')
+          const res = await authFetch(`${API_URL}/ai/voice-transaction`, {
+            method: 'POST',
+            body: fd,
+          })
+          if (!res.ok) {
+            const errBody = await res.json().catch(() => ({}))
+            throw new Error(errBody.detail || 'Não consegui entender o áudio.')
+          }
+          const data = await res.json()
+          setVoiceDraft(data.parsed)
+          setMessages((prev) => [
+            ...prev,
+            { role: 'user', content: `🎤 "${data.parsed.transcript || 'Áudio enviado'}"` },
+            {
+              role: 'assistant',
+              content: `Entendi **R$ ${Number(data.parsed.amount).toFixed(2).replace('.', ',')}** — **${data.parsed.description}** (${data.parsed.category_name}). Clique em **Confirmar Lançamento** abaixo para salvar em 1 toque!`,
+            },
+          ])
+        } catch (err) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: 'assistant',
+              content: err instanceof Error ? `Ops: ${err.message}` : 'Não consegui processar o áudio.',
+            },
+          ])
+        } finally {
+          setVoiceParsing(false)
+        }
+      }
+      mediaRecorderRef.current = recorder
+      recorder.start()
+      setRecording(true)
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: 'Permissão de microfone negada. Libere o acesso ao microfone no navegador para lançar gastos por voz!',
+        },
+      ])
+    }
+  }, [token, recording, stopRecordingAndParse, selectedAccountId, authFetch])
+
+  const confirmVoiceDraft = async () => {
+    if (!voiceDraft || !token) return
+    setVoiceSaving(true)
+    try {
+      const fd = new FormData()
+      fd.append('transcript', voiceDraft.transcript || `${voiceDraft.description} ${voiceDraft.amount} reais`)
+      if (voiceDraft.account_id || selectedAccountId) {
+        fd.append('account_id', voiceDraft.account_id || selectedAccountId)
+      }
+      fd.append('auto_save', 'true')
+      const res = await authFetch(`${API_URL}/ai/voice-transaction`, {
+        method: 'POST',
+        body: fd,
+      })
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}))
+        throw new Error(errBody.detail || 'Erro ao salvar lançamento por voz')
+      }
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `✅ Lançamento salvo! **R$ ${Number(voiceDraft.amount).toFixed(2).replace('.', ',')}** em **${voiceDraft.category_name}** (${voiceDraft.account_name || 'conta padrão'}).`,
+        },
+      ])
+      setVoiceDraft(null)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('mony:transactions-updated'))
+      }
+    } catch (err) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: err instanceof Error ? `Erro ao salvar: ${err.message}` : 'Erro ao salvar lançamento.',
+        },
+      ])
+    } finally {
+      setVoiceSaving(false)
+    }
+  }
 
   const handleFileUpload = async (file: File) => {
     if (!token) return
@@ -487,6 +639,43 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               ))}
             </div>
 
+            {/* Voice 1-Tap Confirmation Card */}
+            {voiceDraft && (
+              <div className="mx-6 mb-2 p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/35 space-y-2.5">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
+                    <Mic className="w-3.5 h-3.5" />
+                    Confirmar lançamento por voz
+                  </span>
+                  <span className="font-extrabold text-sm text-slate-900 dark:text-white">
+                    R$ {Number(voiceDraft.amount).toFixed(2).replace('.', ',')}
+                  </span>
+                </div>
+                <p className="text-xs text-slate-700 dark:text-slate-200">
+                  <strong>{voiceDraft.description}</strong> · {voiceDraft.category_name} ·{' '}
+                  {voiceDraft.account_name || 'Conta padrão'}
+                  {voiceDraft.installment_total ? ` · ${voiceDraft.installment_total}x` : ''}
+                </p>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setVoiceDraft(null)}
+                    className="liquid-btn liquid-btn-glass px-3 py-1.5 rounded-xl text-xs font-semibold"
+                  >
+                    Cancelar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={confirmVoiceDraft}
+                    disabled={voiceSaving}
+                    className="liquid-btn liquid-btn-primary px-3.5 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-50"
+                  >
+                    {voiceSaving ? 'Salvando...' : 'Confirmar Lançamento'}
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Chat input */}
             <form
               onSubmit={(e) => {
@@ -495,6 +684,26 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               }}
               className="p-4 px-6 border-t border-white/40 dark:border-white/10 flex items-center gap-2"
             >
+              <button
+                type="button"
+                onClick={toggleVoiceRecording}
+                disabled={voiceParsing}
+                title={recording ? 'Parar gravação e interpretar' : 'Lançar gasto por voz (Microfone)'}
+                aria-label={recording ? 'Parar gravação de voz' : 'Gravar gasto por voz'}
+                className={`liquid-btn p-2.5 rounded-xl shrink-0 transition ${
+                  recording
+                    ? 'bg-rose-500 text-white animate-pulse border-rose-400'
+                    : 'liquid-btn-glass'
+                }`}
+              >
+                {voiceParsing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                ) : recording ? (
+                  <Square className="w-4 h-4 fill-current" aria-hidden="true" />
+                ) : (
+                  <Mic className="w-4 h-4" aria-hidden="true" />
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => setTab('import')}
