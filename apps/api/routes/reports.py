@@ -12,16 +12,18 @@ scope strictly to the authenticated user's transactions.
 
 from datetime import date, timedelta
 from decimal import Decimal
+from statistics import median as _median
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, extract, func
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, extract, func, or_
+from sqlalchemy.orm import Session, joinedload
 
 from database.base import get_db
 from database.models import (
+    Account,
     Category,
     Transaction,
     TransactionCategory,
@@ -411,3 +413,186 @@ async def annual_summary(
     )
 
     return AnnualSummaryResponse(year=year, months=months, totals=totals)
+
+
+# ============ Endpoint: Cashflow + Month-by-Month Category Matrix ============
+
+_PT_MONTH_NAMES = [
+    "",
+    "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+    "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+]
+_PT_MONTH_SHORT = [
+    "",
+    "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+    "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+]
+
+
+def _nonzero_avg(vals: list[float]) -> float:
+    nz = [v for v in vals if v > 0]
+    return round(sum(nz) / len(nz), 2) if nz else 0.0
+
+
+def _nonzero_median(vals: list[float]) -> float:
+    nz = [v for v in vals if v != 0]
+    return round(float(_median(nz)), 2) if nz else 0.0
+
+
+@router.get("/cashflow")
+async def get_annual_cashflow(
+    year: int = Query(default=None, ge=1970, le=9999),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Full annual Cashflow & Month-by-Month Category Expense Matrix.
+
+    Computes monthly gains, expenses, % committed, surplus, cumulative balance,
+    per-category 12-month matrix, averages, medians, totals, and live account
+    reserves — honoring `statement_month` when set for invoice competency.
+    """
+    uid = UUID(user_id)
+    target_year = year or date.today().year
+    year_prefix = f"{target_year:04d}-"
+    year_start = date(target_year, 1, 1)
+    year_end = date(target_year + 1, 1, 1)
+
+    txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            or_(
+                Transaction.statement_month.like(f"{year_prefix}%"),
+                and_(
+                    Transaction.statement_month.is_(None),
+                    Transaction.transaction_date >= year_start,
+                    Transaction.transaction_date < year_end,
+                ),
+            ),
+        )
+        .all()
+    )
+
+    monthly_income: dict[int, float] = {m: 0.0 for m in range(1, 13)}
+    monthly_expenses: dict[int, float] = {m: 0.0 for m in range(1, 13)}
+    monthly_cat: dict[int, dict[str, float]] = {m: {} for m in range(1, 13)}
+    category_totals: dict[str, float] = {}
+
+    for tx in txs:
+        if tx.statement_month and tx.statement_month.startswith(year_prefix):
+            try:
+                m_idx = int(tx.statement_month.split("-")[1])
+            except (ValueError, IndexError):
+                m_idx = tx.transaction_date.month
+        else:
+            m_idx = tx.transaction_date.month
+
+        if not (1 <= m_idx <= 12):
+            continue
+
+        amt = float(tx.amount or 0)
+        if tx.type == TransactionType.INCOME:
+            monthly_income[m_idx] += amt
+        elif tx.type == TransactionType.EXPENSE:
+            monthly_expenses[m_idx] += amt
+            cat_name = tx.categories[0].category.name if tx.categories and tx.categories[0].category else "Sem Categoria"
+            monthly_cat[m_idx][cat_name] = monthly_cat[m_idx].get(cat_name, 0.0) + amt
+            category_totals[cat_name] = category_totals.get(cat_name, 0.0) + amt
+
+    # Sort categories by descending yearly expense total
+    ordered_categories = [
+        name for name, _ in sorted(category_totals.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+    months_payload = []
+    cumulative = 0.0
+    for m in range(1, 13):
+        inc = round(monthly_income[m], 2)
+        exp = round(monthly_expenses[m], 2)
+        net = round(inc - exp, 2)
+        cumulative = round(cumulative + net, 2)
+        ratio = round((exp / inc) * 100, 1) if inc > 0 else (100.0 if exp > 0 else 0.0)
+        by_cat = {cat: round(monthly_cat[m].get(cat, 0.0), 2) for cat in ordered_categories}
+        months_payload.append({
+            "month": m,
+            "ym": f"{target_year:04d}-{m:02d}",
+            "label": _PT_MONTH_NAMES[m],
+            "short_label": _PT_MONTH_SHORT[m],
+            "income": inc,
+            "expenses": exp,
+            "expense_ratio_pct": ratio,
+            "net": net,
+            "cumulative_net": cumulative,
+            "by_category": by_cat,
+        })
+
+    incomes = [m["income"] for m in months_payload]
+    expenses = [m["expenses"] for m in months_payload]
+    nets = [m["net"] for m in months_payload]
+
+    avg_inc = _nonzero_avg(incomes)
+    avg_exp = _nonzero_avg(expenses)
+    avg_net_nz = [n for n in nets if n != 0]
+    avg_net = round(sum(avg_net_nz) / len(avg_net_nz), 2) if avg_net_nz else 0.0
+
+    med_inc = _nonzero_median(incomes)
+    med_exp = _nonzero_median(expenses)
+    med_net = _nonzero_median(nets)
+
+    tot_inc = round(sum(incomes), 2)
+    tot_exp = round(sum(expenses), 2)
+    tot_net = round(tot_inc - tot_exp, 2)
+
+    cat_avg: dict[str, float] = {}
+    cat_med: dict[str, float] = {}
+    cat_tot: dict[str, float] = {}
+    cat_pct_med_inc: dict[str, float] = {}
+    cat_pct_tot_inc: dict[str, float] = {}
+
+    for cat in ordered_categories:
+        series = [m["by_category"][cat] for m in months_payload]
+        c_avg = _nonzero_avg(series)
+        c_med = _nonzero_median(series)
+        c_tot = round(sum(series), 2)
+        cat_avg[cat] = c_avg
+        cat_med[cat] = c_med
+        cat_tot[cat] = c_tot
+        cat_pct_med_inc[cat] = round((c_med / med_inc) * 100, 1) if med_inc > 0 else 0.0
+        cat_pct_tot_inc[cat] = round((c_tot / tot_inc) * 100, 1) if tot_inc > 0 else 0.0
+
+    # Current total liquid reserve from user's active accounts
+    accounts = (
+        db.query(Account)
+        .filter(Account.user_id == uid, Account.deleted_at.is_(None))
+        .all()
+    )
+    current_reserve = round(sum(max(0.0, float(a.balance or 0)) for a in accounts), 2)
+
+    return {
+        "year": target_year,
+        "categories": ordered_categories,
+        "months": months_payload,
+        "stats": {
+            "avg_income": avg_inc,
+            "avg_expenses": avg_exp,
+            "avg_net": avg_net,
+            "avg_expense_ratio_pct": round((avg_exp / avg_inc) * 100, 1) if avg_inc > 0 else 0.0,
+            "median_income": med_inc,
+            "median_expenses": med_exp,
+            "median_net": med_net,
+            "median_expense_ratio_pct": round((med_exp / med_inc) * 100, 1) if med_inc > 0 else 0.0,
+            "total_income": tot_inc,
+            "total_expenses": tot_exp,
+            "total_net": tot_net,
+            "total_expense_ratio_pct": round((tot_exp / tot_inc) * 100, 1) if tot_inc > 0 else 0.0,
+            "category_avg": cat_avg,
+            "category_median": cat_med,
+            "category_total": cat_tot,
+            "category_pct_of_median_income": cat_pct_med_inc,
+            "category_pct_of_total_income": cat_pct_tot_inc,
+        },
+        "current_reserve_balance": current_reserve,
+    }

@@ -22,6 +22,8 @@ import {
   Paperclip,
   Repeat,
   UserCircle,
+  Table2,
+  Calculator,
 } from 'lucide-react'
 import { useAppearance } from '@/app/_theme/provider'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -39,6 +41,8 @@ interface NavItem {
 
 const PRIMARY_ITEMS: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', testId: 'nav-dashboard', icon: <LayoutDashboard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/dashboard/cashflow', label: 'Cashflow', testId: 'nav-cashflow', icon: <Table2 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/dashboard/simulators', label: 'Simuladores', testId: 'nav-simulators', icon: <Calculator className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/accounts', label: 'Contas', testId: 'nav-accounts', icon: <Wallet className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/recurring', label: 'Recorrentes', testId: 'nav-recurring', icon: <Repeat className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/reports', label: 'Relatórios', testId: 'nav-reports', icon: <BarChart3 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
