@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import {
@@ -13,6 +14,7 @@ import {
   TrendingUp,
   Layers,
   Link2,
+  KeyRound,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { InstitutionCard } from '@/components/open-finance/institution-card'
@@ -36,37 +38,10 @@ import {
 } from '@/lib/api/open-finance'
 import { useAuth } from '@/stores/auth/useAuth'
 
-declare global {
-  interface Window {
-    PluggyConnect?: new (config: {
-      connectToken: string
-      includeSandbox?: boolean
-      onSuccess: (itemData: { item: { id: string; connector?: { name?: string } } }) => void
-      onError?: (error: { message?: string }) => void
-      onClose?: () => void
-    }) => { init: () => void }
-  }
-}
-
-function loadPluggyWidgetScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (typeof window === 'undefined') return reject(new Error('Window unavailable'))
-    if (window.PluggyConnect) return resolve()
-    const existing = document.querySelector<HTMLScriptElement>('script[data-pluggy-connect]')
-    if (existing) {
-      existing.addEventListener('load', () => resolve())
-      existing.addEventListener('error', () => reject(new Error('Falha ao carregar Pluggy Connect')))
-      return
-    }
-    const script = document.createElement('script')
-    script.src = 'https://cdn.pluggy.ai/pluggy-connect/v2.8.2/pluggy-connect.js'
-    script.async = true
-    script.dataset.pluggyConnect = 'true'
-    script.onload = () => resolve()
-    script.onerror = () => reject(new Error('Falha ao carregar script do Pluggy Connect'))
-    document.head.appendChild(script)
-  })
-}
+const PluggyConnect = dynamic(
+  () => import('react-pluggy-connect').then((mod) => mod.PluggyConnect),
+  { ssr: false }
+)
 
 export default function ConnectionsPage() {
   return (
@@ -84,6 +59,10 @@ function ConnectionsContent() {
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([])
   const [pluggyStatus, setPluggyStatus] = useState<PluggyStatusResponse | null>(null)
   const [lastDedupReport, setLastDedupReport] = useState<PluggyLinkItemResponse | null>(null)
+  const [connectToken, setConnectToken] = useState<string | null>(null)
+  const [includeSandbox, setIncludeSandbox] = useState(false)
+  const [manualItemId, setManualItemId] = useState('')
+  const [showManualItemImport, setShowManualItemImport] = useState(false)
   const [search, setSearch] = useState('')
   const [loadingInstitutions, setLoadingInstitutions] = useState(true)
   const [loadingAccounts, setLoadingAccounts] = useState(true)
@@ -102,7 +81,7 @@ function ConnectionsContent() {
 
   const showNotification = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
     setNotification({ type, message })
-    setTimeout(() => setNotification(null), 7000)
+    setTimeout(() => setNotification(null), 8000)
   }, [])
 
   // Handle callback query params (success/error from OAuth flow)
@@ -182,36 +161,9 @@ function ConnectionsContent() {
     try {
       const tokenRes = await createPluggyConnectToken(accessToken)
       if (tokenRes.mode === 'live') {
-        await loadPluggyWidgetScript()
-        if (!window.PluggyConnect) {
-          throw new Error('Widget Pluggy Connect indisponível no navegador.')
-        }
-        const widget = new window.PluggyConnect({
-          connectToken: tokenRes.access_token,
-          includeSandbox: false,
-          onSuccess: async (itemData) => {
-            try {
-              await finalizePluggyLink(itemData.item.id, itemData.item.connector?.name)
-            } catch (err) {
-              showNotification(
-                'error',
-                err instanceof Error ? err.message : 'Erro ao importar item do Pluggy'
-              )
-            } finally {
-              setPluggyLoading(false)
-            }
-          },
-          onError: (err) => {
-            showNotification('error', err?.message || 'Erro no widget Pluggy Connect')
-            setPluggyLoading(false)
-          },
-          onClose: () => {
-            setPluggyLoading(false)
-          },
-        })
-        widget.init()
+        setConnectToken(tokenRes.access_token)
       } else {
-        // Hybrid sandbox mode: connect instant simulated Nubank Open Finance item
+        // Hybrid sandbox mode fallback when credentials are not configured
         await finalizePluggyLink(`sandbox-nubank-item-${Date.now()}`, 'Nubank (Open Finance)')
         setPluggyLoading(false)
       }
@@ -220,6 +172,25 @@ function ConnectionsContent() {
         'error',
         err instanceof Error ? err.message : 'Erro ao conectar via Pluggy Open Finance'
       )
+      setPluggyLoading(false)
+    }
+  }
+
+  const handleManualItemImport = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = manualItemId.trim()
+    if (!trimmed || !accessToken) return
+    setPluggyLoading(true)
+    try {
+      await finalizePluggyLink(trimmed)
+      setManualItemId('')
+      setShowManualItemImport(false)
+    } catch (err) {
+      showNotification(
+        'error',
+        err instanceof Error ? err.message : 'Erro ao importar Item ID do Pluggy'
+      )
+    } finally {
       setPluggyLoading(false)
     }
   }
@@ -313,6 +284,40 @@ function ConnectionsContent() {
 
   return (
     <div className="min-h-screen py-8 px-4 sm:px-6">
+      {/* Official Pluggy Connect Modal */}
+      {connectToken && (
+        <PluggyConnect
+          connectToken={connectToken}
+          includeSandbox={includeSandbox}
+          onSuccess={async (itemData) => {
+            setConnectToken(null)
+            try {
+              const itemId = itemData?.item?.id
+              const connectorName = itemData?.item?.connector?.name
+              if (itemId) {
+                await finalizePluggyLink(itemId, connectorName)
+              }
+            } catch (err) {
+              showNotification(
+                'error',
+                err instanceof Error ? err.message : 'Erro ao importar item do Pluggy'
+              )
+            } finally {
+              setPluggyLoading(false)
+            }
+          }}
+          onError={(err) => {
+            setConnectToken(null)
+            setPluggyLoading(false)
+            showNotification('error', err?.message || 'Erro no widget Pluggy Connect')
+          }}
+          onClose={() => {
+            setConnectToken(null)
+            setPluggyLoading(false)
+          }}
+        />
+      )}
+
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Top bar */}
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -385,33 +390,84 @@ function ConnectionsContent() {
               </p>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2.5">
-              <button
-                onClick={handlePluggyConnect}
-                disabled={pluggyLoading}
-                className="liquid-btn px-4 py-2.5 rounded-2xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
-              >
-                <Link2 className="w-4 h-4" />
-                {pluggyLoading
-                  ? 'Conectando...'
-                  : pluggyStatus?.mode === 'live'
-                    ? 'Conectar Banco Real (Pluggy)'
-                    : 'Conectar Banco (Pluggy Sandbox)'}
-              </button>
-
-              {pluggyStatus?.mode !== 'live' && (
+            <div className="flex flex-col items-end gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
-                  onClick={handleSimulateReconnect}
+                  onClick={handlePluggyConnect}
                   disabled={pluggyLoading}
-                  className="glass-btn px-3.5 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-1.5 text-[var(--text-primary)] disabled:opacity-50"
-                  title="Simula desconectar e reconectar o mesmo banco com novo item_id para comprovar 0 duplicatas"
+                  className="liquid-btn px-4 py-2.5 rounded-2xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
                 >
-                  <RefreshCw className={`w-3.5 h-3.5 ${pluggyLoading ? 'animate-spin' : ''}`} />
-                  Testar Reconexão (Anti-Duplicata)
+                  <Link2 className="w-4 h-4" />
+                  {pluggyLoading
+                    ? 'Abrindo Pluggy...'
+                    : pluggyStatus?.mode === 'live'
+                      ? 'Conectar Banco Real (Pluggy)'
+                      : 'Conectar Banco (Pluggy Sandbox)'}
                 </button>
+
+                <button
+                  onClick={() => setShowManualItemImport((v) => !v)}
+                  className="glass-btn px-3 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-1.5 text-[var(--text-primary)]"
+                  title="Importar uma conta já conectada no Meu Pluggy ou Dashboard Pluggy pelo Item ID"
+                >
+                  <KeyRound className="w-3.5 h-3.5 text-[var(--accent)]" />
+                  Importar Item ID
+                </button>
+
+                {pluggyStatus?.mode !== 'live' && (
+                  <button
+                    onClick={handleSimulateReconnect}
+                    disabled={pluggyLoading}
+                    className="glass-btn px-3.5 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-1.5 text-[var(--text-primary)] disabled:opacity-50"
+                    title="Simula desconectar e reconectar o mesmo banco com novo item_id para comprovar 0 duplicatas"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${pluggyLoading ? 'animate-spin' : ''}`} />
+                    Testar Reconexão
+                  </button>
+                )}
+              </div>
+
+              {pluggyStatus?.mode === 'live' && (
+                <label className="inline-flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)] cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={includeSandbox}
+                    onChange={(e) => setIncludeSandbox(e.target.checked)}
+                    className="rounded accent-[var(--accent)]"
+                  />
+                  Incluir banco de teste (Pluggy Sandbox) no widget
+                </label>
               )}
             </div>
           </div>
+
+          {/* Optional Direct Item ID Importer (Meu Pluggy) */}
+          {showManualItemImport && (
+            <form
+              onSubmit={handleManualItemImport}
+              className="glass-card rounded-2xl p-4 flex flex-wrap items-center gap-3 border border-[var(--accent)]/30"
+            >
+              <div className="flex-1 min-w-[240px]">
+                <label className="block text-xs font-semibold text-[var(--text-primary)] mb-1">
+                  Item ID já conectado na Pluggy / Meu Pluggy
+                </label>
+                <input
+                  type="text"
+                  value={manualItemId}
+                  onChange={(e) => setManualItemId(e.target.value)}
+                  placeholder="Ex.: 9f8a7b6c-1234-4567-890a-bcdef1234567"
+                  className="w-full px-3 py-2 glass-input rounded-xl text-xs font-mono"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={pluggyLoading || !manualItemId.trim()}
+                className="liquid-btn px-4 py-2 rounded-xl text-xs font-semibold mt-4 sm:mt-5 disabled:opacity-50"
+              >
+                {pluggyLoading ? 'Importando...' : 'Sincronizar Item'}
+              </button>
+            </form>
+          )}
 
           {/* 3-Layer Deduplication Shield Pills */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
