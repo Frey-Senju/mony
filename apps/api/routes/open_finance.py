@@ -88,6 +88,8 @@ class LinkedAccountResponse(BaseModel):
     last_sync_at: Optional[datetime] = None
     sync_status: str = "idle"
     last_sync_error: Optional[str] = None
+    provider: Optional[str] = "legacy"
+    external_item_id: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -388,6 +390,8 @@ async def list_linked_accounts(
                 last_sync_at=acct.last_sync_at,
                 sync_status=acct.sync_status or "idle",
                 last_sync_error=acct.last_sync_error,
+                provider=getattr(acct, "provider", None) or "legacy",
+                external_item_id=getattr(acct, "external_item_id", None),
                 created_at=acct.created_at,
             )
         )

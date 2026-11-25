@@ -1,7 +1,19 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
+import {
+  ShieldCheck,
+  Building2,
+  RefreshCw,
+  CheckCircle2,
+  Sparkles,
+  ArrowLeft,
+  TrendingUp,
+  Layers,
+  Link2,
+} from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { InstitutionCard } from '@/components/open-finance/institution-card'
 import { LinkedAccountCard } from '@/components/open-finance/linked-account-card'
@@ -13,10 +25,48 @@ import {
   initiateConsent,
   unlinkAccount,
   triggerSync,
+  getPluggyStatus,
+  createPluggyConnectToken,
+  linkPluggyItem,
+  syncPluggyAccount,
   type Institution,
   type LinkedAccount,
+  type PluggyStatusResponse,
+  type PluggyLinkItemResponse,
 } from '@/lib/api/open-finance'
 import { useAuth } from '@/stores/auth/useAuth'
+
+declare global {
+  interface Window {
+    PluggyConnect?: new (config: {
+      connectToken: string
+      includeSandbox?: boolean
+      onSuccess: (itemData: { item: { id: string; connector?: { name?: string } } }) => void
+      onError?: (error: { message?: string }) => void
+      onClose?: () => void
+    }) => { init: () => void }
+  }
+}
+
+function loadPluggyWidgetScript(): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === 'undefined') return reject(new Error('Window unavailable'))
+    if (window.PluggyConnect) return resolve()
+    const existing = document.querySelector<HTMLScriptElement>('script[data-pluggy-connect]')
+    if (existing) {
+      existing.addEventListener('load', () => resolve())
+      existing.addEventListener('error', () => reject(new Error('Falha ao carregar Pluggy Connect')))
+      return
+    }
+    const script = document.createElement('script')
+    script.src = 'https://cdn.pluggy.ai/pluggy-connect/v2.8.2/pluggy-connect.js'
+    script.async = true
+    script.dataset.pluggyConnect = 'true'
+    script.onload = () => resolve()
+    script.onerror = () => reject(new Error('Falha ao carregar script do Pluggy Connect'))
+    document.head.appendChild(script)
+  })
+}
 
 export default function ConnectionsPage() {
   return (
@@ -32,20 +82,27 @@ function ConnectionsContent() {
 
   const [institutions, setInstitutions] = useState<Institution[]>([])
   const [linkedAccounts, setLinkedAccounts] = useState<LinkedAccount[]>([])
+  const [pluggyStatus, setPluggyStatus] = useState<PluggyStatusResponse | null>(null)
+  const [lastDedupReport, setLastDedupReport] = useState<PluggyLinkItemResponse | null>(null)
   const [search, setSearch] = useState('')
   const [loadingInstitutions, setLoadingInstitutions] = useState(true)
   const [loadingAccounts, setLoadingAccounts] = useState(true)
   const [connectingId, setConnectingId] = useState<string | null>(null)
+  const [pluggyLoading, setPluggyLoading] = useState(false)
   const [disconnectTarget, setDisconnectTarget] = useState<LinkedAccount | null>(null)
   const [disconnecting, setDisconnecting] = useState(false)
   const [syncingAccountId, setSyncingAccountId] = useState<string | null>(null)
-  const [notification, setNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null)
+  const [showLegacyBanks, setShowLegacyBanks] = useState(false)
+  const [notification, setNotification] = useState<{
+    type: 'success' | 'error' | 'warning'
+    message: string
+  } | null>(null)
 
   const accessToken = tokens?.access_token || ''
 
   const showNotification = useCallback((type: 'success' | 'error' | 'warning', message: string) => {
     setNotification({ type, message })
-    setTimeout(() => setNotification(null), 5000)
+    setTimeout(() => setNotification(null), 7000)
   }, [])
 
   // Handle callback query params (success/error from OAuth flow)
@@ -65,11 +122,24 @@ function ConnectionsContent() {
       }
       showNotification('error', messages[errorParam] || `Erro: ${errorParam}`)
     } else if (warningParam === 'accounts_fetch_failed') {
-      showNotification('warning', 'Conta autorizada, mas não foi possível buscar os dados. Tente sincronizar mais tarde.')
+      showNotification(
+        'warning',
+        'Conta autorizada, mas não foi possível buscar os dados. Tente sincronizar mais tarde.'
+      )
     }
   }, [searchParams, showNotification])
 
-  // Fetch institutions
+  const fetchPluggyStatus = useCallback(() => {
+    if (!accessToken) return
+    getPluggyStatus(accessToken)
+      .then(setPluggyStatus)
+      .catch(() => setPluggyStatus(null))
+  }, [accessToken])
+
+  useEffect(() => {
+    fetchPluggyStatus()
+  }, [fetchPluggyStatus])
+
   useEffect(() => {
     if (!accessToken) return
     setLoadingInstitutions(true)
@@ -79,7 +149,6 @@ function ConnectionsContent() {
       .finally(() => setLoadingInstitutions(false))
   }, [accessToken, search, showNotification])
 
-  // Fetch linked accounts
   const fetchLinkedAccounts = useCallback(() => {
     if (!accessToken) return
     setLoadingAccounts(true)
@@ -92,6 +161,86 @@ function ConnectionsContent() {
   useEffect(() => {
     fetchLinkedAccounts()
   }, [fetchLinkedAccounts])
+
+  const finalizePluggyLink = async (itemId: string, institutionName?: string) => {
+    const report = await linkPluggyItem(accessToken, itemId, institutionName, 90)
+    setLastDedupReport(report)
+    showNotification(
+      'success',
+      `${report.institution_name}: ${report.accounts_linked} nova(s) · ${report.accounts_reused} reutilizada(s) · ${report.transactions_inserted} lançamento(s) · ${report.transactions_skipped_dedup} duplicata(s) evitada(s) · ${report.transactions_reconciled} conciliado(s).`
+    )
+    fetchLinkedAccounts()
+    fetchPluggyStatus()
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('mony:transactions-updated'))
+    }
+  }
+
+  const handlePluggyConnect = async () => {
+    if (!accessToken) return
+    setPluggyLoading(true)
+    try {
+      const tokenRes = await createPluggyConnectToken(accessToken)
+      if (tokenRes.mode === 'live') {
+        await loadPluggyWidgetScript()
+        if (!window.PluggyConnect) {
+          throw new Error('Widget Pluggy Connect indisponível no navegador.')
+        }
+        const widget = new window.PluggyConnect({
+          connectToken: tokenRes.access_token,
+          includeSandbox: false,
+          onSuccess: async (itemData) => {
+            try {
+              await finalizePluggyLink(itemData.item.id, itemData.item.connector?.name)
+            } catch (err) {
+              showNotification(
+                'error',
+                err instanceof Error ? err.message : 'Erro ao importar item do Pluggy'
+              )
+            } finally {
+              setPluggyLoading(false)
+            }
+          },
+          onError: (err) => {
+            showNotification('error', err?.message || 'Erro no widget Pluggy Connect')
+            setPluggyLoading(false)
+          },
+          onClose: () => {
+            setPluggyLoading(false)
+          },
+        })
+        widget.init()
+      } else {
+        // Hybrid sandbox mode: connect instant simulated Nubank Open Finance item
+        await finalizePluggyLink(`sandbox-nubank-item-${Date.now()}`, 'Nubank (Open Finance)')
+        setPluggyLoading(false)
+      }
+    } catch (err) {
+      showNotification(
+        'error',
+        err instanceof Error ? err.message : 'Erro ao conectar via Pluggy Open Finance'
+      )
+      setPluggyLoading(false)
+    }
+  }
+
+  const handleSimulateReconnect = async () => {
+    if (!accessToken) return
+    setPluggyLoading(true)
+    try {
+      await finalizePluggyLink(
+        `sandbox-nubank-reconnect-${Date.now()}`,
+        'Nubank (Open Finance)'
+      )
+    } catch (err) {
+      showNotification(
+        'error',
+        err instanceof Error ? err.message : 'Erro ao testar reconexão anti-duplicata'
+      )
+    } finally {
+      setPluggyLoading(false)
+    }
+  }
 
   const handleConnect = async (institution: Institution) => {
     if (!accessToken) return
@@ -110,13 +259,24 @@ function ConnectionsContent() {
     if (!accessToken) return
     setSyncingAccountId(account.id)
     try {
-      const result = await triggerSync(accessToken, account.id)
-      showNotification(
-        'success',
-        `Sync iniciado (${result.accounts_queued} conta${result.accounts_queued > 1 ? 's' : ''}).`
-      )
-      // Refresh after a short delay so the new last_sync_at is visible.
-      setTimeout(fetchLinkedAccounts, 1500)
+      if (account.provider === 'pluggy') {
+        const res = await syncPluggyAccount(accessToken, account.id)
+        showNotification(
+          'success',
+          `Sincronizado (3 camadas): ${res.transactions_inserted} nova(s) · ${res.transactions_skipped_dedup} duplicata(s) evitada(s) · ${res.transactions_reconciled} conciliada(s).`
+        )
+        fetchLinkedAccounts()
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('mony:transactions-updated'))
+        }
+      } else {
+        const result = await triggerSync(accessToken, account.id)
+        showNotification(
+          'success',
+          `Sync iniciado (${result.accounts_queued} conta${result.accounts_queued > 1 ? 's' : ''}).`
+        )
+        setTimeout(fetchLinkedAccounts, 1500)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Erro ao iniciar sync'
       showNotification('error', message)
@@ -130,8 +290,12 @@ function ConnectionsContent() {
     setDisconnecting(true)
     try {
       await unlinkAccount(accessToken, disconnectTarget.id)
-      showNotification('success', 'Conta desvinculada com sucesso.')
+      showNotification(
+        'success',
+        'Conta desvinculada. Se reconectar depois, suas contas e lançamentos não serão duplicados.'
+      )
       fetchLinkedAccounts()
+      fetchPluggyStatus()
     } catch {
       showNotification('error', 'Erro ao desvincular conta.')
     } finally {
@@ -141,80 +305,291 @@ function ConnectionsContent() {
   }
 
   const notificationColors = {
-    success: 'bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-300',
-    error: 'bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-300',
-    warning: 'bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-300',
+    success:
+      'bg-emerald-500/15 border-emerald-500/30 text-emerald-700 dark:text-emerald-300',
+    error: 'bg-rose-500/15 border-rose-500/30 text-rose-700 dark:text-rose-300',
+    warning: 'bg-amber-500/15 border-amber-500/30 text-amber-700 dark:text-amber-300',
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10 space-y-10">
-        {/* Header */}
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
-            Conexões Bancárias
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Conecte suas contas bancárias via Open Finance (sandbox).
-          </p>
+    <div className="min-h-screen py-8 px-4 sm:px-6">
+      <div className="max-w-4xl mx-auto space-y-6">
+        {/* Top bar */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <Link
+              href="/dashboard"
+              className="glass-btn p-2.5 rounded-xl text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              aria-label="Voltar ao Dashboard"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+            <div>
+              <h1 className="text-2xl font-bold text-[var(--text-primary)] tracking-tight flex items-center gap-2">
+                <Building2 className="w-6 h-6 text-[var(--accent)]" />
+                Open Finance &amp; Conexões Bancárias
+              </h1>
+              <p className="text-sm text-[var(--text-secondary)] mt-0.5">
+                Importação automática de contas, cartões e investimentos com motor anti-duplicata em 3 camadas.
+              </p>
+            </div>
+          </div>
+
+          <Link
+            href="/dashboard/investments"
+            className="glass-btn px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center gap-2 text-[var(--text-primary)]"
+          >
+            <TrendingUp className="w-4 h-4 text-[var(--accent)]" />
+            Ir para Investimentos B3
+          </Link>
         </div>
 
         {/* Notification */}
         {notification && (
-          <div className={`border rounded-lg px-4 py-3 text-sm font-medium ${notificationColors[notification.type]}`}>
-            {notification.message}
+          <div
+            className={`glass-card border rounded-2xl px-4 py-3 text-sm font-medium flex items-center gap-2.5 ${notificationColors[notification.type]}`}
+          >
+            <CheckCircle2 className="w-4 h-4 shrink-0" />
+            <span>{notification.message}</span>
           </div>
         )}
 
-        {/* Linked Accounts */}
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">
-            Contas Vinculadas
-          </h2>
-          {loadingAccounts ? (
-            <div className="text-sm text-slate-500 dark:text-slate-400">Carregando...</div>
-          ) : linkedAccounts.length === 0 ? (
-            <div className="text-sm text-slate-500 dark:text-slate-400 p-4 border border-dashed border-slate-300 dark:border-slate-700 rounded-lg text-center">
-              Nenhuma conta vinculada ainda.
+        {/* Pluggy Open Finance Real Hero Panel */}
+        <section className="glass-panel rounded-3xl p-6 space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-[var(--accent-soft)] text-[var(--accent)]">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Pluggy Open Finance Brasil
+                </span>
+                <span
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                    pluggyStatus?.mode === 'live'
+                      ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                      : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'
+                  }`}
+                >
+                  {pluggyStatus?.mode === 'live'
+                    ? 'Modo Live Ativo (Bancos Reais)'
+                    : 'Modo Híbrido Sandbox (Pronto para chaves Live)'}
+                </span>
+              </div>
+              <h2 className="text-lg font-bold text-[var(--text-primary)]">
+                Conecte bancos, cartões e corretoras sem medo de duplicar dados
+              </h2>
+              <p className="text-sm text-[var(--text-secondary)] max-w-2xl">
+                Mesmo se o consentimento expirar ou você desconectar e reconectar o mesmo banco meses depois, o Mony reutiliza a mesma conta via{' '}
+                <code className="text-xs px-1 py-0.5 rounded bg-black/5 dark:bg-white/10">account_fingerprint</code>{' '}
+                e bloqueia qualquer lançamento repetido.
+              </p>
             </div>
-          ) : (
-            linkedAccounts.map((acct) => (
-              <LinkedAccountCard
-                key={acct.id}
-                account={acct}
-                onDisconnect={setDisconnectTarget}
-                onSync={handleSync}
-                syncing={syncingAccountId === acct.id}
-              />
-            ))
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <button
+                onClick={handlePluggyConnect}
+                disabled={pluggyLoading}
+                className="liquid-btn px-4 py-2.5 rounded-2xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50"
+              >
+                <Link2 className="w-4 h-4" />
+                {pluggyLoading
+                  ? 'Conectando...'
+                  : pluggyStatus?.mode === 'live'
+                    ? 'Conectar Banco Real (Pluggy)'
+                    : 'Conectar Banco (Pluggy Sandbox)'}
+              </button>
+
+              {pluggyStatus?.mode !== 'live' && (
+                <button
+                  onClick={handleSimulateReconnect}
+                  disabled={pluggyLoading}
+                  className="glass-btn px-3.5 py-2.5 rounded-2xl text-xs font-semibold flex items-center gap-1.5 text-[var(--text-primary)] disabled:opacity-50"
+                  title="Simula desconectar e reconectar o mesmo banco com novo item_id para comprovar 0 duplicatas"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${pluggyLoading ? 'animate-spin' : ''}`} />
+                  Testar Reconexão (Anti-Duplicata)
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* 3-Layer Deduplication Shield Pills */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="glass-card rounded-2xl p-3.5 flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-500 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-[var(--text-primary)]">
+                  Camada 1 · ID Externo
+                </p>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  Bloqueia instantaneamente o mesmo <code className="text-[10px]">external_id</code> em syncs e webhooks repetidos.
+                </p>
+              </div>
+            </div>
+            <div className="glass-card rounded-2xl p-3.5 flex items-start gap-2.5">
+              <Layers className="w-4 h-4 text-[var(--accent)] mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-[var(--text-primary)]">
+                  Camada 2 · Hash Determinístico
+                </p>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  SHA-256 por conta + data + valor + descrição normalizada protege reconexões com novo <code className="text-[10px]">item_id</code>.
+                </p>
+              </div>
+            </div>
+            <div className="glass-card rounded-2xl p-3.5 flex items-start gap-2.5">
+              <CheckCircle2 className="w-4 h-4 text-sky-500 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-bold text-[var(--text-primary)]">
+                  Camada 3 · Conciliação IA/Manual
+                </p>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-0.5">
+                  Detecta gastos lançados na Mony IA ou manualmente (±2 dias, mesmo valor) e concilia sem duplicar.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Latest Dedup Sync Report */}
+          {lastDedupReport && (
+            <div className="glass-card rounded-2xl p-4 border border-emerald-500/30 bg-emerald-500/5">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-2.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+                  Relatório da Última Sincronização · {lastDedupReport.institution_name}
+                </span>
+                <span className="text-[11px] font-mono text-[var(--text-secondary)]">
+                  item: {lastDedupReport.item_id}
+                </span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-center">
+                <div className="rounded-xl bg-black/5 dark:bg-white/5 p-2">
+                  <div className="text-lg font-bold text-[var(--text-primary)]">
+                    {lastDedupReport.accounts_linked}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">Contas novas</div>
+                </div>
+                <div className="rounded-xl bg-black/5 dark:bg-white/5 p-2">
+                  <div className="text-lg font-bold text-[var(--accent)]">
+                    {lastDedupReport.accounts_reused}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">Reutilizadas</div>
+                </div>
+                <div className="rounded-xl bg-black/5 dark:bg-white/5 p-2">
+                  <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
+                    {lastDedupReport.transactions_inserted}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">Lançamentos novos</div>
+                </div>
+                <div className="rounded-xl bg-black/5 dark:bg-white/5 p-2">
+                  <div className="text-lg font-bold text-amber-600 dark:text-amber-400">
+                    {lastDedupReport.transactions_skipped_dedup}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">Duplicatas evitadas</div>
+                </div>
+                <div className="rounded-xl bg-black/5 dark:bg-white/5 p-2">
+                  <div className="text-lg font-bold text-sky-600 dark:text-sky-400">
+                    {lastDedupReport.transactions_reconciled}
+                  </div>
+                  <div className="text-[11px] text-[var(--text-secondary)]">Conciliadas</div>
+                </div>
+              </div>
+            </div>
           )}
         </section>
 
-        {/* Connect New Account */}
-        <section className="space-y-3">
-          <h2 className="text-lg font-semibold text-slate-800 dark:text-slate-200">
-            Conectar Nova Conta
-          </h2>
-          <input
-            type="text"
-            placeholder="Buscar instituição..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-sm text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          {connectingId && <ConsentLoading institutionName={institutions.find(i => i.id === connectingId)?.name} />}
-          {loadingInstitutions ? (
-            <div className="text-sm text-slate-500 dark:text-slate-400">Carregando instituições...</div>
+        {/* Linked Accounts */}
+        <section className="glass-panel rounded-3xl p-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-[var(--text-primary)]">
+              Contas Vinculadas ({linkedAccounts.length})
+            </h2>
+            <button
+              onClick={fetchLinkedAccounts}
+              className="glass-btn px-3 py-1.5 rounded-xl text-xs font-medium text-[var(--text-secondary)] flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Atualizar
+            </button>
+          </div>
+
+          {loadingAccounts ? (
+            <div className="text-sm text-[var(--text-secondary)] py-4">Carregando...</div>
+          ) : linkedAccounts.length === 0 ? (
+            <div className="text-sm text-[var(--text-secondary)] p-6 border border-dashed border-[var(--glass-border)] rounded-2xl text-center">
+              Nenhuma conta vinculada ainda. Clique em{' '}
+              <strong className="text-[var(--text-primary)]">Conectar Banco</strong> acima para começar.
+            </div>
           ) : (
-            <div className="space-y-2">
-              {institutions.map((inst) => (
-                <InstitutionCard
-                  key={inst.id}
-                  institution={inst}
-                  onConnect={handleConnect}
-                  loading={connectingId === inst.id}
-                />
+            <div className="space-y-2.5">
+              {linkedAccounts.map((acct) => (
+                <div key={acct.id} className="relative">
+                  {acct.provider === 'pluggy' && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-t-lg bg-[var(--accent-soft)] text-[var(--accent)] ml-3">
+                      <ShieldCheck className="w-3 h-3" />
+                      Pluggy · Anti-Duplicata 3 Camadas
+                    </span>
+                  )}
+                  <LinkedAccountCard
+                    account={acct}
+                    onDisconnect={setDisconnectTarget}
+                    onSync={handleSync}
+                    syncing={syncingAccountId === acct.id}
+                  />
+                </div>
               ))}
+            </div>
+          )}
+        </section>
+
+        {/* Legacy / Direct Sandbox Institutions (collapsible) */}
+        <section className="glass-panel rounded-3xl p-6 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-base font-semibold text-[var(--text-primary)]">
+                Conectar Nova Conta (Diretório Open Finance Direto)
+              </h2>
+              <p className="text-xs text-[var(--text-secondary)]">
+                Fluxo OAuth2 legado / sandbox direto por instituição.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowLegacyBanks((v) => !v)}
+              className="glass-btn px-3 py-1.5 rounded-xl text-xs font-medium text-[var(--text-primary)]"
+            >
+              {showLegacyBanks ? 'Ocultar lista' : 'Mostrar instituições'}
+            </button>
+          </div>
+
+          {showLegacyBanks && (
+            <div className="space-y-3 pt-2">
+              <input
+                type="text"
+                placeholder="Buscar instituição..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full px-4 py-2.5 glass-input rounded-xl text-sm"
+              />
+              {connectingId && (
+                <ConsentLoading
+                  institutionName={institutions.find((i) => i.id === connectingId)?.name}
+                />
+              )}
+              {loadingInstitutions ? (
+                <div className="text-sm text-[var(--text-secondary)]">
+                  Carregando instituições...
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {institutions.map((inst) => (
+                    <InstitutionCard
+                      key={inst.id}
+                      institution={inst}
+                      onConnect={handleConnect}
+                      loading={connectingId === inst.id}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </section>

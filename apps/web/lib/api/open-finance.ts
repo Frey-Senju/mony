@@ -36,7 +36,41 @@ export interface LinkedAccount {
   last_sync_at: string | null
   sync_status: 'idle' | 'syncing' | 'error'
   last_sync_error?: string | null
+  provider?: string | null
+  external_item_id?: string | null
   created_at: string
+}
+
+export interface PluggyStatusResponse {
+  provider: string
+  mode: 'live' | 'sandbox'
+  configured: boolean
+  linked_pluggy_accounts: number
+  deduplication_layers: string[]
+}
+
+export interface PluggyConnectTokenResponse {
+  access_token: string
+  mode: 'live' | 'sandbox'
+  message?: string
+}
+
+export interface PluggyLinkItemResponse {
+  item_id: string
+  institution_name: string
+  mode: 'live' | 'sandbox'
+  accounts_linked: number
+  accounts_reused: number
+  transactions_inserted: number
+  transactions_skipped_dedup: number
+  transactions_reconciled: number
+}
+
+export interface PluggySyncResponse {
+  linked_account_id: string
+  transactions_inserted: number
+  transactions_skipped_dedup: number
+  transactions_reconciled: number
 }
 
 export interface SyncTriggerResponse {
@@ -156,6 +190,70 @@ export async function getSyncStatus(
   if (!res.ok) {
     const err = await parseError(res)
     throw new Error(err.error || 'Failed to fetch sync status')
+  }
+  return res.json()
+}
+
+export async function getPluggyStatus(token: string): Promise<PluggyStatusResponse> {
+  const res = await fetch(`${API_URL}/open-finance/pluggy/status`, {
+    headers: authHeaders(token),
+  })
+  if (!res.ok) {
+    const err = await parseError(res)
+    throw new Error(err.error || 'Failed to fetch Pluggy status')
+  }
+  return res.json()
+}
+
+export async function createPluggyConnectToken(
+  token: string,
+  itemId?: string
+): Promise<PluggyConnectTokenResponse> {
+  const res = await fetch(`${API_URL}/open-finance/pluggy/connect-token`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(itemId ? { item_id: itemId } : {}),
+  })
+  if (!res.ok) {
+    const err = await parseError(res)
+    throw new Error(err.error || 'Failed to create Pluggy connect token')
+  }
+  return res.json()
+}
+
+export async function linkPluggyItem(
+  token: string,
+  itemId: string,
+  institutionName?: string,
+  daysBack = 90
+): Promise<PluggyLinkItemResponse> {
+  const res = await fetch(`${API_URL}/open-finance/pluggy/items`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify({
+      item_id: itemId,
+      institution_name: institutionName,
+      days_back: daysBack,
+    }),
+  })
+  if (!res.ok) {
+    const err = await parseError(res)
+    throw new Error(err.error || 'Failed to link Pluggy item')
+  }
+  return res.json()
+}
+
+export async function syncPluggyAccount(
+  token: string,
+  linkedAccountId: string
+): Promise<PluggySyncResponse> {
+  const res = await fetch(`${API_URL}/open-finance/pluggy/sync/${linkedAccountId}`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  })
+  if (!res.ok) {
+    const err = await parseError(res)
+    throw new Error(err.error || 'Failed to sync Pluggy account')
   }
   return res.json()
 }

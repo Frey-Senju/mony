@@ -282,6 +282,7 @@ class Transaction(Base):
     installment_total = Column(Integer, nullable=True)
     statement_month = Column(String(7), nullable=True)  # YYYY-MM billing month
     original_purchase_date = Column(Date, nullable=True)
+    dedup_hash = Column(String(64), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -299,6 +300,7 @@ class Transaction(Base):
         Index("idx_transactions_account_date", "account_id", "transaction_date"),
         Index("idx_transactions_type", "type"),
         Index("idx_transactions_source", "source"),
+        Index("idx_transactions_user_dedup_hash", "user_id", "dedup_hash"),
     )
 
     # Relationships
@@ -623,6 +625,12 @@ class OFLinkedAccount(Base):
     last_sync_error = Column(Text, nullable=True)
     last_sync_attempt_at = Column(DateTime, nullable=True)
 
+    # Real Open Finance aggregator (Pluggy) reconnect-safe identity
+    provider = Column(String(20), nullable=False, default="sandbox")
+    external_item_id = Column(String(200), nullable=True)
+    account_fingerprint = Column(String(128), nullable=True)
+    mony_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
@@ -781,3 +789,108 @@ class RecurringRule(Base):
 
     def __repr__(self):
         return f"<RecurringRule {self.description} {self.amount} day={self.day_of_month}>"
+
+
+class InvestmentAsset(Base):
+    """User's investment asset holding (B3 stocks, FIIs, ETFs, BDRs, Fixed Income, Crypto)."""
+
+    __tablename__ = "investment_assets"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(24), nullable=False)
+    name = Column(String(200), nullable=False)
+    asset_class = Column(String(24), nullable=False, default="stock")  # stock | fii | etf | bdr | fixed_income | crypto
+    sector = Column(String(100), nullable=True)
+    broker = Column(String(100), nullable=True)
+    currency = Column(String(3), nullable=False, default="BRL")
+    quantity = Column(Numeric(18, 6), nullable=False, default=0)
+    average_price = Column(Numeric(15, 4), nullable=False, default=0)
+    indexer = Column(String(20), nullable=True)  # CDI | IPCA | PRE | SELIC
+    indexer_rate = Column(Numeric(8, 4), nullable=True)
+    maturity_date = Column(Date, nullable=True)
+    external_id = Column(String(200), nullable=True)
+    logo_url = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_inv_assets_user_ticker", "user_id", "ticker"),
+        Index("idx_inv_assets_user_class", "user_id", "asset_class"),
+    )
+
+    user = relationship("User")
+    trades = relationship("InvestmentTrade", back_populates="asset", cascade="all, delete-orphan")
+    dividends = relationship("InvestmentDividend", back_populates="asset", cascade="all, delete-orphan")
+
+
+class InvestmentTrade(Base):
+    """Buy, sell, split, or bonus operation on an InvestmentAsset."""
+
+    __tablename__ = "investment_trades"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    asset_id = Column(PG_UUID(as_uuid=True), ForeignKey("investment_assets.id", ondelete="CASCADE"), nullable=False)
+    operation = Column(String(16), nullable=False, default="buy")  # buy | sell | split | bonus
+    trade_date = Column(Date, nullable=False)
+    quantity = Column(Numeric(18, 6), nullable=False)
+    unit_price = Column(Numeric(15, 4), nullable=False, default=0)
+    fees = Column(Numeric(12, 2), nullable=False, default=0)
+    broker = Column(String(100), nullable=True)
+    notes = Column(Text, nullable=True)
+    dedup_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_inv_trades_asset_date", "asset_id", "trade_date"),
+        Index("idx_inv_trades_user_dedup", "user_id", "dedup_hash"),
+    )
+
+    asset = relationship("InvestmentAsset", back_populates="trades")
+
+
+class InvestmentDividend(Base):
+    """Dividends, JCP, and FII yields received or provisioned."""
+
+    __tablename__ = "investment_dividends"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    asset_id = Column(PG_UUID(as_uuid=True), ForeignKey("investment_assets.id", ondelete="CASCADE"), nullable=False)
+    dividend_type = Column(String(24), nullable=False, default="dividend")  # dividend | jcp | fii_yield | amortization
+    ex_date = Column(Date, nullable=True)
+    payment_date = Column(Date, nullable=False)
+    amount_per_share = Column(Numeric(15, 6), nullable=True)
+    total_amount = Column(Numeric(15, 2), nullable=False)
+    notes = Column(Text, nullable=True)
+    dedup_hash = Column(String(64), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("idx_inv_dividends_user_pay", "user_id", "payment_date"),
+        Index("idx_inv_dividends_user_dedup", "user_id", "dedup_hash"),
+    )
+
+    asset = relationship("InvestmentAsset", back_populates="dividends")
+
+
+class MarketQuoteCache(Base):
+    """Shared B3/Market quote & fundamentals cache (15-min TTL)."""
+
+    __tablename__ = "market_quotes_cache"
+
+    ticker = Column(String(24), primary_key=True)
+    name = Column(String(200), nullable=True)
+    price = Column(Numeric(15, 4), nullable=False)
+    previous_close = Column(Numeric(15, 4), nullable=True)
+    change_pct = Column(Numeric(8, 4), nullable=True)
+    dy_12m = Column(Numeric(8, 4), nullable=True)
+    pe_ratio = Column(Numeric(10, 4), nullable=True)
+    pvp_ratio = Column(Numeric(10, 4), nullable=True)
+    sector = Column(String(100), nullable=True)
+    logo_url = Column(Text, nullable=True)
+    source = Column(String(32), nullable=False, default="yahoo")
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
