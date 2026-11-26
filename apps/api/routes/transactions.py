@@ -431,12 +431,13 @@ async def list_transactions(
     type: Optional[TransactionType] = Query(None, description="Filter by transaction type"),
     payment_method: Optional[str] = Query(None, description="Filter by payment method (credit_card, pix, boleto, etc.)"),
     statement_month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="Filter by billing/competency month (YYYY-MM)"),
+    month: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}$", description="Alias for statement_month (YYYY-MM)"),
     start_date: Optional[date] = Query(None, description="Filter transactions from this date"),
     end_date: Optional[date] = Query(None, description="Filter transactions until this date"),
     search: Optional[str] = Query(None, description="Search in description or merchant_name"),
     is_reconciled: Optional[bool] = Query(None, description="Filter by reconciliation status"),
     offset: int = Query(0, ge=0),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(20, ge=1, le=2000),
     order_by: str = Query("-transaction_date", description="Field to sort by (desc: -field)"),
     db: Session = Depends(get_db),
 ):
@@ -461,8 +462,9 @@ async def list_transactions(
     if payment_method:
         query = query.filter(Transaction.payment_method == payment_method)
 
-    if statement_month:
-        query = query.filter(_month_filter_clause(statement_month))
+    effective_month = statement_month or month
+    if effective_month:
+        query = query.filter(_month_filter_clause(effective_month))
 
     if start_date:
         query = query.filter(Transaction.transaction_date >= start_date)

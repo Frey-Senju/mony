@@ -174,13 +174,25 @@ function CashflowContent() {
     if (!token || !selectedYm) return
     setLoadingMonthTxs(true)
     try {
-      const res = await fetch(`${API_URL}/transactions?month=${selectedYm}&page_size=200`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
+      // Fetch EVERY transaction of the selected competency month (paginates automatically if > 1000)
+      const all: EditableTransaction[] = []
+      let offset = 0
+      const batchLimit = 1000
+      let total = Infinity
+      while (all.length < total) {
+        const res = await fetch(
+          `${API_URL}/transactions?statement_month=${encodeURIComponent(selectedYm)}&limit=${batchLimit}&offset=${offset}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        )
+        if (!res.ok) break
         const body = await res.json()
-        setMonthTxs(Array.isArray(body) ? body : body.items || [])
+        const chunk: EditableTransaction[] = Array.isArray(body) ? body : body.items || []
+        total = typeof body?.total === 'number' ? body.total : chunk.length
+        all.push(...chunk)
+        if (chunk.length < batchLimit) break
+        offset += chunk.length
       }
+      setMonthTxs(all)
     } finally {
       setLoadingMonthTxs(false)
     }
@@ -195,10 +207,13 @@ function CashflowContent() {
   }, [loadCashflow])
 
   useEffect(() => {
-    const onRefresh = () => loadCashflow()
+    const onRefresh = () => {
+      loadCashflow()
+      loadMonthTransactions()
+    }
     window.addEventListener('mony:transactions-updated', onRefresh)
     return () => window.removeEventListener('mony:transactions-updated', onRefresh)
-  }, [loadCashflow])
+  }, [loadCashflow, loadMonthTransactions])
 
   const stats = data?.stats
   const realHourValue =
@@ -737,9 +752,17 @@ function CashflowContent() {
         <div className="px-5 py-4 border-b border-white/40 dark:border-white/10 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center flex-wrap gap-2">
                 <Pencil className="w-4 h-4 text-[var(--accent)]" />
                 Planilha Detalhada do Mês ({selectedYm})
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-200/80 dark:bg-white/10 text-slate-700 dark:text-slate-200">
+                  {selectedCategory
+                    ? monthTxs.filter(
+                        (t) => (t.category_name || 'Outros').toLowerCase() === selectedCategory.toLowerCase()
+                      ).length
+                    : monthTxs.length}{' '}
+                  lançamento(s)
+                </span>
                 {selectedCategory && (
                   <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs bg-[var(--accent-soft)] text-[var(--accent)]">
                     {selectedCategory}
@@ -826,7 +849,13 @@ function CashflowContent() {
                           </span>
                           <span className="text-[10px] text-slate-500 inline-flex items-center gap-1">
                             {tx.source === 'open_finance' && <ShieldCheck className="w-3 h-3 text-emerald-500" />}
-                            {tx.source === 'open_finance' ? 'Open Finance' : 'Manual'}
+                            {tx.source === 'open_finance'
+                              ? 'Open Finance'
+                              : tx.source === 'spreadsheet'
+                                ? 'Planilha'
+                                : tx.source === 'copilot'
+                                  ? 'Mony IA'
+                                  : 'Manual'}
                             {tx.user_edited ? ' · Editado' : ''}
                             {tx.installment_number && tx.installment_total
                               ? ` · Parc. ${tx.installment_number}/${tx.installment_total}`
@@ -883,6 +912,27 @@ function CashflowContent() {
                       </tr>
                     ))}
                   </tbody>
+                  <tfoot className="bg-white/55 dark:bg-white/10 font-bold border-t-2 border-white/60 dark:border-white/15">
+                    <tr>
+                      <td colSpan={6} className="px-3 py-3 text-slate-900 dark:text-white">
+                        Total exibido ({visibleTxs.length} lançamento(s)) · Receitas:{' '}
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          {brl(visibleTxs.filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0))}
+                        </span>{' '}
+                        · Despesas:{' '}
+                        <span className="text-rose-600 dark:text-rose-400">
+                          {brl(visibleTxs.filter((t) => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0))}
+                        </span>
+                      </td>
+                      <td className="px-3 py-3 text-right tabular-nums text-slate-900 dark:text-white">
+                        {brl(
+                          visibleTxs.filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0) -
+                            visibleTxs.filter((t) => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0)
+                        )}
+                      </td>
+                      <td />
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             )
