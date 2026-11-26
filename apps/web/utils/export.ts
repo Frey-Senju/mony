@@ -83,11 +83,11 @@ export function exportToJSON(
 export function exportToHTML(transactions: Transaction[], filename: string = 'report.html') {
   const totalIncome = transactions
     .filter((tx) => tx.type === 'income')
-    .reduce((sum, tx) => sum + tx.amount, 0)
+    .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
 
   const totalExpense = transactions
     .filter((tx) => tx.type === 'expense')
-    .reduce((sum, tx) => sum + tx.amount, 0)
+    .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
 
   const balance = totalIncome - totalExpense
 
@@ -246,11 +246,11 @@ function downloadFile(blob: Blob, filename: string) {
 export function generateSummaryReport(transactions: Transaction[]) {
   const totalIncome = transactions
     .filter((tx) => tx.type === 'income')
-    .reduce((sum, tx) => sum + tx.amount, 0)
+    .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
 
   const totalExpense = transactions
     .filter((tx) => tx.type === 'expense')
-    .reduce((sum, tx) => sum + tx.amount, 0)
+    .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
 
   const balance = totalIncome - totalExpense
 
@@ -259,15 +259,16 @@ export function generateSummaryReport(transactions: Transaction[]) {
   transactions.forEach((tx) => {
     const date = new Date(tx.transaction_date)
     const month = date.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' })
+    const amt = Number(tx.amount) || 0
 
     if (!monthlyData[month]) {
       monthlyData[month] = { income: 0, expense: 0 }
     }
 
     if (tx.type === 'income') {
-      monthlyData[month].income += tx.amount
-    } else {
-      monthlyData[month].expense += tx.amount
+      monthlyData[month].income += amt
+    } else if (tx.type === 'expense') {
+      monthlyData[month].expense += amt
     }
   })
 

@@ -124,7 +124,11 @@ export function useTransactions(token?: string) {
         }
 
         const data = await response.json()
-        setTransactions(data.items)
+        const normalized: Transaction[] = (data.items || []).map((item: Transaction) => ({
+          ...item,
+          amount: Number(item.amount) || 0,
+        }))
+        setTransactions(normalized)
         setPagination({ offset, limit, total: data.total })
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Erro ao buscar transações'
@@ -157,7 +161,8 @@ export function useTransactions(token?: string) {
           throw new Error(errBody.detail || `Failed to create transaction: ${response.statusText}`)
         }
 
-        const newTransaction = await response.json()
+        const rawNew = await response.json()
+        const newTransaction: Transaction = { ...rawNew, amount: Number(rawNew.amount) || 0 }
         setTransactions((prev) => [newTransaction, ...prev])
         return newTransaction
       } catch (err) {
@@ -183,7 +188,8 @@ export function useTransactions(token?: string) {
           throw new Error(errBody.detail || `Failed to update transaction: ${response.statusText}`)
         }
 
-        const updated = await response.json()
+        const rawUpdated = await response.json()
+        const updated: Transaction = { ...rawUpdated, amount: Number(rawUpdated.amount) || 0 }
         setTransactions((prev) => prev.map((t) => (t.id === id ? updated : t)))
         return updated
       } catch (err) {

@@ -54,11 +54,12 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
     transactions.forEach((tx) => {
       const date = parseLocalDate(tx.transaction_date)
       const key = date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
+      const amt = Number(tx.amount) || 0
       if (months[key]) {
         if (tx.type === 'expense') {
-          months[key].expense += tx.amount
-        } else {
-          months[key].income += tx.amount
+          months[key].expense += amt
+        } else if (tx.type === 'income') {
+          months[key].income += amt
         }
       }
     })
@@ -90,7 +91,7 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
         const categoryName =
           tx.category_name ||
           (tx.category_id ? categoryMap[tx.category_id] || 'Outros' : 'Sem categoria')
-        categories[categoryName] = (categories[categoryName] || 0) + tx.amount
+        categories[categoryName] = (categories[categoryName] || 0) + (Number(tx.amount) || 0)
       })
 
     return Object.entries(categories)
@@ -116,11 +117,12 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
     transactions.forEach((tx) => {
       const date = parseLocalDate(tx.transaction_date)
       const key = date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
+      const amt = Number(tx.amount) || 0
       if (months[key]) {
         if (tx.type === 'expense') {
-          months[key].expense += tx.amount
-        } else {
-          months[key].income += tx.amount
+          months[key].expense += amt
+        } else if (tx.type === 'income') {
+          months[key].income += amt
         }
       }
     })
@@ -270,36 +272,38 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
           {(() => {
             const totalExpense = transactions
               .filter((tx) => tx.type === 'expense')
-              .reduce((sum, tx) => sum + tx.amount, 0)
+              .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
             const totalIncome = transactions
               .filter((tx) => tx.type === 'income')
-              .reduce((sum, tx) => sum + tx.amount, 0)
+              .reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
             const balance = totalIncome - totalExpense
+            const fmt = (v: number) =>
+              v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
             return (
               <>
-                <div className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 rounded">
+                <div className="flex items-center justify-between gap-2 p-3 bg-red-50 dark:bg-red-900/20 rounded">
                   <span className="text-slate-700 dark:text-slate-300">Total de Despesas</span>
-                  <span className="font-semibold text-red-600 dark:text-red-400">
-                    -R$ {totalExpense.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  <span className="font-semibold tabular-nums whitespace-nowrap text-red-600 dark:text-red-400">
+                    -R$ {fmt(totalExpense)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded">
+                <div className="flex items-center justify-between gap-2 p-3 bg-green-50 dark:bg-green-900/20 rounded">
                   <span className="text-slate-700 dark:text-slate-300">Total de Receitas</span>
-                  <span className="font-semibold text-green-600 dark:text-green-400">
-                    R$ {totalIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  <span className="font-semibold tabular-nums whitespace-nowrap text-green-600 dark:text-green-400">
+                    R$ {fmt(totalIncome)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between p-3 bg-blue-50 dark:bg-blue-900/20 rounded">
+                <div className="flex items-center justify-between gap-2 p-3 bg-blue-50 dark:bg-blue-900/20 rounded">
                   <span className="text-slate-700 dark:text-slate-300">Saldo</span>
                   <span
-                    className={`font-semibold ${
+                    className={`font-semibold tabular-nums whitespace-nowrap ${
                       balance >= 0
                         ? 'text-blue-600 dark:text-blue-400'
                         : 'text-red-600 dark:text-red-400'
                     }`}
                   >
-                    R$ {balance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                    {balance < 0 ? `-R$ ${fmt(Math.abs(balance))}` : `R$ ${fmt(balance)}`}
                   </span>
                 </div>
               </>
