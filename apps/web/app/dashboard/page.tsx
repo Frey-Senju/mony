@@ -15,7 +15,7 @@ import {
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { SummaryCards } from '@/components/dashboard/SummaryCards'
-import { TransactionList } from '@/components/dashboard/TransactionList'
+import { EditableSpreadsheetTable } from '@/components/transactions/EditableSpreadsheetTable'
 import { FilterBar, PAYMENT_METHOD_LABELS } from '@/components/dashboard/FilterBar'
 import { Charts } from '@/components/dashboard/Charts'
 import { TransactionModal } from '@/components/dashboard/TransactionModal'
@@ -61,6 +61,11 @@ const PT_MONTHS = [
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ]
 
+const PT_MONTHS_SHORT = [
+  'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez',
+]
+
 function getCurrentYearMonth(): string {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -98,17 +103,15 @@ function DashboardContent() {
   const {
     transactions,
     loading,
-    pagination,
     fetchTransactions,
     deleteTransaction,
     reconcileTransaction,
-    changePage,
     updateTransaction,
     createTransaction,
     bulkCategorize,
   } = useTransactions(accessToken)
   const { filters, updateMultipleFilters } = useFilter()
-  const { categories } = useCategories(accessToken)
+  const { categories, updateCategory, fetchCategories } = useCategories(accessToken)
   const { budgets } = useBudgets(accessToken)
 
   // Billing / competency month switcher (defaults to current month; can toggle to "all months")
@@ -221,13 +224,13 @@ function DashboardContent() {
   }, [filters, selectedMonth, allMonthsMode])
 
   useEffect(() => {
-    fetchTransactions(buildApiFilters(), 0, 20)
+    fetchTransactions(buildApiFilters(), 0, 1000)
   }, [filters, selectedMonth, allMonthsMode, fetchTransactions, buildApiFilters])
 
   // Auto-refresh when transactions are imported via Mony IA Drawer
   useEffect(() => {
     const onImported = () => {
-      fetchTransactions(buildApiFilters(), 0, 20)
+      fetchTransactions(buildApiFilters(), 0, 1000)
       fetchAccounts()
       setRefreshKey((k) => k + 1)
     }
@@ -257,14 +260,6 @@ function DashboardContent() {
         )
       : 0
 
-  const handleEdit = (id: string) => {
-    const tx = transactions.find((t) => t.id === id)
-    if (tx) {
-      setSelectedTransaction(tx)
-      setIsModalOpen(true)
-    }
-  }
-
   const handleModalSave = async (data: Partial<Transaction>) => {
     try {
       if (selectedTransaction) {
@@ -275,7 +270,7 @@ function DashboardContent() {
       setIsModalOpen(false)
       setSelectedTransaction(undefined)
       setRefreshKey((k) => k + 1)
-      await Promise.all([fetchTransactions(buildApiFilters(), 0, 20), fetchAccounts()])
+      await Promise.all([fetchTransactions(buildApiFilters(), 0, 1000), fetchAccounts()])
     } catch (error) {
       console.error('Failed to save transaction:', error)
       throw error
@@ -326,7 +321,7 @@ function DashboardContent() {
       await bulkCategorize(Array.from(selectedIds), bulkCategoryId)
       setBulkCatModalOpen(false)
       setSelectedIds(new Set())
-      await fetchTransactions(buildApiFilters(), pagination.offset, pagination.limit)
+      await fetchTransactions(buildApiFilters(), 0, 1000)
     } catch (error) {
       console.error('Failed to bulk categorize:', error)
     } finally {
@@ -367,14 +362,6 @@ function DashboardContent() {
 
   const handleDelete = (id: string) => {
     setConfirmState({ mode: 'single', id })
-  }
-
-  const handleReconcile = async (id: string, reconciled: boolean) => {
-    try {
-      await reconcileTransaction(id, reconciled)
-    } catch (error) {
-      console.error('Failed to reconcile transaction:', error)
-    }
   }
 
   const handleSelectMonth = (ym: string) => {
@@ -425,84 +412,132 @@ function DashboardContent() {
             </div>
           </div>
 
-          {/* Billing Competency Month Switcher + Quick Payment Method Pills */}
-          <div className="pt-3 border-t border-white/40 dark:border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-            <div className="flex items-center gap-2 flex-wrap" data-testid="month-switcher">
-              <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-white/55 dark:bg-white/10 border border-white/70 dark:border-white/15">
+          {/* Billing Competency Month Switcher + 12-Month Quick Pills (Cashflow style) */}
+          <div className="pt-3 border-t border-white/40 dark:border-white/10 space-y-3">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap" data-testid="month-switcher">
+                <div className="inline-flex items-center gap-1 p-1 rounded-2xl bg-white/55 dark:bg-white/10 border border-white/70 dark:border-white/15">
+                  <button
+                    type="button"
+                    onClick={() => handleSelectMonth(shiftYearMonth(selectedMonth, -1))}
+                    aria-label="Mês anterior"
+                    className="p-1.5 rounded-xl hover:bg-white/70 dark:hover:bg-white/15 text-slate-700 dark:text-slate-200 transition"
+                  >
+                    <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                  <span className="inline-flex items-center gap-1.5 px-2.5 text-sm font-semibold text-slate-900 dark:text-white min-w-[148px] justify-center">
+                    <Calendar className="w-3.5 h-3.5 opacity-75" aria-hidden="true" />
+                    {formatYearMonthLabel(selectedMonth)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleSelectMonth(shiftYearMonth(selectedMonth, 1))}
+                    aria-label="Próximo mês"
+                    className="p-1.5 rounded-xl hover:bg-white/70 dark:hover:bg-white/15 text-slate-700 dark:text-slate-200 transition"
+                  >
+                    <ChevronRight className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                </div>
+
                 <button
                   type="button"
-                  onClick={() => handleSelectMonth(shiftYearMonth(selectedMonth, -1))}
-                  aria-label="Mês anterior"
-                  className="p-1.5 rounded-xl hover:bg-white/70 dark:hover:bg-white/15 text-slate-700 dark:text-slate-200 transition"
+                  onClick={() => setAllMonthsMode((v) => !v)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
+                    allMonthsMode
+                      ? 'liquid-btn-primary border-transparent'
+                      : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/15 text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/15'
+                  }`}
                 >
-                  <ChevronLeft className="w-4 h-4" aria-hidden="true" />
+                  {allMonthsMode ? 'Vendo: Todos os meses' : 'Ver todos os meses'}
                 </button>
-                <span className="inline-flex items-center gap-1.5 px-2.5 text-sm font-semibold text-slate-900 dark:text-white min-w-[148px] justify-center">
-                  <Calendar className="w-3.5 h-3.5 opacity-75" aria-hidden="true" />
-                  {formatYearMonthLabel(selectedMonth)}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => handleSelectMonth(shiftYearMonth(selectedMonth, 1))}
-                  aria-label="Próximo mês"
-                  className="p-1.5 rounded-xl hover:bg-white/70 dark:hover:bg-white/15 text-slate-700 dark:text-slate-200 transition"
-                >
-                  <ChevronRight className="w-4 h-4" aria-hidden="true" />
-                </button>
+
+                {selectedMonth !== getCurrentYearMonth() && (
+                  <button
+                    type="button"
+                    onClick={() => handleSelectMonth(getCurrentYearMonth())}
+                    className="text-xs font-semibold hover:underline px-1.5"
+                    style={{ color: 'var(--accent)' }}
+                  >
+                    Voltar ao mês atual
+                  </button>
+                )}
               </div>
 
-              <button
-                type="button"
-                onClick={() => setAllMonthsMode((v) => !v)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition border ${
-                  allMonthsMode
-                    ? 'liquid-btn-primary border-transparent'
-                    : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/15 text-slate-700 dark:text-slate-200 hover:bg-white/70 dark:hover:bg-white/15'
-                }`}
-              >
-                {allMonthsMode ? 'Vendo: Todos os meses' : 'Ver todos os meses'}
-              </button>
-
-              {selectedMonth !== getCurrentYearMonth() && (
-                <button
-                  type="button"
-                  onClick={() => handleSelectMonth(getCurrentYearMonth())}
-                  className="text-xs font-semibold hover:underline px-1.5"
-                  style={{ color: 'var(--accent)' }}
-                >
-                  Voltar ao mês atual
-                </button>
+              {/* Clickable Payment Method Breakdown Pills */}
+              {monthSummary && monthSummary.by_payment_method.length > 0 && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {monthSummary.by_payment_method.slice(0, 4).map((row) => {
+                    const active = filters.paymentMethod === row.payment_method
+                    return (
+                      <button
+                        key={row.payment_method}
+                        type="button"
+                        onClick={() =>
+                          updateMultipleFilters({
+                            paymentMethod: active ? 'all' : row.payment_method,
+                          })
+                        }
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition ${
+                          active
+                            ? 'liquid-nav-active border-white/80 dark:border-white/25'
+                            : 'bg-white/50 dark:bg-white/5 border-white/65 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:bg-white/75 dark:hover:bg-white/15'
+                        }`}
+                      >
+                        <CreditCard className="w-3 h-3 opacity-70" aria-hidden="true" />
+                        <span>{PAYMENT_METHOD_LABELS[row.payment_method] || row.payment_method}</span>
+                        <span className="font-bold">{formatBRL(row.total)}</span>
+                      </button>
+                    )
+                  })}
+                </div>
               )}
             </div>
 
-            {/* Clickable Payment Method Breakdown Pills */}
-            {monthSummary && monthSummary.by_payment_method.length > 0 && (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {monthSummary.by_payment_method.slice(0, 4).map((row) => {
-                  const active = filters.paymentMethod === row.payment_method
-                  return (
+            {/* 12-Month Quick Picker Pills (matching Cashflow) */}
+            {(() => {
+              const activeYear = Number(selectedMonth.split('-')[0]) || new Date().getFullYear()
+              return (
+                <div className="flex items-center gap-1.5 flex-wrap" aria-label="Selecionar mês rapidamente">
+                  <div className="inline-flex items-center gap-0.5 mr-1 px-1.5 py-0.5 rounded-full bg-white/55 dark:bg-white/10 border border-white/60 dark:border-white/15 text-xs font-bold text-slate-700 dark:text-slate-200">
                     <button
-                      key={row.payment_method}
                       type="button"
-                      onClick={() =>
-                        updateMultipleFilters({
-                          paymentMethod: active ? 'all' : row.payment_method,
-                        })
-                      }
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition ${
-                        active
-                          ? 'liquid-nav-active border-white/80 dark:border-white/25'
-                          : 'bg-white/50 dark:bg-white/5 border-white/65 dark:border-white/10 text-slate-700 dark:text-slate-200 hover:bg-white/75 dark:hover:bg-white/15'
-                      }`}
+                      onClick={() => handleSelectMonth(`${activeYear - 1}-${selectedMonth.slice(5, 7)}`)}
+                      aria-label="Ano anterior"
+                      className="p-0.5 hover:opacity-75"
                     >
-                      <CreditCard className="w-3 h-3 opacity-70" aria-hidden="true" />
-                      <span>{PAYMENT_METHOD_LABELS[row.payment_method] || row.payment_method}</span>
-                      <span className="font-bold">{formatBRL(row.total)}</span>
+                      <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
                     </button>
-                  )
-                })}
-              </div>
-            )}
+                    <span className="px-1 tabular-nums">{activeYear}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleSelectMonth(`${activeYear + 1}-${selectedMonth.slice(5, 7)}`)}
+                      aria-label="Próximo ano"
+                      className="p-0.5 hover:opacity-75"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                  {PT_MONTHS_SHORT.map((label, idx) => {
+                    const ym = `${activeYear}-${String(idx + 1).padStart(2, '0')}`
+                    const isActive = !allMonthsMode && selectedMonth === ym
+                    return (
+                      <button
+                        key={ym}
+                        type="button"
+                        onClick={() => handleSelectMonth(ym)}
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold transition border ${
+                          isActive
+                            ? 'liquid-btn-primary border-transparent shadow-sm'
+                            : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300 hover:bg-white/75 dark:hover:bg-white/15'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })()}
           </div>
         </header>
 
@@ -596,23 +631,44 @@ function DashboardContent() {
           />
         </section>
 
-        {/* Transaction List */}
+        {/* Transaction Spreadsheet (All rows on 1 page · Separated Income/Expenses · Click-anywhere inline edit) */}
         <section aria-labelledby="transactions-heading">
-          <div className="flex items-center justify-between mb-4">
-            <h2 id="transactions-heading" className="text-lg font-semibold text-slate-900 dark:text-white">
-              Transações {!allMonthsMode ? `· ${formatYearMonthLabel(selectedMonth)}` : '(Todos os meses)'}
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
+            <h2 id="transactions-heading" className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
+              Planilha de Transações {!allMonthsMode ? `· ${formatYearMonthLabel(selectedMonth)}` : '(Todos os meses)'}
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-white/60 dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-white/60 dark:border-white/15">
+                {transactions.length} lançamento(s)
+              </span>
             </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Clique direto em qualquer texto, valor, data ou categoria para editar na hora
+            </p>
           </div>
-          <TransactionList
+          <EditableSpreadsheetTable
+            token={accessToken || ''}
             transactions={transactions}
+            accounts={accounts}
+            categories={categories}
+            loading={loading}
+            onRefresh={async () => {
+              setRefreshKey((k) => k + 1)
+              await Promise.all([
+                fetchTransactions(buildApiFilters(), 0, 1000),
+                fetchAccounts(),
+                fetchCategories(),
+              ])
+            }}
+            onUpdateCategory={updateCategory}
+            onOpenFullModal={(tx) => {
+              const found = transactions.find((t) => t.id === tx.id)
+              if (found) {
+                setSelectedTransaction(found)
+                setIsModalOpen(true)
+              }
+            }}
+            onDelete={handleDelete}
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
-            onEdit={handleEdit}
-            onDelete={handleDelete}
-            onReconcile={handleReconcile}
-            loading={loading}
-            pagination={pagination}
-            onPaginationChange={changePage}
           />
         </section>
       </div>
@@ -642,7 +698,7 @@ function DashboardContent() {
           onSaved={async () => {
             setRefreshKey((k) => k + 1)
             dispatchToast('Transação atualizada com sucesso!', 'success')
-            await Promise.all([fetchTransactions(buildApiFilters(), 0, 20), fetchAccounts()])
+            await Promise.all([fetchTransactions(buildApiFilters(), 0, 1000), fetchAccounts()])
           }}
         />
       ) : (

@@ -57,7 +57,7 @@ export function useTransactions(token?: string) {
   const [error, setError] = useState<string | null>(null)
   const [pagination, setPagination] = useState<PaginationState>({
     offset: 0,
-    limit: 20,
+    limit: 1000,
     total: 0,
   })
 
@@ -139,7 +139,7 @@ export function useTransactions(token?: string) {
 
   useEffect(() => {
     if (token) {
-      fetchTransactions({}, 0, 20)
+      fetchTransactions({}, 0, 1000)
     }
   }, [token]) // eslint-disable-line react-hooks/exhaustive-deps
 

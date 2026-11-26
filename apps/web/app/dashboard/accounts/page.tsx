@@ -611,16 +611,17 @@ function AccountsContent() {
                       </p>
                     </div>
                   </div>
-                  {!cat.is_default && !cat.is_system && (
-                    <div className="flex items-center gap-1 shrink-0">
-                      <button
-                        type="button"
-                        onClick={() => openEditCategory(cat)}
-                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
-                        aria-label={`Editar categoria ${cat.name}`}
-                      >
-                        <Pencil className="w-4 h-4" aria-hidden="true" />
-                      </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => openEditCategory(cat)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+                      aria-label={`Editar categoria ${cat.name}`}
+                      title="Personalizar nome, cor e emoji"
+                    >
+                      <Pencil className="w-4 h-4" aria-hidden="true" />
+                    </button>
+                    {!cat.is_default && !cat.is_system && (
                       <button
                         type="button"
                         onClick={() => deleteCategory(cat.id)}
@@ -629,8 +630,8 @@ function AccountsContent() {
                       >
                         <Trash2 className="w-4 h-4" aria-hidden="true" />
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

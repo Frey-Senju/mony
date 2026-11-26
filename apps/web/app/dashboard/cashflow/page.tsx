@@ -23,7 +23,6 @@ import {
   PieChart as PieIcon,
   Pencil,
   X,
-  ShieldCheck,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -33,6 +32,7 @@ import {
   UniversalEditTransactionModal,
   type EditableTransaction,
 } from '@/components/transactions/UniversalEditTransactionModal'
+import { EditableSpreadsheetTable } from '@/components/transactions/EditableSpreadsheetTable'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const STORAGE_KEY = 'mony_cashflow_prefs_v1'
@@ -95,7 +95,7 @@ export default function CashflowPage() {
 function CashflowContent() {
   const { tokens } = useAuth()
   const token = tokens?.access_token
-  const { categories: userCategories } = useCategories(token)
+  const { categories: userCategories, updateCategory, fetchCategories } = useCategories(token)
 
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [data, setData] = useState<CashflowResponse | null>(null)
@@ -777,7 +777,7 @@ function CashflowContent() {
                 )}
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Clique em qualquer mês ou célula da matriz acima e edite todos os campos — a origem do Open Finance e a proteção anti-duplicata são mantidas intactas.
+                Clique direto em qualquer texto, valor, data, conta ou categoria para editar na hora — entradas e saídas sempre separadas.
               </p>
             </div>
           </div>
@@ -804,140 +804,27 @@ function CashflowContent() {
           </div>
         </div>
 
-        {loadingMonthTxs ? (
-          <div className="p-8 text-sm text-slate-500">Carregando lançamentos de {selectedYm}...</div>
-        ) : (
-          (() => {
-            const visibleTxs = selectedCategory
-              ? monthTxs.filter(
-                  (t) => (t.category_name || 'Outros').toLowerCase() === selectedCategory.toLowerCase()
-                )
-              : monthTxs
-            const acctNameById = Object.fromEntries(accounts.map((a) => [a.id, a.name]))
-            if (visibleTxs.length === 0) {
-              return (
-                <div className="p-8 text-center text-xs text-slate-500">
-                  Nenhum lançamento encontrado em {selectedYm}
-                  {selectedCategory ? ` para a categoria ${selectedCategory}` : ''}.
-                </div>
-              )
+        <div className="p-4">
+          <EditableSpreadsheetTable
+            token={token || ''}
+            transactions={
+              selectedCategory
+                ? monthTxs.filter(
+                    (t) => (t.category_name || 'Outros').toLowerCase() === selectedCategory.toLowerCase()
+                  )
+                : monthTxs
             }
-            return (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-white/45 dark:bg-white/5 border-b border-white/40 dark:border-white/10 text-slate-500 uppercase tracking-wider">
-                      <th className="px-3 py-2.5 text-left">Data</th>
-                      <th className="px-3 py-2.5 text-left">Descrição</th>
-                      <th className="px-3 py-2.5 text-left">Categoria</th>
-                      <th className="px-3 py-2.5 text-left">Conta / Cartão</th>
-                      <th className="px-3 py-2.5 text-center">Competência</th>
-                      <th className="px-3 py-2.5 text-center">Tipo</th>
-                      <th className="px-3 py-2.5 text-right">Valor</th>
-                      <th className="px-3 py-2.5 text-right">Editar</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/25 dark:divide-white/5">
-                    {visibleTxs.map((tx) => (
-                      <tr key={tx.id} className="hover:bg-white/35 dark:hover:bg-white/5">
-                        <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
-                          {tx.transaction_date.slice(8, 10)}/{tx.transaction_date.slice(5, 7)}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <span className="font-semibold text-slate-900 dark:text-white block max-w-[240px] truncate">
-                            {tx.description}
-                          </span>
-                          <span className="text-[10px] text-slate-500 inline-flex items-center gap-1">
-                            {tx.source === 'open_finance' && <ShieldCheck className="w-3 h-3 text-emerald-500" />}
-                            {tx.source === 'open_finance'
-                              ? 'Open Finance'
-                              : tx.source === 'spreadsheet'
-                                ? 'Planilha'
-                                : tx.source === 'copilot'
-                                  ? 'Mony IA'
-                                  : 'Manual'}
-                            {tx.user_edited ? ' · Editado' : ''}
-                            {tx.installment_number && tx.installment_total
-                              ? ` · Parc. ${tx.installment_number}/${tx.installment_total}`
-                              : ''}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2.5">{tx.category_name || 'Outros'}</td>
-                        <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300">
-                          {acctNameById[tx.account_id] || 'Conta'}
-                        </td>
-                        <td className="px-3 py-2.5 text-center font-mono text-[11px]">
-                          {tx.statement_month || tx.transaction_date.slice(0, 7)}
-                        </td>
-                        <td className="px-3 py-2.5 text-center">
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                              tx.type === 'income'
-                                ? 'bg-emerald-500/15 text-emerald-600'
-                                : tx.type === 'transfer'
-                                  ? 'bg-sky-500/15 text-sky-600'
-                                  : 'bg-rose-500/15 text-rose-600'
-                            }`}
-                          >
-                            {tx.type === 'income'
-                              ? 'Receita'
-                              : tx.type === 'transfer'
-                                ? 'Transf.'
-                                : tx.type === 'refund'
-                                  ? 'Estorno'
-                                  : 'Despesa'}
-                          </span>
-                        </td>
-                        <td
-                          className={`px-3 py-2.5 text-right tabular-nums font-bold ${
-                            tx.type === 'income'
-                              ? 'text-emerald-600 dark:text-emerald-400'
-                              : tx.type === 'transfer'
-                                ? 'text-sky-600 dark:text-sky-400'
-                                : 'text-rose-600 dark:text-rose-400'
-                          }`}
-                        >
-                          {brl(Number(tx.amount))}
-                        </td>
-                        <td className="px-3 py-2.5 text-right">
-                          <button
-                            type="button"
-                            onClick={() => setEditingTx(tx)}
-                            className="liquid-btn liquid-btn-glass px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1"
-                          >
-                            <Pencil className="w-3 h-3" />
-                            Editar
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-white/55 dark:bg-white/10 font-bold border-t-2 border-white/60 dark:border-white/15">
-                    <tr>
-                      <td colSpan={6} className="px-3 py-3 text-slate-900 dark:text-white">
-                        Total exibido ({visibleTxs.length} lançamento(s)) · Receitas:{' '}
-                        <span className="text-emerald-600 dark:text-emerald-400">
-                          {brl(visibleTxs.filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0))}
-                        </span>{' '}
-                        · Despesas:{' '}
-                        <span className="text-rose-600 dark:text-rose-400">
-                          {brl(visibleTxs.filter((t) => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0))}
-                        </span>
-                      </td>
-                      <td className="px-3 py-3 text-right tabular-nums text-slate-900 dark:text-white">
-                        {brl(
-                          visibleTxs.filter((t) => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0) -
-                            visibleTxs.filter((t) => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0)
-                        )}
-                      </td>
-                      <td />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )
-          })()
-        )}
+            accounts={accounts}
+            categories={userCategories}
+            loading={loadingMonthTxs}
+            emptyLabel={`Nenhum lançamento encontrado em ${selectedYm}${selectedCategory ? ` para a categoria ${selectedCategory}` : ''}.`}
+            onRefresh={async () => {
+              await Promise.all([loadCashflow(), loadMonthTransactions(), fetchCategories()])
+            }}
+            onUpdateCategory={updateCategory}
+            onOpenFullModal={(tx) => setEditingTx(tx)}
+          />
+        </div>
       </section>
 
       {editingTx && token && (
