@@ -8,6 +8,7 @@ from slowapi.util import get_remote_address
 
 from routes.accounts import router as accounts_router
 from routes.ai import router as ai_router
+from routes.ai_review import router as ai_review_router
 from routes.auth import router as auth_router
 from routes.budgets import router as budgets_router
 from routes.categories import router as categories_router
@@ -83,8 +84,9 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
-# Register routers
+# Register routers (ai_review_router before accounts/budgets so static paths like /accounts/audit & /budgets/ai-suggestions resolve first)
 app.include_router(auth_router)
+app.include_router(ai_review_router)
 app.include_router(accounts_router)
 app.include_router(categories_router)
 app.include_router(transactions_router)

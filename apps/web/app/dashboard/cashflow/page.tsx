@@ -21,9 +21,18 @@ import {
   ChevronRight,
   Table2,
   PieChart as PieIcon,
+  Pencil,
+  X,
+  ShieldCheck,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
+import { useCategories } from '@/hooks/useCategories'
+import { AISuggestionsBanner } from '@/components/ai/AISuggestionsBanner'
+import {
+  UniversalEditTransactionModal,
+  type EditableTransaction,
+} from '@/components/transactions/UniversalEditTransactionModal'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const STORAGE_KEY = 'mony_cashflow_prefs_v1'
@@ -86,10 +95,22 @@ export default function CashflowPage() {
 function CashflowContent() {
   const { tokens } = useAuth()
   const token = tokens?.access_token
+  const { categories: userCategories } = useCategories(token)
 
   const [year, setYear] = useState(() => new Date().getFullYear())
   const [data, setData] = useState<CashflowResponse | null>(null)
   const [loading, setLoading] = useState(true)
+
+  // Story 5.2: Month-by-Month Spreadsheet Drilldown & Universal Editing
+  const [selectedYm, setSelectedYm] = useState<string>(() => {
+    const d = new Date()
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  })
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
+  const [monthTxs, setMonthTxs] = useState<EditableTransaction[]>([])
+  const [loadingMonthTxs, setLoadingMonthTxs] = useState(false)
+  const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([])
+  const [editingTx, setEditingTx] = useState<EditableTransaction | null>(null)
 
   // Editable spreadsheet KPIs persisted locally
   const [workHours, setWorkHours] = useState(220)
@@ -129,16 +150,45 @@ function CashflowContent() {
     if (!token) return
     setLoading(true)
     try {
-      const res = await fetch(`${API_URL}/reports/cashflow?year=${year}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        setData(await res.json())
+      const [cfRes, acctRes] = await Promise.all([
+        fetch(`${API_URL}/reports/cashflow?year=${year}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_URL}/accounts`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
+      if (cfRes.ok) {
+        setData(await cfRes.json())
+      }
+      if (acctRes.ok) {
+        const list = await acctRes.json()
+        setAccounts(Array.isArray(list) ? list : list.items || [])
       }
     } finally {
       setLoading(false)
     }
   }, [token, year])
+
+  const loadMonthTransactions = useCallback(async () => {
+    if (!token || !selectedYm) return
+    setLoadingMonthTxs(true)
+    try {
+      const res = await fetch(`${API_URL}/transactions?month=${selectedYm}&page_size=200`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const body = await res.json()
+        setMonthTxs(Array.isArray(body) ? body : body.items || [])
+      }
+    } finally {
+      setLoadingMonthTxs(false)
+    }
+  }, [token, selectedYm])
+
+  useEffect(() => {
+    loadMonthTransactions()
+  }, [loadMonthTransactions])
 
   useEffect(() => {
     loadCashflow()
@@ -568,15 +618,34 @@ function CashflowContent() {
                 {data.months.map((m) => (
                   <tr key={m.month} className="hover:bg-white/40 dark:hover:bg-white/5">
                     <td className="px-3 py-2 font-semibold text-slate-900 dark:text-white sticky left-0 bg-white/75 dark:bg-slate-900/75 backdrop-blur">
-                      {m.label}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedYm(m.ym)
+                          setSelectedCategory(null)
+                        }}
+                        className={`hover:underline text-left ${
+                          selectedYm === m.ym ? 'text-[var(--accent)] font-extrabold' : ''
+                        }`}
+                      >
+                        {m.label}
+                      </button>
                     </td>
                     {data.categories.map((cat) => {
                       const val = m.by_category[cat] || 0
                       const intensity = val > 0 ? Math.min(0.32, (val / maxCatCell) * 0.34) : 0
+                      const isSel = selectedYm === m.ym && selectedCategory === cat
                       return (
                         <td
                           key={cat}
-                          className="px-3 py-2 text-right tabular-nums text-slate-800 dark:text-slate-200 whitespace-nowrap"
+                          onClick={() => {
+                            setSelectedYm(m.ym)
+                            setSelectedCategory(cat)
+                          }}
+                          title={`Clique para abrir e editar lançamentos de ${cat} em ${m.label}`}
+                          className={`px-3 py-2 text-right tabular-nums text-slate-800 dark:text-slate-200 whitespace-nowrap cursor-pointer transition hover:ring-2 hover:ring-inset hover:ring-[var(--accent)] ${
+                            isSel ? 'ring-2 ring-inset ring-[var(--accent)] font-bold' : ''
+                          }`}
                           style={
                             intensity > 0
                               ? { backgroundColor: `rgba(244, 63, 94, ${intensity.toFixed(3)})` }
@@ -587,7 +656,13 @@ function CashflowContent() {
                         </td>
                       )
                     })}
-                    <td className="px-3 py-2 text-right tabular-nums font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                    <td
+                      onClick={() => {
+                        setSelectedYm(m.ym)
+                        setSelectedCategory(null)
+                      }}
+                      className="px-3 py-2 text-right tabular-nums font-bold text-slate-900 dark:text-white whitespace-nowrap cursor-pointer hover:underline"
+                    >
                       {brl(m.expenses)}
                     </td>
                   </tr>
@@ -646,6 +721,192 @@ function CashflowContent() {
           </div>
         )}
       </section>
+
+      {/* Story 5.3: Proactive AI Review Banner for Transactions & Invoice Months */}
+      <AISuggestionsBanner
+        module="transactions"
+        title="Revisão Proativa IA · Transações, Faturas & Transferências"
+        onApplied={() => {
+          loadCashflow()
+          loadMonthTransactions()
+        }}
+      />
+
+      {/* Story 5.2: Month-by-Month Editable Spreadsheet Detail View */}
+      <section className="glass-card overflow-hidden" aria-label="Detalhamento editável mês a mês">
+        <div className="px-5 py-4 border-b border-white/40 dark:border-white/10 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Pencil className="w-4 h-4 text-[var(--accent)]" />
+                Planilha Detalhada do Mês ({selectedYm})
+                {selectedCategory && (
+                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs bg-[var(--accent-soft)] text-[var(--accent)]">
+                    {selectedCategory}
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCategory(null)}
+                      aria-label="Limpar filtro de categoria"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                )}
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Clique em qualquer mês ou célula da matriz acima e edite todos os campos — a origem do Open Finance e a proteção anti-duplicata são mantidas intactas.
+              </p>
+            </div>
+          </div>
+
+          {/* 12-Month Quick Switcher */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {(data?.months || []).map((m) => (
+              <button
+                key={m.ym}
+                type="button"
+                onClick={() => {
+                  setSelectedYm(m.ym)
+                  setSelectedCategory(null)
+                }}
+                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition border ${
+                  selectedYm === m.ym
+                    ? 'liquid-btn-primary border-transparent'
+                    : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300'
+                }`}
+              >
+                {m.short_label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loadingMonthTxs ? (
+          <div className="p-8 text-sm text-slate-500">Carregando lançamentos de {selectedYm}...</div>
+        ) : (
+          (() => {
+            const visibleTxs = selectedCategory
+              ? monthTxs.filter(
+                  (t) => (t.category_name || 'Outros').toLowerCase() === selectedCategory.toLowerCase()
+                )
+              : monthTxs
+            const acctNameById = Object.fromEntries(accounts.map((a) => [a.id, a.name]))
+            if (visibleTxs.length === 0) {
+              return (
+                <div className="p-8 text-center text-xs text-slate-500">
+                  Nenhum lançamento encontrado em {selectedYm}
+                  {selectedCategory ? ` para a categoria ${selectedCategory}` : ''}.
+                </div>
+              )
+            }
+            return (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-white/45 dark:bg-white/5 border-b border-white/40 dark:border-white/10 text-slate-500 uppercase tracking-wider">
+                      <th className="px-3 py-2.5 text-left">Data</th>
+                      <th className="px-3 py-2.5 text-left">Descrição</th>
+                      <th className="px-3 py-2.5 text-left">Categoria</th>
+                      <th className="px-3 py-2.5 text-left">Conta / Cartão</th>
+                      <th className="px-3 py-2.5 text-center">Competência</th>
+                      <th className="px-3 py-2.5 text-center">Tipo</th>
+                      <th className="px-3 py-2.5 text-right">Valor</th>
+                      <th className="px-3 py-2.5 text-right">Editar</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/25 dark:divide-white/5">
+                    {visibleTxs.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-white/35 dark:hover:bg-white/5">
+                        <td className="px-3 py-2.5 tabular-nums whitespace-nowrap">
+                          {tx.transaction_date.slice(8, 10)}/{tx.transaction_date.slice(5, 7)}
+                        </td>
+                        <td className="px-3 py-2.5">
+                          <span className="font-semibold text-slate-900 dark:text-white block max-w-[240px] truncate">
+                            {tx.description}
+                          </span>
+                          <span className="text-[10px] text-slate-500 inline-flex items-center gap-1">
+                            {tx.source === 'open_finance' && <ShieldCheck className="w-3 h-3 text-emerald-500" />}
+                            {tx.source === 'open_finance' ? 'Open Finance' : 'Manual'}
+                            {tx.user_edited ? ' · Editado' : ''}
+                            {tx.installment_number && tx.installment_total
+                              ? ` · Parc. ${tx.installment_number}/${tx.installment_total}`
+                              : ''}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2.5">{tx.category_name || 'Outros'}</td>
+                        <td className="px-3 py-2.5 text-slate-600 dark:text-slate-300">
+                          {acctNameById[tx.account_id] || 'Conta'}
+                        </td>
+                        <td className="px-3 py-2.5 text-center font-mono text-[11px]">
+                          {tx.statement_month || tx.transaction_date.slice(0, 7)}
+                        </td>
+                        <td className="px-3 py-2.5 text-center">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                              tx.type === 'income'
+                                ? 'bg-emerald-500/15 text-emerald-600'
+                                : tx.type === 'transfer'
+                                  ? 'bg-sky-500/15 text-sky-600'
+                                  : 'bg-rose-500/15 text-rose-600'
+                            }`}
+                          >
+                            {tx.type === 'income'
+                              ? 'Receita'
+                              : tx.type === 'transfer'
+                                ? 'Transf.'
+                                : tx.type === 'refund'
+                                  ? 'Estorno'
+                                  : 'Despesa'}
+                          </span>
+                        </td>
+                        <td
+                          className={`px-3 py-2.5 text-right tabular-nums font-bold ${
+                            tx.type === 'income'
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : tx.type === 'transfer'
+                                ? 'text-sky-600 dark:text-sky-400'
+                                : 'text-rose-600 dark:text-rose-400'
+                          }`}
+                        >
+                          {brl(Number(tx.amount))}
+                        </td>
+                        <td className="px-3 py-2.5 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setEditingTx(tx)}
+                            className="liquid-btn liquid-btn-glass px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1"
+                          >
+                            <Pencil className="w-3 h-3" />
+                            Editar
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          })()
+        )}
+      </section>
+
+      {editingTx && token && (
+        <UniversalEditTransactionModal
+          token={token}
+          transaction={editingTx}
+          accounts={accounts}
+          categories={
+            userCategories.length > 0
+              ? userCategories.map((c) => c.name)
+              : ['Alimentação', 'Transporte', 'Moradia', 'Saúde', 'Lazer', 'Educação', 'Vestuário', 'Viagem', 'Trabalho', 'Outros']
+          }
+          onClose={() => setEditingTx(null)}
+          onSaved={() => {
+            loadCashflow()
+            loadMonthTransactions()
+          }}
+        />
+      )}
     </div>
   )
 }

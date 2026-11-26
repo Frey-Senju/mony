@@ -37,6 +37,7 @@ interface RecurringRule {
   day_of_month: number
   is_active: boolean
   auto_create: boolean
+  source?: string
   last_generated_month?: string | null
   generated_this_month: boolean
   next_due_date: string
@@ -85,6 +86,7 @@ function RecurringContent() {
   const [accounts, setAccounts] = useState<AccountOption[]>([])
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
+  const [detecting, setDetecting] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -209,6 +211,31 @@ function RecurringContent() {
     }
   }
 
+  const handleDetectRecurrences = async () => {
+    if (!token) return
+    setDetecting(true)
+    setError(null)
+    try {
+      const res = await fetch(`${API_URL}/recurring/detect`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Falha ao detectar recorrências automaticamente')
+      const data = await res.json()
+      const count = Number(data.detected_and_registered ?? data.detected_count ?? 0)
+      setBanner(
+        count > 0
+          ? `${count} recorrência(s) detectada(s) e cadastrada(s) automaticamente pela IA!`
+          : 'Nenhuma nova recorrência detectada no seu histórico recente (todas já estão cadastradas).'
+      )
+      await loadData()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erro ao detectar recorrências')
+    } finally {
+      setDetecting(false)
+    }
+  }
+
   const handleGenerateAll = async () => {
     if (!token) return
     setGenerating(true)
@@ -309,6 +336,15 @@ function RecurringContent() {
         </div>
 
         <div className="flex items-center gap-2.5 flex-wrap">
+          <button
+            type="button"
+            onClick={handleDetectRecurrences}
+            disabled={detecting}
+            className="liquid-btn liquid-btn-glass inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+          >
+            <Sparkles className="w-4 h-4 text-violet-600 dark:text-violet-400" aria-hidden="true" />
+            {detecting ? 'Analisando histórico...' : 'Detectar Recorrências (IA)'}
+          </button>
           {summary.pending_this_month_count > 0 && (
             <button
               type="button"
@@ -435,6 +471,12 @@ function RecurringContent() {
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
                       {rule.description}
                     </h3>
+                    {rule.source === 'ai_detected' && (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-100/80 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
+                        <Sparkles className="w-3 h-3" aria-hidden="true" />
+                        Auto-detectada (IA)
+                      </span>
+                    )}
                     {!rule.is_active ? (
                       <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-slate-200/80 dark:bg-white/10 text-slate-600 dark:text-slate-300">
                         Pausada

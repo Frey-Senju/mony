@@ -48,6 +48,7 @@ from services.ai_analyzer import (
     get_active_ai_provider,
     parse_voice_transaction,
 )
+from services.ai_review_engine import run_proactive_review
 from services.rules_engine import (
     is_internal_transfer_text,
     load_active_rules,
@@ -354,6 +355,7 @@ async def import_analyzed_transactions(
             },
         )
         db.add(receipt)
+        run_proactive_review(db, uid, lookback_days=60)
     db.commit()
 
     return {

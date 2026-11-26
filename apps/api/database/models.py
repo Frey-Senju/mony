@@ -193,6 +193,8 @@ class Account(Base):
     color = Column(String(7))
     is_default = Column(Boolean, default=False)
     sort_order = Column(Float)
+    user_edited = Column(Boolean, default=False, nullable=False)
+    origin_metadata = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
@@ -283,6 +285,9 @@ class Transaction(Base):
     statement_month = Column(String(7), nullable=True)  # YYYY-MM billing month
     original_purchase_date = Column(Date, nullable=True)
     dedup_hash = Column(String(64), nullable=True)
+    user_edited = Column(Boolean, default=False, nullable=False)
+    origin_metadata = Column(JSON, nullable=True)
+    ai_reviewed_at = Column(DateTime, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -774,6 +779,8 @@ class RecurringRule(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     auto_create = Column(Boolean, nullable=False, default=True)
     last_generated_month = Column(String(7), nullable=True)  # YYYY-MM
+    source = Column(String(24), nullable=False, default="manual")
+    detection_signature = Column(String(120), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     deleted_at = Column(DateTime, nullable=True)
@@ -956,6 +963,9 @@ class CreditCard(Base):
     due_day = Column(Integer, nullable=False, default=17)
     color = Column(String(24), nullable=False, default="#6366f1")
     is_active = Column(Boolean, nullable=False, default=True)
+    user_edited = Column(Boolean, nullable=False, default=False)
+    external_account_id = Column(String(200), nullable=True)
+    pluggy_balance = Column(Numeric(15, 2), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     deleted_at = Column(DateTime, nullable=True)
@@ -988,6 +998,35 @@ class PushSubscription(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "endpoint", name="uq_push_sub_user_endpoint"),
         Index("idx_push_sub_user_active", "user_id", "is_active"),
+    )
+
+    user = relationship("User")
+
+
+class AISuggestion(Base):
+    """Proactive AI review suggestion (transactions, invoice month, self-transfer, cards, budgets, accounts/categories)."""
+
+    __tablename__ = "ai_suggestions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    suggestion_type = Column(String(40), nullable=False)  # tx_divergence | invoice_month | self_transfer | recurrence | budget_recommendation | card_inconsistency | account_audit | category_missing
+    module = Column(String(24), nullable=False, default="transactions")  # transactions | cards | budgets | accounts | categories | recurring
+    target_entity_type = Column(String(32), nullable=True)  # transaction | credit_card | account | budget | category
+    target_entity_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    title = Column(String(200), nullable=False)
+    reason = Column(Text, nullable=False)
+    current_snapshot = Column(JSON, nullable=True)
+    proposed_patch = Column(JSON, nullable=False)
+    confidence = Column(Numeric(4, 2), nullable=False, default=0.85)
+    status = Column(String(16), nullable=False, default="pending")  # pending | applied | dismissed
+    dedup_key = Column(String(140), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedup_key", name="uq_ai_suggestions_user_dedup"),
+        Index("idx_ai_suggestions_user_status", "user_id", "status", "module"),
     )
 
     user = relationship("User")

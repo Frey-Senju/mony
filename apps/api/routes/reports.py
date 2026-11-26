@@ -596,3 +596,206 @@ async def get_annual_cashflow(
         },
         "current_reserve_balance": current_reserve,
     }
+
+
+@router.get("/analytics")
+async def get_reports_analytics(
+    year: Optional[int] = Query(default=None, ge=2000, le=2100),
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Rich analytics dataset for Reports 2.0 (Story 5.8):
+      1. 12-month cashflow (income vs expenses vs net)
+      2. 6-month category evolution (stacked area)
+      3. Payment method & Account breakdown for selected month
+      4. Day-of-week spending heatmap (Mon-Sun)
+      5. Top 10 merchants
+      6. Month-over-Month & 3-month average delta per category
+      7. Crisp Portuguese AI executive summary
+    """
+    from collections import defaultdict
+    from sqlalchemy.orm import joinedload
+    from database.models import TransactionCategory
+
+    uid = UUID(user_id)
+    today = date.today()
+    sel_year = year or today.year
+    sel_month = month or today.month
+    sel_ym = f"{sel_year:04d}-{sel_month:02d}"
+
+    # Build trailing 12-month window ending at (sel_year, sel_month)
+    pt_months = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    months_12: list[tuple[str, str]] = []
+    y, m = sel_year, sel_month
+    for _ in range(12):
+        months_12.append((f"{y:04d}-{m:02d}", f"{pt_months[m - 1]}/{str(y)[-2:]}"))
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    months_12.reverse()
+    ym_set_12 = {ym for ym, _ in months_12}
+    months_6 = months_12[-6:]
+    prev_ym = months_12[-2][0] if len(months_12) >= 2 else sel_ym
+    prev3_yms = {ym for ym, _ in months_12[-4:-1]}
+
+    oldest_ym = months_12[0][0]
+    cutoff = date(int(oldest_ym[:4]), int(oldest_ym[5:7]), 1) - timedelta(days=32)
+
+    txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.transaction_date >= cutoff,
+            Transaction.type.in_([TransactionType.INCOME, TransactionType.EXPENSE, TransactionType.REFUND]),
+        )
+        .all()
+    )
+    accts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    acct_names = {a.id: a.name for a in accts}
+
+    m_inc: dict[str, float] = defaultdict(float)
+    m_exp: dict[str, float] = defaultdict(float)
+    cat_by_ym: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    cat_total_6m: dict[str, float] = defaultdict(float)
+
+    pm_map: dict[str, dict[str, float | int]] = defaultdict(lambda: {"total": 0.0, "count": 0})
+    acct_map: dict[str, float] = defaultdict(float)
+    weekday_map: dict[int, dict[str, float | int]] = {i: {"total": 0.0, "count": 0} for i in range(7)}
+    merchant_map: dict[str, dict[str, float | int]] = defaultdict(lambda: {"total": 0.0, "count": 0})
+
+    for tx in txs:
+        ym = tx.statement_month or tx.transaction_date.strftime("%Y-%m")
+        if ym not in ym_set_12:
+            continue
+        amt = float(tx.amount or 0)
+        if tx.type == TransactionType.INCOME:
+            m_inc[ym] += amt
+        elif tx.type == TransactionType.EXPENSE:
+            m_exp[ym] += amt
+            cname = tx.categories[0].category.name if tx.categories and tx.categories[0].category else "Outros"
+            cat_by_ym[ym][cname] += amt
+            if any(ym == x[0] for x in months_6):
+                cat_total_6m[cname] += amt
+            if ym == sel_ym:
+                pm = tx.payment_method or "other"
+                pm_map[pm]["total"] = round(float(pm_map[pm]["total"]) + amt, 2)
+                pm_map[pm]["count"] = int(pm_map[pm]["count"]) + 1
+                acct_map[acct_names.get(tx.account_id, "Conta")] += amt
+                wd = tx.transaction_date.weekday()
+                weekday_map[wd]["total"] = round(float(weekday_map[wd]["total"]) + amt, 2)
+                weekday_map[wd]["count"] = int(weekday_map[wd]["count"]) + 1
+                merch = (tx.merchant_name or tx.description or "Outro").strip()[:45]
+                merchant_map[merch]["total"] = round(float(merchant_map[merch]["total"]) + amt, 2)
+                merchant_map[merch]["count"] = int(merchant_map[merch]["count"]) + 1
+
+    monthly_cashflow_12m = [
+        {
+            "ym": ym,
+            "label": label,
+            "income": round(m_inc[ym], 2),
+            "expenses": round(m_exp[ym], 2),
+            "net": round(m_inc[ym] - m_exp[ym], 2),
+        }
+        for ym, label in months_12
+    ]
+
+    top6_cats = [k for k, _ in sorted(cat_total_6m.items(), key=lambda kv: kv[1], reverse=True)[:6]]
+    category_evolution_6m = []
+    for ym, label in months_6:
+        row: dict[str, object] = {"ym": ym, "label": label}
+        for c in top6_cats:
+            row[c] = round(cat_by_ym[ym].get(c, 0.0), 2)
+        category_evolution_6m.append(row)
+
+    PM_LABELS = {
+        "credit_card": "Cartão de Crédito",
+        "debit_card": "Cartão de Débito",
+        "pix": "PIX",
+        "boleto": "Boleto",
+        "bank_transfer": "Transferência",
+        "cash": "Dinheiro",
+        "other": "Outros",
+    }
+    by_payment_method = [
+        {"method": k, "label": PM_LABELS.get(k, k), "total": round(float(v["total"]), 2), "count": int(v["count"])}
+        for k, v in sorted(pm_map.items(), key=lambda kv: float(kv[1]["total"]), reverse=True)
+    ]
+
+    by_account = [
+        {"account": k, "total": round(v, 2)}
+        for k, v in sorted(acct_map.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+    WD_LABELS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+    weekday_heatmap = [
+        {
+            "day_index": i,
+            "label": WD_LABELS[i],
+            "total": round(float(weekday_map[i]["total"]), 2),
+            "count": int(weekday_map[i]["count"]),
+        }
+        for i in range(7)
+    ]
+
+    top_merchants = [
+        {"merchant": k, "total": round(float(v["total"]), 2), "count": int(v["count"])}
+        for k, v in sorted(merchant_map.items(), key=lambda kv: float(kv[1]["total"]), reverse=True)[:10]
+    ]
+
+    all_sel_cats = set(cat_by_ym[sel_ym].keys()) | set(cat_by_ym[prev_ym].keys())
+    category_delta_mom = []
+    for c in all_sel_cats:
+        cur_v = round(cat_by_ym[sel_ym].get(c, 0.0), 2)
+        prev_v = round(cat_by_ym[prev_ym].get(c, 0.0), 2)
+        avg3 = round(sum(cat_by_ym[p].get(c, 0.0) for p in prev3_yms) / max(1, len(prev3_yms)), 2)
+        delta_val = round(cur_v - prev_v, 2)
+        delta_pct = round((delta_val / prev_v) * 100.0, 1) if prev_v > 0 else (100.0 if cur_v > 0 else 0.0)
+        category_delta_mom.append({
+            "category": c,
+            "current": cur_v,
+            "previous": prev_v,
+            "avg_3m": avg3,
+            "delta_value": delta_val,
+            "delta_pct": delta_pct,
+        })
+    category_delta_mom.sort(key=lambda x: x["current"], reverse=True)
+
+    cur_inc = round(m_inc[sel_ym], 2)
+    cur_exp = round(m_exp[sel_ym], 2)
+    prev_exp = round(m_exp[prev_ym], 2)
+    savings_rate = round(((cur_inc - cur_exp) / cur_inc) * 100.0, 1) if cur_inc > 0 else 0.0
+    exp_diff_pct = round(((cur_exp - prev_exp) / prev_exp) * 100.0, 1) if prev_exp > 0 else 0.0
+    top_cat = category_delta_mom[0]["category"] if category_delta_mom else "Nenhuma"
+    busiest_day = max(weekday_heatmap, key=lambda d: d["total"])
+
+    summary_parts = [
+        f"Em {pt_months[sel_month - 1]}/{sel_year}, suas receitas somaram R$ {cur_inc:,.2f} e despesas R$ {cur_exp:,.2f} (taxa de poupança de {savings_rate}%)."
+    ]
+    if prev_exp > 0:
+        trend = "acima" if exp_diff_pct > 0 else "abaixo"
+        summary_parts.append(f"Os gastos ficaram {abs(exp_diff_pct)}% {trend} do mês anterior.")
+    if category_delta_mom:
+        summary_parts.append(f"Maior categoria: {top_cat} (R$ {category_delta_mom[0]['current']:,.2f}).")
+    if busiest_day["total"] > 0:
+        summary_parts.append(f"Dia com maior volume de gastos: {busiest_day['label']} (R$ {busiest_day['total']:,.2f}).")
+
+    ai_summary = " ".join(summary_parts).replace(",", "X").replace(".", ",").replace("X", ".")
+
+    return {
+        "period": sel_ym,
+        "monthly_cashflow_12m": monthly_cashflow_12m,
+        "top_categories_6m": top6_cats,
+        "category_evolution_6m": category_evolution_6m,
+        "by_payment_method": by_payment_method,
+        "by_account": by_account,
+        "weekday_heatmap": weekday_heatmap,
+        "top_merchants": top_merchants,
+        "category_delta_mom": category_delta_mom,
+        "savings_rate_pct": savings_rate,
+        "ai_executive_summary": ai_summary,
+    }

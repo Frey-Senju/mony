@@ -1,10 +1,12 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { Plus, Pencil, Trash2, Star, Wallet, Tag, X } from 'lucide-react'
+import Link from 'next/link'
+import { Plus, Pencil, Trash2, Star, Wallet, Tag, X, Link2, ShieldCheck, Sparkles } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories, type Category } from '@/hooks/useCategories'
+import { AISuggestionsBanner } from '@/components/ai/AISuggestionsBanner'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -17,6 +19,16 @@ interface Account {
   icon?: string | null
   color?: string | null
   is_default: boolean
+  user_edited?: boolean
+  origin_metadata?: Record<string, unknown> | null
+}
+
+interface AccountsAudit {
+  accounts_total: number
+  open_finance_linked_accounts: number
+  accounts_synced_with_open_finance: number
+  categories_total: number
+  outros_expenses_count: number
 }
 
 const ACCOUNT_TYPES: ReadonlyArray<{ value: Account['type']; label: string; defaultIcon: string }> = [
@@ -64,6 +76,7 @@ function AccountsContent() {
     categories,
     loading: catLoading,
     createCategory,
+    updateCategory,
     deleteCategory,
   } = useCategories(token)
   const [catName, setCatName] = useState('')
@@ -72,17 +85,37 @@ function AccountsContent() {
   const [catError, setCatError] = useState<string | null>(null)
   const [catSaving, setCatSaving] = useState(false)
 
+  // Category Edit modal state
+  const [editingCat, setEditingCat] = useState<Category | null>(null)
+  const [editCatName, setEditCatName] = useState('')
+  const [editCatColor, setEditCatColor] = useState('#059669')
+  const [editCatIcon, setEditCatIcon] = useState('🏷️')
+  const [editCatDesc, setEditCatDesc] = useState('')
+  const [editCatSaving, setEditCatSaving] = useState(false)
+
+  // Open Finance & AI Audit summary
+  const [audit, setAudit] = useState<AccountsAudit | null>(null)
+
   const fetchAccounts = useCallback(async () => {
     if (!token) return
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API_URL}/accounts`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
+      const [res, auditRes] = await Promise.all([
+        fetch(`${API_URL}/accounts`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`${API_URL}/accounts/audit`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
       if (!res.ok) throw new Error('Falha ao carregar contas')
       const data = await res.json()
       setAccounts(Array.isArray(data) ? data : data.items ?? [])
+      if (auditRes.ok) {
+        const auditData = await auditRes.json()
+        setAudit(auditData)
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Erro ao buscar contas')
     } finally {
@@ -202,6 +235,35 @@ function AccountsContent() {
     }
   }
 
+  const openEditCategory = (cat: Category) => {
+    setEditingCat(cat)
+    setEditCatName(cat.name)
+    setEditCatColor(cat.color || '#059669')
+    setEditCatIcon(cat.icon || '🏷️')
+    setEditCatDesc(cat.description || '')
+    setCatError(null)
+  }
+
+  const handleSaveCategoryEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingCat || !editCatName.trim()) return
+    setEditCatSaving(true)
+    setCatError(null)
+    try {
+      await updateCategory(editingCat.id, {
+        name: editCatName.trim(),
+        color: editCatColor,
+        icon: editCatIcon || '🏷️',
+        description: editCatDesc.trim() || undefined,
+      })
+      setEditingCat(null)
+    } catch (err) {
+      setCatError(err instanceof Error ? err.message : 'Erro ao atualizar categoria')
+    } finally {
+      setEditCatSaving(false)
+    }
+  }
+
   const totalBalance = accounts.reduce((acc, a) => acc + Number(a.balance || 0), 0)
   const typeLabel = (t: string) => ACCOUNT_TYPES.find((x) => x.value === t)?.label ?? t
 
@@ -257,6 +319,48 @@ function AccountsContent() {
 
       {activeTab === 'accounts' ? (
         <div className="space-y-6">
+          {/* Open Finance & Proactive AI Audit Banner */}
+          {audit && (
+            <div className="glass-card p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-3 flex-wrap text-xs sm:text-sm text-slate-700 dark:text-slate-200">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-emerald-700 dark:text-emerald-300">
+                  <ShieldCheck className="w-4 h-4" aria-hidden="true" />
+                  Auditoria Open Finance
+                </span>
+                <span className="text-slate-500 dark:text-slate-400">·</span>
+                <span>
+                  <strong>{audit.open_finance_linked_accounts}</strong> conta(s) Open Finance
+                </span>
+                <span className="text-slate-500 dark:text-slate-400">·</span>
+                <span>
+                  <strong>{audit.accounts_synced_with_open_finance}</strong> sincronizada(s) no Mony
+                </span>
+                {audit.outros_expenses_count > 0 && (
+                  <>
+                    <span className="text-slate-500 dark:text-slate-400">·</span>
+                    <span className="text-amber-700 dark:text-amber-300 font-medium">
+                      {audit.outros_expenses_count} gasto(s) em &quot;Outros&quot;
+                    </span>
+                  </>
+                )}
+              </div>
+              <Link
+                href="/settings/connections"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-600 dark:text-blue-400 hover:underline shrink-0"
+              >
+                <Link2 className="w-3.5 h-3.5" aria-hidden="true" />
+                Gerenciar Open Finance →
+              </Link>
+            </div>
+          )}
+
+          {token && (
+            <AISuggestionsBanner
+              module="accounts"
+              onApplied={fetchAccounts}
+            />
+          )}
+
           {/* Net worth summary */}
           <div className="glass-panel flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -321,7 +425,7 @@ function AccountsContent() {
                         {acct.icon || '🏦'}
                       </span>
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center flex-wrap gap-1.5">
                           <h2 className="font-semibold text-slate-900 dark:text-white">{acct.name}</h2>
                           {acct.is_default && (
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100/80 dark:bg-amber-900/40 text-amber-800 dark:text-amber-300">
@@ -329,9 +433,25 @@ function AccountsContent() {
                               Padrão
                             </span>
                           )}
+                          {acct.origin_metadata?.provider === 'pluggy' && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-100/80 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-300">
+                              <Link2 className="w-3 h-3" aria-hidden="true" />
+                              Open Finance
+                            </span>
+                          )}
+                          {acct.user_edited && (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-100/80 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300">
+                              Editada
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                           {typeLabel(acct.type)} · {acct.currency}
+                          {typeof acct.origin_metadata?.pluggy_balance === 'number' && (
+                            <span className="ml-1.5 text-emerald-700 dark:text-emerald-400">
+                              · Banco: R$ {Number(acct.origin_metadata.pluggy_balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                            </span>
+                          )}
                         </p>
                       </div>
                     </div>
@@ -396,6 +516,13 @@ function AccountsContent() {
         </div>
       ) : (
         <div className="space-y-6">
+          {token && (
+            <AISuggestionsBanner
+              module="categories"
+              onApplied={fetchAccounts}
+            />
+          )}
+
           {/* Create custom category */}
           <form onSubmit={handleCreateCategory} className="glass-panel space-y-4">
             <h2 className="text-base font-semibold text-slate-900 dark:text-white">
@@ -485,19 +612,127 @@ function AccountsContent() {
                     </div>
                   </div>
                   {!cat.is_default && !cat.is_system && (
-                    <button
-                      type="button"
-                      onClick={() => deleteCategory(cat.id)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400"
-                      aria-label={`Excluir categoria ${cat.name}`}
-                    >
-                      <Trash2 className="w-4 h-4" aria-hidden="true" />
-                    </button>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => openEditCategory(cat)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+                        aria-label={`Editar categoria ${cat.name}`}
+                      >
+                        <Pencil className="w-4 h-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteCategory(cat.id)}
+                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400"
+                        aria-label={`Excluir categoria ${cat.name}`}
+                      >
+                        <Trash2 className="w-4 h-4" aria-hidden="true" />
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Category Edit Modal */}
+      {editingCat && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="cat-edit-modal-title"
+        >
+          <div className="glass-modal max-w-md w-full p-6 space-y-5">
+            <div className="flex items-center justify-between">
+              <h2 id="cat-edit-modal-title" className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-violet-500" aria-hidden="true" />
+                Editar Categoria
+              </h2>
+              <button
+                type="button"
+                onClick={() => setEditingCat(null)}
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white"
+                aria-label="Fechar modal de categoria"
+              >
+                <X className="w-5 h-5" aria-hidden="true" />
+              </button>
+            </div>
+            <form onSubmit={handleSaveCategoryEdit} className="space-y-4">
+              <div>
+                <label htmlFor="edit-cat-name" className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+                  Nome da categoria *
+                </label>
+                <input
+                  id="edit-cat-name"
+                  type="text"
+                  required
+                  value={editCatName}
+                  onChange={(e) => setEditCatName(e.target.value)}
+                  className="input-base"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label htmlFor="edit-cat-icon" className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+                    Ícone
+                  </label>
+                  <input
+                    id="edit-cat-icon"
+                    type="text"
+                    maxLength={4}
+                    value={editCatIcon}
+                    onChange={(e) => setEditCatIcon(e.target.value)}
+                    className="input-base text-center"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="edit-cat-color" className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+                    Cor
+                  </label>
+                  <input
+                    id="edit-cat-color"
+                    type="color"
+                    value={editCatColor}
+                    onChange={(e) => setEditCatColor(e.target.value)}
+                    className="h-10 w-full rounded-xl cursor-pointer border border-slate-300 dark:border-white/20 bg-transparent"
+                  />
+                </div>
+              </div>
+              <div>
+                <label htmlFor="edit-cat-desc" className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+                  Descrição (opcional)
+                </label>
+                <input
+                  id="edit-cat-desc"
+                  type="text"
+                  value={editCatDesc}
+                  onChange={(e) => setEditCatDesc(e.target.value)}
+                  placeholder="Ex: Serviços de assinatura e streaming"
+                  className="input-base"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingCat(null)}
+                  className="liquid-btn liquid-btn-glass px-4 py-2 rounded-xl text-sm font-medium"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={editCatSaving}
+                  className="liquid-btn liquid-btn-primary px-5 py-2 rounded-xl text-sm font-semibold disabled:opacity-50"
+                >
+                  {editCatSaving ? 'Salvando...' : 'Salvar Categoria'}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
 

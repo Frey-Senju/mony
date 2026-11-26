@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { MonthlySummaryCard } from '@/components/reports/MonthlySummaryCard'
 import { CategoryBreakdownChart } from '@/components/reports/CategoryBreakdownChart'
+import { ReportsAnalyticsPro } from '@/components/reports/ReportsAnalyticsPro'
 import { shiftMonth, useReports } from '@/hooks/useReports'
 import { useAuth } from '@/stores/auth/useAuth'
 import { exportReportToCSV } from '@/utils/export'
@@ -110,10 +111,10 @@ function ReportsContent() {
   const monthLabel = `${MONTH_LABELS_PT_BR[month - 1]} de ${year}`
 
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-950">
+    <div className="min-h-screen">
       {/* Header */}
-      <div className="border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8">
+        <div className="glass-panel">
           <div className="flex items-center justify-between flex-wrap gap-4">
             <div>
               <h1
@@ -122,7 +123,7 @@ function ReportsContent() {
               >
                 Relatórios financeiros
               </h1>
-              <p className="text-slate-600 dark:text-slate-400 mt-1">
+              <p className="text-slate-600 dark:text-slate-300 mt-1">
                 {user?.full_name
                   ? `${user.full_name} — ${monthLabel}`
                   : monthLabel}
@@ -130,23 +131,23 @@ function ReportsContent() {
             </div>
 
             <div className="flex items-center gap-4">
-              <div className="flex gap-1 bg-slate-100 dark:bg-slate-800 rounded-lg p-1" data-testid="report-tabs">
+              <div className="flex gap-1 bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15 rounded-xl p-1" data-testid="report-tabs">
                 <Link
                   href="/dashboard/reports"
-                  className={`px-4 py-1.5 text-sm rounded-md font-medium transition ${
+                  className={`px-4 py-1.5 text-sm rounded-lg font-medium transition ${
                     pathname === '/dashboard/reports'
-                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                      ? 'liquid-nav-active shadow-sm'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   Mensal
                 </Link>
                 <Link
                   href="/dashboard/reports/annual"
-                  className={`px-4 py-1.5 text-sm rounded-md font-medium transition ${
+                  className={`px-4 py-1.5 text-sm rounded-lg font-medium transition ${
                     pathname === '/dashboard/reports/annual'
-                      ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-100 shadow-sm'
-                      : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100'
+                      ? 'liquid-nav-active shadow-sm'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-slate-100'
                   }`}
                 >
                   Anual
@@ -154,7 +155,7 @@ function ReportsContent() {
               </div>
               <Link
                 href="/dashboard"
-                className="text-sm text-blue-600 dark:text-blue-400 hover:underline"
+                className="text-sm font-medium text-blue-600 dark:text-blue-400 hover:underline"
                 data-testid="back-to-dashboard"
               >
                 ← Dashboard
@@ -165,9 +166,9 @@ function ReportsContent() {
       </div>
 
       {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-8">
         {/* Period Mode Toggle */}
-        <section className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 p-4 space-y-4">
+        <section className="glass-panel p-4 space-y-4">
           <div className="flex gap-2" data-testid="mode-toggle">
             <button
               type="button"
@@ -351,6 +352,9 @@ function ReportsContent() {
             loading={loading}
           />
         </section>
+
+        {/* Reports 2.0 — Accessible Deep Analytics & AI Executive Summary */}
+        <ReportsAnalyticsPro token={token} year={year} month={month} />
       </div>
     </div>
   )

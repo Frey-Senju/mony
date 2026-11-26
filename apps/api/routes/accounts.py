@@ -37,6 +37,8 @@ class AccountResponse(BaseModel):
     icon: Optional[str] = None
     color: Optional[str] = None
     is_default: bool = False
+    user_edited: bool = False
+    origin_metadata: Optional[dict] = None
 
 
 class AccountCreateRequest(BaseModel):
@@ -251,6 +253,8 @@ async def update_account(
         account.icon = payload.icon
     if payload.color is not None:
         account.color = payload.color
+
+    account.user_edited = True
 
     if payload.is_default is True:
         db.query(Account).filter(

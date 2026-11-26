@@ -27,6 +27,7 @@ import {
   TrendingUp,
   SlidersHorizontal,
   CreditCard,
+  ShieldCheck,
 } from 'lucide-react'
 import { useAppearance } from '@/app/_theme/provider'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -53,6 +54,7 @@ const PRIMARY_ITEMS: NavItem[] = [
   { href: '/dashboard/reports', label: 'Relatórios', testId: 'nav-reports', icon: <BarChart3 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/budgets', label: 'Budgets', testId: 'nav-budgets', icon: <PieChart className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/insights', label: 'Insights', testId: 'nav-insights', icon: <Sparkles className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/dashboard/ai-review', label: 'Revisão IA', testId: 'nav-ai-review', icon: <ShieldCheck className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/goals', label: 'Metas', testId: 'nav-goals', icon: <Target className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/dashboard/rules', label: 'Regras', testId: 'nav-rules', icon: <SlidersHorizontal className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
 ]

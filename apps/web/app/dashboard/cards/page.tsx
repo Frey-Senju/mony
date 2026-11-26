@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
+import { AISuggestionsBanner } from '@/components/ai/AISuggestionsBanner'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -66,6 +67,9 @@ interface CardItem {
   next_due_date: string
   upcoming_invoices: InvoicePoint[]
   open_invoice_items: InvoiceItem[]
+  external_account_id?: string | null
+  pluggy_balance?: number | null
+  balance_divergence?: number | null
 }
 
 interface CardsPayload {
@@ -343,6 +347,13 @@ function CardsContent() {
         </div>
       )}
 
+      {/* Story 5.6: Proactive AI Audit Banner for Credit Cards */}
+      <AISuggestionsBanner
+        module="cards"
+        title="Auditoria Proativa IA · Cartões & Faturas"
+        onApplied={loadAll}
+      />
+
       {/* Unlinked Pluggy / Account Credit Cards suggestion banner */}
       {data && data.unlinked_credit_accounts.length > 0 && (
         <section className="glass-card p-4 border-[var(--accent)]/40 bg-[var(--accent-soft)]/30 flex flex-wrap items-center justify-between gap-3">
@@ -441,15 +452,22 @@ function CardsContent() {
                       background: `linear-gradient(135deg, ${card.color} 0%, #0f172a 100%)`,
                     }}
                   >
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-1">
                       <span className="text-xs uppercase tracking-widest opacity-80 font-semibold">
                         {card.brand}
                       </span>
-                      {card.is_best_buy_window && (
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-400/25 text-emerald-200 border border-emerald-300/30">
-                          Melhor janela de compra!
-                        </span>
-                      )}
+                      <div className="flex items-center gap-1">
+                        {card.external_account_id && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20 text-white">
+                            Open Finance
+                          </span>
+                        )}
+                        {card.is_best_buy_window && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-400/25 text-emerald-200 border border-emerald-300/30">
+                            Melhor janela!
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <p className="text-lg font-extrabold mt-4 tracking-tight">{card.name}</p>
                     <p className="font-mono text-xs opacity-80 mt-1">

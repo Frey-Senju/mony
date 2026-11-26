@@ -135,6 +135,8 @@ def _serialize_transaction(tx: Transaction) -> "TransactionResponse":
         category_name=primary_cat.name if primary_cat else None,
         category_color=primary_cat.color if primary_cat else None,
         category_icon=primary_cat.icon if primary_cat else None,
+        user_edited=bool(getattr(tx, "user_edited", False)),
+        origin_metadata=getattr(tx, "origin_metadata", None),
         created_at=tx.created_at,
         updated_at=tx.updated_at,
     )
@@ -166,8 +168,9 @@ class TransactionCreate(BaseModel):
 
 
 class TransactionUpdate(BaseModel):
-    """Update transaction request."""
+    """Update transaction request (100% of user-facing fields editable; origin/dedup fields stay immutable)."""
 
+    account_id: Optional[str] = None
     type: Optional[TransactionType] = None
     amount: Optional[Decimal] = Field(None, gt=0, decimal_places=2)
     description: Optional[str] = Field(None, min_length=1, max_length=255)
@@ -223,6 +226,8 @@ class TransactionResponse(BaseModel):
     category_name: Optional[str] = None
     category_color: Optional[str] = None
     category_icon: Optional[str] = None
+    user_edited: bool = False
+    origin_metadata: Optional[dict] = None
     created_at: datetime
     updated_at: datetime
 
@@ -330,6 +335,13 @@ async def create_transaction(
     # Keep account balance synchronized
     current_bal = Decimal(str(account.balance or 0))
     account.balance = current_bal + _balance_delta(payload.type, payload.amount)
+
+    # Proactive AI review on newly registered transactions (Story 5.3)
+    try:
+        from services.ai_review_engine import run_proactive_review
+        run_proactive_review(db, uid, lookback_days=45)
+    except Exception:  # noqa: BLE001
+        pass
 
     db.commit()
     db.refresh(transaction)
@@ -761,12 +773,29 @@ async def update_transaction(
 
     old_type = transaction.type
     old_amount = Decimal(str(transaction.amount))
+    old_account_id = transaction.account_id
 
     update_data = payload.model_dump(exclude_unset=True)
     cat_id_provided = "category_id" in update_data
     cat_name_provided = "category_name" in update_data
     raw_cat_id = update_data.pop("category_id", None)
     raw_cat_name = update_data.pop("category_name", None)
+    raw_account_id = update_data.pop("account_id", None)
+
+    if raw_account_id is not None:
+        new_aid = parse_uuid(raw_account_id, "account_id")
+        target_acct = (
+            db.query(Account)
+            .filter(Account.id == new_aid, Account.user_id == uid, Account.deleted_at.is_(None))
+            .first()
+        )
+        if not target_acct:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target account not found")
+        transaction.account_id = target_acct.id
+
+    # Guard immutable origin / anti-dedup columns against accidental overwrite
+    for immutable in ("source", "external_id", "dedup_hash", "origin_metadata"):
+        update_data.pop(immutable, None)
 
     for field, value in update_data.items():
         setattr(transaction, field, value)
@@ -779,15 +808,24 @@ async def update_transaction(
             if category is not None:
                 _set_transaction_category(db, transaction, category)
 
-    # Reconcile account balance if amount or type changed
+    # Reconcile account balance(s) atomically if account, amount, or type changed
     new_type = transaction.type
     new_amount = Decimal(str(transaction.amount))
-    if old_type != new_type or old_amount != new_amount:
+    new_account_id = transaction.account_id
+    if old_account_id != new_account_id:
+        old_acct = db.query(Account).filter(Account.id == old_account_id).first()
+        if old_acct is not None:
+            old_acct.balance = Decimal(str(old_acct.balance or 0)) - _balance_delta(old_type, old_amount)
+        new_acct = db.query(Account).filter(Account.id == new_account_id).first()
+        if new_acct is not None:
+            new_acct.balance = Decimal(str(new_acct.balance or 0)) + _balance_delta(new_type, new_amount)
+    elif old_type != new_type or old_amount != new_amount:
         account = db.query(Account).filter(Account.id == transaction.account_id).first()
         if account is not None:
             delta_diff = _balance_delta(new_type, new_amount) - _balance_delta(old_type, old_amount)
             account.balance = Decimal(str(account.balance or 0)) + delta_diff
 
+    transaction.user_edited = True
     transaction.updated_at = datetime.utcnow()
     db.commit()
 

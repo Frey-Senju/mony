@@ -202,6 +202,14 @@ def _build_card_payload(db: Session, uid: UUID, card: CreditCard, today: date) -
         "closing_day": card.closing_day,
         "due_day": card.due_day,
         "color": card.color,
+        "user_edited": bool(getattr(card, "user_edited", False)),
+        "external_account_id": getattr(card, "external_account_id", None),
+        "pluggy_balance": float(card.pluggy_balance) if getattr(card, "pluggy_balance", None) is not None else None,
+        "balance_divergence": round(
+            open_total - abs(float(card.pluggy_balance)), 2
+        )
+        if getattr(card, "pluggy_balance", None) is not None
+        else None,
         "open_invoice_month": open_ym,
         "open_invoice_total": open_total,
         "future_installments_total": round(future_installments_total, 2),
@@ -363,6 +371,7 @@ async def update_credit_card(
         card.due_day = payload.due_day
     if payload.color is not None:
         card.color = payload.color
+    card.user_edited = True
     card.updated_at = datetime.utcnow()
 
     db.commit()

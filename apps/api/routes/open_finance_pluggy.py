@@ -29,6 +29,7 @@ from database.models import (
     Account,
     AccountType,
     ConsentStatus,
+    CreditCard,
     LinkedAccountSyncStatus,
     OFConsent,
     OFInstitution,
@@ -55,6 +56,8 @@ from services.pluggy_client import (
     fetch_pluggy_transactions,
     is_pluggy_configured,
 )
+from services.ai_review_engine import run_proactive_review
+from services.recurrence_detector import detect_and_register_recurrences
 from services.rules_engine import (
     detect_and_link_paired_transfers,
     is_internal_transfer_text,
@@ -277,6 +280,17 @@ async def _sync_pluggy_account_txs(
             source=TransactionSource.OPEN_FINANCE.value,
             external_id=item["external_id"] or None,
             dedup_hash=dhash,
+            user_edited=False,
+            origin_metadata={
+                "provider": "pluggy",
+                "external_id": item["external_id"] or None,
+                "dedup_hash": dhash,
+                "original_description": item["description"],
+                "original_amount": float(item["amount"]),
+                "original_date": item["transaction_date"].isoformat(),
+                "original_type": item["type"].value,
+                "pluggy_account_id": pluggy_account_id,
+            },
         )
         db.add(tx)
         db.flush()
@@ -480,6 +494,18 @@ async def register_pluggy_item(
             db.add(linked)
             db.flush()
 
+        acct_origin = {
+            "provider": "pluggy",
+            "pluggy_account_id": p_acct_id,
+            "external_item_id": payload.item_id,
+            "account_fingerprint": fp,
+            "institution_name": inst_name,
+            "owner_name": owner[:200] if owner else None,
+            "last4": last4,
+            "official_balance": float(balance_val),
+            "synced_at": datetime.utcnow().isoformat(),
+        }
+
         if mony_acct is None:
             base_name = f"{inst_name} · {p_acct.get('name') or acct_type.value}"
             if last4:
@@ -496,7 +522,9 @@ async def register_pluggy_item(
             )
             if existing_by_name is not None:
                 mony_acct = existing_by_name
-                mony_acct.balance = balance_val
+                if not getattr(mony_acct, "user_edited", False):
+                    mony_acct.balance = balance_val
+                mony_acct.origin_metadata = acct_origin
             else:
                 mony_acct = Account(
                     user_id=uid,
@@ -504,12 +532,84 @@ async def register_pluggy_item(
                     type=acct_type,
                     balance=balance_val,
                     currency=p_acct.get("currencyCode") or "BRL",
+                    user_edited=False,
+                    origin_metadata=acct_origin,
                 )
                 db.add(mony_acct)
                 db.flush()
             linked.mony_account_id = mony_acct.id
         else:
-            mony_acct.balance = balance_val
+            if not getattr(mony_acct, "user_edited", False):
+                mony_acct.balance = balance_val
+            mony_acct.origin_metadata = acct_origin
+
+        # Story 5.6: Auto-register / update CreditCard profile from Pluggy creditData
+        if acct_type == AccountType.CREDIT_CARD:
+            credit_data = p_acct.get("creditData") or {}
+            raw_limit = credit_data.get("creditLimit") or 5000.0
+            limit_dec = Decimal(f"{max(100.0, float(raw_limit)):.2f}")
+            close_day = 10
+            due_day = 17
+            for key_name, target_var in (("balanceCloseDate", "close"), ("balanceDueDate", "due")):
+                raw_dt = str(credit_data.get(key_name) or "")[:10]
+                if len(raw_dt) == 10:
+                    try:
+                        parsed_day = int(raw_dt[8:10])
+                        if 1 <= parsed_day <= 31:
+                            if target_var == "close":
+                                close_day = parsed_day
+                            else:
+                                due_day = parsed_day
+                    except ValueError:
+                        pass
+            brand_raw = str(credit_data.get("brand") or p_acct.get("name") or "").lower()
+            brand = (
+                "visa"
+                if "visa" in brand_raw
+                else ("elo" if "elo" in brand_raw else ("amex" if "amex" in brand_raw or "american" in brand_raw else "mastercard"))
+            )
+            card_color = (
+                "#7c3aed"
+                if "nubank" in inst_name.lower()
+                else ("#ea580c" if "inter" in inst_name.lower() or "itau" in inst_name.lower() else "#0f172a")
+            )
+            existing_card = (
+                db.query(CreditCard)
+                .filter(
+                    CreditCard.user_id == uid,
+                    CreditCard.deleted_at.is_(None),
+                    (CreditCard.account_id == mony_acct.id) | (CreditCard.external_account_id == p_acct_id),
+                )
+                .first()
+            )
+            if existing_card is None:
+                db.add(
+                    CreditCard(
+                        user_id=uid,
+                        account_id=mony_acct.id,
+                        name=f"{inst_name} · {p_acct.get('name') or 'Cartão'}"[:100],
+                        brand=brand,
+                        last4=last4[:4] if last4 else None,
+                        credit_limit=limit_dec,
+                        closing_day=close_day,
+                        due_day=due_day,
+                        color=card_color,
+                        is_active=True,
+                        user_edited=False,
+                        external_account_id=p_acct_id,
+                        pluggy_balance=balance_val,
+                    )
+                )
+            else:
+                existing_card.external_account_id = p_acct_id
+                existing_card.pluggy_balance = balance_val
+                if not getattr(existing_card, "user_edited", False):
+                    if credit_data.get("creditLimit"):
+                        existing_card.credit_limit = limit_dec
+                    if credit_data.get("balanceCloseDate"):
+                        existing_card.closing_day = close_day
+                    if credit_data.get("balanceDueDate"):
+                        existing_card.due_day = due_day
 
         stats = await _sync_pluggy_account_txs(
             db,
@@ -523,6 +623,10 @@ async def register_pluggy_item(
         total_inserted += stats["inserted"]
         total_skipped += stats["skipped_dedup"]
         total_reconciled += stats["reconciled"]
+
+    # Story 5.4 & 5.3: Auto-detect recurrences and run proactive AI review after sync
+    rec_stats = detect_and_register_recurrences(db, uid, lookback_days=180)
+    review_stats = run_proactive_review(db, uid, lookback_days=120)
 
     job = OFSyncJob(
         user_id=uid,
@@ -547,6 +651,8 @@ async def register_pluggy_item(
         "transactions_inserted": total_inserted,
         "transactions_skipped_dedup": total_skipped,
         "transactions_reconciled": total_reconciled,
+        "recurrences_detected": rec_stats["detected_and_registered"],
+        "ai_suggestions_created": review_stats["created"],
     }
 
 

@@ -31,6 +31,7 @@ from database.models import (
 )
 from routes.categories import ensure_default_categories
 from routes.transactions import _balance_delta, _resolve_category, _set_transaction_category
+from services.recurrence_detector import detect_and_register_recurrences
 from utils.auth import get_current_user_from_header
 from utils.uuid_utils import parse_uuid
 
@@ -98,6 +99,7 @@ def _serialize_rule(rule: RecurringRule, current_ym: str, account_name: Optional
         "day_of_month": rule.day_of_month,
         "is_active": bool(rule.is_active),
         "auto_create": bool(rule.auto_create),
+        "source": getattr(rule, "source", "manual") or "manual",
         "last_generated_month": rule.last_generated_month,
         "generated_this_month": generated_this_month,
         "next_due_date": due.isoformat(),
@@ -381,3 +383,16 @@ async def generate_single_recurring(
 
     db.commit()
     return {"month": target_month, "generated": 1, "already_generated": False, "transaction_id": str(tx.id)}
+
+
+@router.post("/detect")
+async def detect_recurrences_endpoint(
+    lookback_days: int = Query(default=180, ge=30, le=365),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Scan transaction history and automatically register detected recurring bills/subscriptions."""
+    uid = parse_uuid(user_id, "user_id")
+    stats = detect_and_register_recurrences(db, uid, lookback_days=lookback_days)
+    db.commit()
+    return stats
