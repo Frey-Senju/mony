@@ -26,6 +26,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
+import { WhatIfAISimulator } from '@/components/simulators/WhatIfAISimulator'
 import { useAuth } from '@/stores/auth/useAuth'
 import {
   DEFAULT_DSR_CALENDAR,
@@ -65,7 +66,7 @@ export default function SimulatorsPage() {
 function SimulatorsContent() {
   const { tokens } = useAuth()
   const token = tokens?.access_token
-  const [activeTab, setActiveTab] = useState<'salary' | 'invest'>('salary')
+  const [activeTab, setActiveTab] = useState<'salary' | 'invest' | 'whatif'>('salary')
 
   // ==================== Salary with Goal State (spreadsheet defaults) ====================
   const [role, setRole] = useState('Vendedor Interno')
@@ -352,37 +353,51 @@ function SimulatorsContent() {
         <div
           role="tablist"
           aria-label="Escolha o simulador"
-          className="grid grid-cols-2 p-1 rounded-2xl bg-white/55 dark:bg-white/10 border border-white/70 dark:border-white/15"
+          className="grid grid-cols-3 p-1 rounded-2xl bg-white/55 dark:bg-white/10 border border-white/70 dark:border-white/15"
         >
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === 'salary'}
             onClick={() => setActiveTab('salary')}
-            className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
               activeTab === 'salary' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
             }`}
           >
             <Briefcase className="w-4 h-4" />
-            Salário com Meta
+            Salário
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === 'invest'}
             onClick={() => setActiveTab('invest')}
-            className={`flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
               activeTab === 'invest' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
             }`}
           >
             <TrendingUp className="w-4 h-4" />
-            Investimentos (10 anos)
+            Investimentos
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'whatif'}
+            onClick={() => setActiveTab('whatif')}
+            className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
+              activeTab === 'whatif' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <Sparkles className="w-4 h-4" />
+            E se...? (IA)
           </button>
         </div>
       </header>
 
-      {/* ==================== TAB 1: SALÁRIO COM META + DSR + INSS + IRRF ==================== */}
-      {activeTab === 'salary' ? (
+      {/* ==================== TAB 3: SIMULADOR E SE...? COM DADOS REAIS ==================== */}
+      {activeTab === 'whatif' ? (
+        <WhatIfAISimulator />
+      ) : activeTab === 'salary' ? (
         <div className="space-y-6">
           {/* Top Live Output KPI Banner */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

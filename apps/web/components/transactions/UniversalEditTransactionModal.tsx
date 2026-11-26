@@ -24,6 +24,7 @@ export interface EditableTransaction {
   external_id?: string | null
   user_edited?: boolean
   origin_metadata?: Record<string, unknown> | null
+  tags?: string[]
 }
 
 interface UniversalEditTransactionModalProps {
@@ -66,10 +67,16 @@ export function UniversalEditTransactionModal({
     installment_number: transaction.installment_number ? String(transaction.installment_number) : '',
     installment_total: transaction.installment_total ? String(transaction.installment_total) : '',
     notes: transaction.notes || '',
+    tagsText: (transaction.tags || []).join(', '),
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showOrigin, setShowOrigin] = useState(false)
+  const [splitMode, setSplitMode] = useState(false)
+  const [splitParts, setSplitParts] = useState([
+    { description: `${transaction.description} (Parte 1)`, amount: (Number(transaction.amount) / 2).toFixed(2), category_name: transaction.category_name || 'Outros' },
+    { description: `${transaction.description} (Parte 2)`, amount: (Number(transaction.amount) - Number((Number(transaction.amount) / 2).toFixed(2))).toFixed(2), category_name: 'Outros' },
+  ])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -89,6 +96,10 @@ export function UniversalEditTransactionModal({
         notes: form.notes.trim() || null,
         installment_number: form.installment_number ? Number(form.installment_number) : null,
         installment_total: form.installment_total ? Number(form.installment_total) : null,
+        tags: form.tagsText
+          .split(',')
+          .map((t) => t.trim())
+          .filter(Boolean),
       }
       const res = await fetch(`${API_URL}/transactions/${transaction.id}`, {
         method: 'PUT',
@@ -289,6 +300,17 @@ export function UniversalEditTransactionModal({
           </div>
 
           <div className="sm:col-span-2">
+            <label className="block text-xs font-semibold mb-1">Tags livres (separadas por vírgula)</label>
+            <input
+              type="text"
+              value={form.tagsText}
+              onChange={(e) => setForm({ ...form, tagsText: e.target.value })}
+              placeholder="Ex.: #viagem-sp, #reembolsavel, #trabalho"
+              className="w-full px-3 py-2 glass-input rounded-xl text-sm"
+            />
+          </div>
+
+          <div className="sm:col-span-2">
             <label className="block text-xs font-semibold mb-1">Observações</label>
             <input
               type="text"
@@ -297,6 +319,90 @@ export function UniversalEditTransactionModal({
               className="w-full px-3 py-2 glass-input rounded-xl text-sm"
             />
           </div>
+        </div>
+
+        {/* Split Transaction Option */}
+        <div className="rounded-xl bg-blue-500/8 border border-blue-400/25 p-3 space-y-2.5">
+          <button
+            type="button"
+            onClick={() => setSplitMode((v) => !v)}
+            className="text-xs font-semibold text-blue-700 dark:text-blue-300 flex items-center gap-1"
+          >
+            {splitMode ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            Dividir esta transação em múltiplas categorias (Split)
+          </button>
+          {splitMode && (
+            <div className="space-y-2 pt-1">
+              {splitParts.map((part, idx) => (
+                <div key={idx} className="grid grid-cols-12 gap-2">
+                  <input
+                    type="text"
+                    value={part.description}
+                    onChange={(e) =>
+                      setSplitParts((prev) => prev.map((p, i) => (i === idx ? { ...p, description: e.target.value } : p)))
+                    }
+                    className="col-span-5 px-2.5 py-1.5 glass-input rounded-lg text-xs"
+                    placeholder={`Parte ${idx + 1}`}
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={part.amount}
+                    onChange={(e) =>
+                      setSplitParts((prev) => prev.map((p, i) => (i === idx ? { ...p, amount: e.target.value } : p)))
+                    }
+                    className="col-span-3 px-2.5 py-1.5 glass-input rounded-lg text-xs font-semibold"
+                  />
+                  <select
+                    value={part.category_name}
+                    onChange={(e) =>
+                      setSplitParts((prev) => prev.map((p, i) => (i === idx ? { ...p, category_name: e.target.value } : p)))
+                    }
+                    className="col-span-4 px-2 py-1.5 glass-input rounded-lg text-xs"
+                  >
+                    {categories.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+              ))}
+              <button
+                type="button"
+                disabled={saving}
+                onClick={async () => {
+                  setSaving(true)
+                  setError(null)
+                  try {
+                    const res = await fetch(`${API_URL}/transactions/${transaction.id}/split`, {
+                      method: 'POST',
+                      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        parts: splitParts.map((p) => ({
+                          description: p.description.trim(),
+                          amount: Number(p.amount),
+                          category_name: p.category_name,
+                        })),
+                      }),
+                    })
+                    if (!res.ok) {
+                      const body = await res.json().catch(() => ({}))
+                      throw new Error(body.detail || 'Erro ao dividir transação')
+                    }
+                    window.dispatchEvent(new Event('mony:transactions-updated'))
+                    onSaved()
+                    onClose()
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : 'Erro ao dividir')
+                  } finally {
+                    setSaving(false)
+                  }
+                }}
+                className="liquid-btn liquid-btn-primary px-3 py-1.5 rounded-lg text-xs font-semibold"
+              >
+                Confirmar Divisão (Total: R$ {Number(transaction.amount).toFixed(2)})
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Immutable Origin Inspector */}

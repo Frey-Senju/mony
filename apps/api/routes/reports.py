@@ -799,3 +799,108 @@ async def get_reports_analytics(
         "savings_rate_pct": savings_rate,
         "ai_executive_summary": ai_summary,
     }
+
+
+@router.get("/export-xlsx")
+async def export_workbook_xlsx(
+    year: Optional[int] = Query(default=None, ge=2000, le=2100),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Exports a multi-sheet Excel (.xlsx) workbook with Summary, Transactions,
+    Credit Cards, Recurring Rules, Investments, and Debts (EPIC-006 Story 6.8).
+    """
+    from fastapi.responses import Response
+    from database.models import CreditCard, Debt, InvestmentAsset, RecurringRule
+    from services.xlsx_exporter import build_xlsx_workbook
+
+    uid = UUID(user_id)
+    sel_year = year or date.today().year
+    y_start = date(sel_year, 1, 1)
+    y_end = date(sel_year + 1, 1, 1)
+
+    txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.transaction_date >= y_start,
+            Transaction.transaction_date < y_end,
+        )
+        .order_by(Transaction.transaction_date.desc())
+        .all()
+    )
+    accounts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    acct_map = {a.id: a.name for a in accounts}
+    cards = db.query(CreditCard).filter(CreditCard.user_id == uid, CreditCard.deleted_at.is_(None)).all()
+    rules = db.query(RecurringRule).filter(RecurringRule.user_id == uid, RecurringRule.deleted_at.is_(None)).all()
+    holdings = db.query(InvestmentAsset).filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None)).all()
+    debts = db.query(Debt).filter(Debt.user_id == uid, Debt.deleted_at.is_(None)).all()
+
+    tot_inc = sum(float(t.amount or 0) for t in txs if t.type == TransactionType.INCOME)
+    tot_exp = sum(float(t.amount or 0) for t in txs if t.type == TransactionType.EXPENSE)
+
+    summary_rows: list[list[object]] = [
+        ["Indicador", "Valor"],
+        ["Ano de Referência", sel_year],
+        ["Total de Receitas (R$)", round(tot_inc, 2)],
+        ["Total de Despesas (R$)", round(tot_exp, 2)],
+        ["Saldo Líquido do Ano (R$)", round(tot_inc - tot_exp, 2)],
+        ["Saldo Total em Contas (R$)", round(sum(float(a.balance or 0) for a in accounts), 2)],
+        ["Carteira de Investimentos (R$)", round(sum(float(h.quantity or 0) * float(h.average_price or 0) for h in holdings), 2)],
+        ["Saldo Devedor em Dívidas (R$)", round(sum(float(d.current_balance or 0) for d in debts if d.is_active), 2)],
+        ["Total de Transações Exportadas", len(txs)],
+    ]
+
+    tx_rows: list[list[object]] = [
+        ["Data", "Mês Fatura", "Descrição", "Estabelecimento", "Tipo", "Categoria", "Conta", "Forma Pgto", "Tags", "Valor (R$)"]
+    ]
+    for t in txs:
+        cname = t.categories[0].category.name if t.categories and t.categories[0].category else "Outros"
+        tags_str = ", ".join(t.tags or []) if isinstance(t.tags, list) else ""
+        tx_rows.append([
+            t.transaction_date.isoformat(),
+            t.statement_month or t.transaction_date.strftime("%Y-%m"),
+            t.description,
+            t.merchant_name or "",
+            t.type.value,
+            cname,
+            acct_map.get(t.account_id, ""),
+            t.payment_method or "",
+            tags_str,
+            round(float(t.amount or 0), 2),
+        ])
+
+    card_rows: list[list[object]] = [["Cartão", "Bandeira", "Final", "Fechamento", "Vencimento", "Limite (R$)", "Saldo Banco (R$)"]]
+    for c in cards:
+        card_rows.append([c.name, c.brand or "", c.last4 or "", c.closing_day, c.due_day, round(float(c.credit_limit or 0), 2), round(float(c.pluggy_balance or 0), 2)])
+
+    rec_rows: list[list[object]] = [["Descrição", "Tipo", "Categoria", "Dia", "Origem", "Valor (R$)"]]
+    for r in rules:
+        rec_rows.append([r.description, r.type.value, r.category_name or "", r.day_of_month, r.source or "manual", round(float(r.amount or 0), 2)])
+
+    inv_rows: list[list[object]] = [["Ativo", "Classe", "Quantidade", "Preço Médio (R$)", "Total (R$)"]]
+    for h in holdings:
+        qty = float(h.quantity or 0)
+        px = float(h.average_price or 0)
+        inv_rows.append([h.ticker, h.asset_class, qty, round(px, 2), round(qty * px, 2)])
+
+    debt_rows: list[list[object]] = [["Dívida", "Tipo", "Credor", "Sistema", "Juros %/mês", "Parcela (R$)", "Saldo Devedor (R$)"]]
+    for d in debts:
+        debt_rows.append([d.name, d.debt_type, d.creditor or "", d.amortization_system, float(d.interest_rate_monthly or 0), round(float(d.monthly_payment or 0), 2), round(float(d.current_balance or 0), 2)])
+
+    xlsx_bytes = build_xlsx_workbook([
+        ("Resumo", summary_rows),
+        ("Transacoes", tx_rows),
+        ("Cartoes", card_rows),
+        ("Recorrentes", rec_rows),
+        ("Investimentos", inv_rows),
+        ("Dividas", debt_rows),
+    ])
+    return Response(
+        content=xlsx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="mony-relatorio-{sel_year}.xlsx"'},
+    )

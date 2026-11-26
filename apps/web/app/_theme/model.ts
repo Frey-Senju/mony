@@ -33,7 +33,32 @@ export type AppearanceSettings = {
   liquidRefraction: boolean;
   reduceTransparency: boolean;
   highContrast: boolean;
+  colorblindMode: boolean;
+  privacyMode: boolean;
+  comfortableReading: boolean;
 };
+
+export const CHART_PALETTE_DEFAULT = [
+  "#0071E3",
+  "#10B981",
+  "#8B5CF6",
+  "#F59E0B",
+  "#EC4899",
+  "#06B6D4",
+] as const;
+
+export const CHART_PALETTE_OKABE_ITO = [
+  "#0072B2",
+  "#009E73",
+  "#E69F00",
+  "#CC79A7",
+  "#56B4E9",
+  "#D55E00",
+] as const;
+
+export function getChartPalette(colorblindMode: boolean): readonly string[] {
+  return colorblindMode ? CHART_PALETTE_OKABE_ITO : CHART_PALETTE_DEFAULT;
+}
 
 export const APPEARANCE_STORAGE_KEY = "mony_appearance_v1";
 
@@ -82,6 +107,9 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   liquidRefraction: true,
   reduceTransparency: false,
   highContrast: false,
+  colorblindMode: false,
+  privacyMode: false,
+  comfortableReading: false,
 };
 
 export type CuratedThemePreset = {
@@ -169,6 +197,8 @@ export const CURATED_PRESETS: readonly CuratedThemePreset[] = [
       liquidRefraction: false,
       reduceTransparency: true,
       highContrast: true,
+      colorblindMode: true,
+      comfortableReading: true,
     },
   },
 ];
@@ -231,6 +261,9 @@ export function normalizeAppearanceSettings(input: unknown): AppearanceSettings 
     liquidRefraction: typeof raw.liquidRefraction === "boolean" ? raw.liquidRefraction : DEFAULT_APPEARANCE.liquidRefraction,
     reduceTransparency: typeof raw.reduceTransparency === "boolean" ? raw.reduceTransparency : DEFAULT_APPEARANCE.reduceTransparency,
     highContrast: typeof raw.highContrast === "boolean" ? raw.highContrast : DEFAULT_APPEARANCE.highContrast,
+    colorblindMode: typeof raw.colorblindMode === "boolean" ? raw.colorblindMode : DEFAULT_APPEARANCE.colorblindMode,
+    privacyMode: typeof raw.privacyMode === "boolean" ? raw.privacyMode : DEFAULT_APPEARANCE.privacyMode,
+    comfortableReading: typeof raw.comfortableReading === "boolean" ? raw.comfortableReading : DEFAULT_APPEARANCE.comfortableReading,
   };
 }
 
@@ -306,6 +339,9 @@ export function applyAppearanceToDocument(
   root.dataset.specular = String(settings.specularBorder && !settings.reduceTransparency);
   root.dataset.reduceTransparency = String(settings.reduceTransparency);
   root.dataset.highContrast = String(settings.highContrast);
+  root.dataset.colorblind = String(settings.colorblindMode);
+  root.dataset.privacy = String(settings.privacyMode);
+  root.dataset.reading = settings.comfortableReading ? "comfortable" : "default";
   root.dataset.fontScale = settings.fontScale;
 
   root.style.setProperty("--accent", settings.accentHex);

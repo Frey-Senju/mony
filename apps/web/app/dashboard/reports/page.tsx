@@ -299,6 +299,29 @@ function ReportsContent() {
           </button>
           <button
             type="button"
+            onClick={async () => {
+              if (!token) return
+              const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+              const res = await fetch(`${apiUrl}/reports/export-xlsx?year=${year}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              })
+              if (!res.ok) return
+              const blob = await res.blob()
+              const url = URL.createObjectURL(blob)
+              const a = document.createElement('a')
+              a.href = url
+              a.download = `mony-relatorio-${year}.xlsx`
+              a.click()
+              URL.revokeObjectURL(url)
+            }}
+            disabled={!token}
+            className="flex items-center gap-2 px-4 py-2 text-sm rounded-md border border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition disabled:opacity-50"
+            data-testid="export-xlsx"
+          >
+            ↓ Exportar Excel (.xlsx)
+          </button>
+          <button
+            type="button"
             onClick={() => window.print()}
             className="flex items-center gap-2 px-4 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
             data-testid="print-pdf"

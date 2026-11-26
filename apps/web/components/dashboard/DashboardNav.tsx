@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
@@ -28,6 +28,12 @@ import {
   SlidersHorizontal,
   CreditCard,
   ShieldCheck,
+  Calendar,
+  Scale,
+  Search,
+  Eye,
+  EyeOff,
+  Keyboard,
 } from 'lucide-react'
 import { useAppearance } from '@/app/_theme/provider'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -35,28 +41,60 @@ import { MonyLogo } from '@/components/brand/MonyLogo'
 import { MonyAIDrawer } from '@/components/ai/MonyAIDrawer'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
 import { PwaInstallPrompt } from '@/components/pwa/PwaInstallPrompt'
+import { CommandPalette, ShortcutsHelpModal } from '@/components/dashboard/CommandPalette'
+import { dispatchToast } from '@/components/ui/ToastProvider'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 interface NavItem {
   href: string
   label: string
   testId: string
   icon: React.ReactNode
+  badgeKey?: 'ai' | 'recurring'
 }
 
-const PRIMARY_ITEMS: NavItem[] = [
-  { href: '/dashboard', label: 'Dashboard', testId: 'nav-dashboard', icon: <LayoutDashboard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/cashflow', label: 'Cashflow', testId: 'nav-cashflow', icon: <Table2 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/investments', label: 'Investimentos', testId: 'nav-investments', icon: <TrendingUp className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/simulators', label: 'Simuladores', testId: 'nav-simulators', icon: <Calculator className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/accounts', label: 'Contas', testId: 'nav-accounts', icon: <Wallet className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/cards', label: 'Cartões', testId: 'nav-cards', icon: <CreditCard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/recurring', label: 'Recorrentes', testId: 'nav-recurring', icon: <Repeat className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/reports', label: 'Relatórios', testId: 'nav-reports', icon: <BarChart3 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/budgets', label: 'Budgets', testId: 'nav-budgets', icon: <PieChart className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/insights', label: 'Insights', testId: 'nav-insights', icon: <Sparkles className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/ai-review', label: 'Revisão IA', testId: 'nav-ai-review', icon: <ShieldCheck className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/goals', label: 'Metas', testId: 'nav-goals', icon: <Target className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/dashboard/rules', label: 'Regras', testId: 'nav-rules', icon: <SlidersHorizontal className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+interface NavGroup {
+  title: string
+  items: NavItem[]
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    title: 'Visão Geral',
+    items: [
+      { href: '/dashboard', label: 'Dashboard', testId: 'nav-dashboard', icon: <LayoutDashboard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/cashflow', label: 'Cashflow', testId: 'nav-cashflow', icon: <Table2 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/calendar', label: 'Calendário', testId: 'nav-calendar', icon: <Calendar className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/reports', label: 'Relatórios', testId: 'nav-reports', icon: <BarChart3 className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+    ],
+  },
+  {
+    title: 'Dia a Dia',
+    items: [
+      { href: '/dashboard/accounts', label: 'Contas', testId: 'nav-accounts', icon: <Wallet className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/cards', label: 'Cartões', testId: 'nav-cards', icon: <CreditCard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/recurring', label: 'Recorrentes', testId: 'nav-recurring', badgeKey: 'recurring', icon: <Repeat className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/budgets', label: 'Budgets', testId: 'nav-budgets', icon: <PieChart className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+    ],
+  },
+  {
+    title: 'Patrimônio & Futuro',
+    items: [
+      { href: '/dashboard/investments', label: 'Investimentos', testId: 'nav-investments', icon: <TrendingUp className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/debts', label: 'Dívidas & Patrimônio', testId: 'nav-debts', icon: <Scale className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/goals', label: 'Metas', testId: 'nav-goals', icon: <Target className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/simulators', label: 'Simuladores', testId: 'nav-simulators', icon: <Calculator className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+    ],
+  },
+  {
+    title: 'Inteligência IA',
+    items: [
+      { href: '/dashboard/ai-review', label: 'Revisão IA', testId: 'nav-ai-review', badgeKey: 'ai', icon: <ShieldCheck className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/insights', label: 'Insights & Saúde', testId: 'nav-insights', icon: <Sparkles className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/rules', label: 'Regras', testId: 'nav-rules', icon: <SlidersHorizontal className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+    ],
+  },
 ]
 
 const SECONDARY_ITEMS: NavItem[] = [
@@ -69,19 +107,56 @@ const SIDEBAR_STORAGE_KEY = 'mony_sidebar_collapsed'
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const { resolvedTheme, toggleDarkMode } = useAppearance()
-  const { user, logout } = useAuth()
+  const { settings, resolvedTheme, toggleDarkMode, togglePrivacyMode } = useAppearance()
+  const { user, tokens, logout } = useAuth()
+  const token = tokens?.access_token
 
   const [collapsed, setCollapsed] = useState(false)
   const [mobileOpen, setMobileOpen] = useState(false)
   const [aiOpen, setAiOpen] = useState(false)
   const [aiTab, setAiTab] = useState<'chat' | 'import'>('chat')
+  const [cmdOpen, setCmdOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [badges, setBadges] = useState<{ ai: number; recurring: number }>({ ai: 0, recurring: 0 })
+
+  const fetchBadges = useCallback(async () => {
+    if (!token) return
+    try {
+      const [aiRes, recRes] = await Promise.all([
+        fetch(`${API_URL}/ai/suggestions?status=pending`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => null),
+        fetch(`${API_URL}/recurring`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => null),
+      ])
+      let aiCount = 0
+      let recCount = 0
+      if (aiRes && aiRes.ok) {
+        const d = await aiRes.json()
+        aiCount = Number(d?.total_pending ?? 0)
+      }
+      if (recRes && recRes.ok) {
+        const d = await recRes.json()
+        recCount = Number(d?.summary?.pending_this_month_count ?? 0)
+      }
+      setBadges({ ai: aiCount, recurring: recCount })
+    } catch {
+      // silent badge fallback
+    }
+  }, [token])
+
+  useEffect(() => {
+    fetchBadges()
+    const onUpdated = () => fetchBadges()
+    window.addEventListener('mony:transactions-updated', onUpdated)
+    return () => window.removeEventListener('mony:transactions-updated', onUpdated)
+  }, [fetchBadges])
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(SIDEBAR_STORAGE_KEY)
       if (saved === 'true') setCollapsed(true)
-      // Support PWA home-screen shortcut `/dashboard?ai=import`
       const params = new URLSearchParams(window.location.search)
       const aiParam = params.get('ai')
       if (aiParam === 'import' || aiParam === 'chat') {
@@ -92,6 +167,40 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       // ignore storage errors
     }
   }, [])
+
+  // Global keyboard shortcuts: Ctrl/Cmd+K, Shift+P, Shift+?
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      const inEditable =
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable)
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setCmdOpen((prev) => !prev)
+        return
+      }
+      if (inEditable) return
+
+      if (e.shiftKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        togglePrivacyMode()
+        dispatchToast(
+          settings.privacyMode ? 'Modo Privacidade desativado' : 'Modo Privacidade ativado (valores ocultos)',
+          'info'
+        )
+      } else if (e.key === '?' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault()
+        setShortcutsOpen((prev) => !prev)
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [settings.privacyMode, togglePrivacyMode])
 
   const toggleCollapse = () => {
     setCollapsed((prev) => {
@@ -105,10 +214,10 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     })
   }
 
-  const openAI = (tab: 'chat' | 'import') => {
+  const openAI = useCallback((tab: 'chat' | 'import') => {
     setAiTab(tab)
     setAiOpen(true)
-  }
+  }, [])
 
   const isRouteActive = (href: string) =>
     href === '/dashboard' ? pathname === '/dashboard' : Boolean(pathname?.startsWith(href))
@@ -116,6 +225,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const renderNavLink = (item: NavItem, isMobile = false) => {
     const active = isRouteActive(item.href)
     const iconOnly = collapsed && !isMobile
+    const badgeCount = item.badgeKey ? badges[item.badgeKey] : 0
 
     return (
       <li key={item.href}>
@@ -127,15 +237,29 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           aria-label={iconOnly ? item.label : undefined}
           title={iconOnly ? item.label : undefined}
           className={`group relative flex items-center rounded-2xl text-sm font-medium transition-all duration-200 ${
-            iconOnly ? 'justify-center p-3' : 'gap-3 px-3.5 py-2.5'
+            iconOnly ? 'justify-center p-2.5' : 'justify-between gap-2 px-3 py-2'
           } ${
             active
               ? 'liquid-nav-active'
               : 'text-slate-700 dark:text-slate-200 hover:text-slate-950 dark:hover:text-white hover:bg-white/45 dark:hover:bg-white/10'
           }`}
         >
-          {item.icon}
-          {!iconOnly && <span className="truncate">{item.label}</span>}
+          <span className="flex items-center gap-2.5 min-w-0">
+            {item.icon}
+            {!iconOnly && <span className="truncate">{item.label}</span>}
+          </span>
+          {badgeCount > 0 && (
+            <span
+              className={`${
+                iconOnly
+                  ? 'absolute top-1 right-1 w-2 h-2 rounded-full bg-violet-500'
+                  : 'px-1.5 py-0.5 text-[10px] font-bold rounded-full bg-violet-600 text-white shrink-0'
+              }`}
+              aria-label={`${badgeCount} pendência(s)`}
+            >
+              {iconOnly ? '' : badgeCount > 99 ? '99+' : badgeCount}
+            </span>
+          )}
         </Link>
       </li>
     )
@@ -181,14 +305,23 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
 
-        {/* Primary navigation */}
-        <nav className="flex-1 overflow-y-auto px-2.5 py-2 space-y-5" aria-label="Menu principal">
-          <ul className="space-y-1">{PRIMARY_ITEMS.map((item) => renderNavLink(item))}</ul>
+        {/* Grouped Primary Navigation */}
+        <nav className="flex-1 overflow-y-auto px-2.5 py-2 space-y-4" aria-label="Menu principal">
+          {NAV_GROUPS.map((group) => (
+            <div key={group.title}>
+              {!collapsed && (
+                <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  {group.title}
+                </p>
+              )}
+              <ul className="space-y-0.5">{group.items.map((item) => renderNavLink(item))}</ul>
+            </div>
+          ))}
 
           <div className="border-t border-white/45 dark:border-white/10 mx-2" />
 
-          {/* Secondary / Settings group (VisionOS style) */}
-          <ul className="space-y-1">
+          {/* Secondary / Settings group */}
+          <ul className="space-y-0.5">
             {SECONDARY_ITEMS.map((item) => renderNavLink(item))}
 
             <li>
@@ -201,7 +334,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
                 }
                 title={collapsed ? (resolvedTheme === 'dark' ? 'Modo claro' : 'Modo escuro') : undefined}
                 className={`w-full flex items-center rounded-2xl text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-white/45 dark:hover:bg-white/10 transition-all ${
-                  collapsed ? 'justify-center p-3' : 'gap-3 px-3.5 py-2.5'
+                  collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2'
                 }`}
               >
                 {resolvedTheme === 'dark' ? (
@@ -240,7 +373,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             aria-label="Sair da conta"
             title={collapsed ? 'Sair da conta' : undefined}
             className={`w-full flex items-center rounded-2xl text-sm font-medium text-slate-700 dark:text-slate-300 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50/50 dark:hover:bg-red-950/30 transition-all ${
-              collapsed ? 'justify-center p-3' : 'gap-3 px-3.5 py-2.5'
+              collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2'
             }`}
           >
             <LogOut className="w-[18px] h-[18px] shrink-0" aria-hidden="true" />
@@ -249,17 +382,17 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      {/* Main Content Area (shifts smoothly with sidebar width) */}
+      {/* Main Content Area */}
       <div
         className={`flex-1 flex flex-col min-w-0 transition-[padding] duration-300 ease-out ${
           collapsed ? 'lg:pl-[102px]' : 'lg:pl-[284px]'
         }`}
       >
-        {/* Top Floating Action Bar with AI Assistant & File Import */}
+        {/* Top Floating Action Bar */}
         <header className="sticky top-0 z-30 px-4 sm:px-6 lg:px-8 pt-4 pb-2 no-print">
-          <div className="max-w-7xl mx-auto glass-chrome rounded-2xl px-3.5 sm:px-5 h-14 flex items-center justify-between gap-3">
-            {/* Left: Mobile menu + logo */}
-            <div className="flex items-center gap-2.5">
+          <div className="max-w-7xl mx-auto glass-chrome rounded-2xl px-3 sm:px-4 h-14 flex items-center justify-between gap-2">
+            {/* Left: Mobile menu + Command Palette trigger */}
+            <div className="flex items-center gap-2 min-w-0">
               <button
                 type="button"
                 onClick={() => setMobileOpen(true)}
@@ -272,45 +405,153 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               <Link href="/dashboard" className="lg:hidden">
                 <MonyLogo size="sm" showWordmark />
               </Link>
-              <span className="hidden lg:inline-flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" aria-hidden="true" />
-                Mony · Liquid Glass Workspace
-              </span>
+
+              <button
+                type="button"
+                onClick={() => setCmdOpen(true)}
+                data-testid="open-command-palette"
+                aria-label="Abrir busca rápida e comandos (Ctrl+K)"
+                className="hidden sm:inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/50 dark:bg-white/10 hover:bg-white/75 dark:hover:bg-white/15 border border-white/60 dark:border-white/15 text-xs text-slate-600 dark:text-slate-300 transition"
+              >
+                <Search className="w-3.5 h-3.5" aria-hidden="true" />
+                <span className="hidden md:inline">Buscar tela ou ação...</span>
+                <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-slate-200/80 dark:bg-white/10 text-slate-600 dark:text-slate-300">
+                  Ctrl+K
+                </kbd>
+              </button>
             </div>
 
-            {/* Right: Alerts Bell + "Importar Fatura" & "Falar com a IA" pills (VisionOS top actions) */}
-            <div className="flex items-center gap-2">
+            {/* Right: Privacy + Shortcuts + Bell + Import + AI */}
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  togglePrivacyMode()
+                  dispatchToast(
+                    settings.privacyMode ? 'Valores visíveis novamente' : 'Modo Privacidade ativado',
+                    'info'
+                  )
+                }}
+                data-testid="privacy-toggle"
+                aria-pressed={settings.privacyMode}
+                aria-label={settings.privacyMode ? 'Mostrar valores R$' : 'Ocultar valores R$ (Modo Privacidade)'}
+                title="Modo Privacidade (Shift+P)"
+                className={`liquid-btn liquid-btn-glass p-2 rounded-xl transition ${
+                  settings.privacyMode
+                    ? 'text-amber-600 dark:text-amber-400 ring-1 ring-amber-400/50'
+                    : 'text-slate-600 dark:text-slate-300'
+                }`}
+              >
+                {settings.privacyMode ? (
+                  <EyeOff className="w-4 h-4" aria-hidden="true" />
+                ) : (
+                  <Eye className="w-4 h-4" aria-hidden="true" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShortcutsOpen(true)}
+                aria-label="Atalhos de teclado"
+                title="Atalhos de teclado (?)"
+                className="hidden md:inline-flex liquid-btn liquid-btn-glass p-2 rounded-xl text-slate-600 dark:text-slate-300"
+              >
+                <Keyboard className="w-4 h-4" aria-hidden="true" />
+              </button>
+
               <NotificationBell />
 
               <button
                 type="button"
                 onClick={() => openAI('import')}
                 data-testid="open-ai-import"
-                className="liquid-btn liquid-btn-glass inline-flex items-center gap-2 px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-medium"
+                className="liquid-btn liquid-btn-glass inline-flex items-center gap-2 px-2.5 sm:px-3.5 py-2 rounded-full text-xs sm:text-sm font-medium"
                 title="Anexar fatura, extrato, boleto ou PIX para análise automática"
               >
                 <Paperclip className="w-4 h-4 text-primary-600" aria-hidden="true" />
-                <span className="hidden sm:inline">Importar Fatura</span>
+                <span className="hidden sm:inline">Importar</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => openAI('chat')}
                 data-testid="open-ai-chat"
-                className="liquid-btn liquid-btn-primary inline-flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-semibold"
+                className="liquid-btn liquid-btn-primary inline-flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-semibold"
               >
                 <Sparkles className="w-4 h-4" aria-hidden="true" />
-                <span>Falar com a IA</span>
+                <span>Mony IA</span>
               </button>
             </div>
           </div>
         </header>
 
-        {/* Page Content */}
-        <main id="main-content" className="flex-1">
+        {/* Page Content (padded bottom for mobile nav bar) */}
+        <main id="main-content" className="flex-1 pb-24 lg:pb-6">
           {children}
         </main>
       </div>
+
+      {/* Native Mobile Bottom Navigation Bar (PWA) */}
+      <nav
+        aria-label="Navegação rápida móvel"
+        className="lg:hidden fixed bottom-0 inset-x-0 z-40 px-3 pb-3 pt-1 no-print pointer-events-none"
+      >
+        <div className="pointer-events-auto glass-chrome rounded-2xl px-2 py-1.5 grid grid-cols-5 items-center shadow-xl border border-white/60 dark:border-white/15">
+          <Link
+            href="/dashboard"
+            className={`flex flex-col items-center gap-0.5 py-1 rounded-xl text-[10px] font-semibold ${
+              pathname === '/dashboard' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <LayoutDashboard className="w-5 h-5" aria-hidden="true" />
+            <span>Início</span>
+          </Link>
+          <Link
+            href="/dashboard/cashflow"
+            className={`flex flex-col items-center gap-0.5 py-1 rounded-xl text-[10px] font-semibold ${
+              pathname?.startsWith('/dashboard/cashflow') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <Table2 className="w-5 h-5" aria-hidden="true" />
+            <span>Planilha</span>
+          </Link>
+          <button
+            type="button"
+            onClick={() => openAI('chat')}
+            aria-label="Abrir Mony IA e lançamento por voz"
+            className="flex flex-col items-center justify-center -mt-5"
+          >
+            <span
+              className="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg"
+              style={{ background: 'var(--accent)' }}
+            >
+              <Sparkles className="w-5 h-5" aria-hidden="true" />
+            </span>
+            <span className="text-[10px] font-bold text-slate-700 dark:text-slate-200 mt-0.5">IA</span>
+          </button>
+          <Link
+            href="/dashboard/calendar"
+            className={`flex flex-col items-center gap-0.5 py-1 rounded-xl text-[10px] font-semibold ${
+              pathname?.startsWith('/dashboard/calendar') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <Calendar className="w-5 h-5" aria-hidden="true" />
+            <span>Agenda</span>
+          </Link>
+          <Link
+            href="/dashboard/ai-review"
+            className={`relative flex flex-col items-center gap-0.5 py-1 rounded-xl text-[10px] font-semibold ${
+              pathname?.startsWith('/dashboard/ai-review') ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <ShieldCheck className="w-5 h-5" aria-hidden="true" />
+            <span>Revisão</span>
+            {badges.ai > 0 && (
+              <span className="absolute top-0.5 right-3 w-2 h-2 rounded-full bg-violet-600" />
+            )}
+          </Link>
+        </div>
+      </nav>
 
       {/* Mobile Drawer Sidebar */}
       {mobileOpen && (
@@ -334,11 +575,18 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </div>
 
             <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
-              <ul className="space-y-1">
-                {PRIMARY_ITEMS.map((item) => renderNavLink(item, true))}
-              </ul>
+              {NAV_GROUPS.map((group) => (
+                <div key={group.title}>
+                  <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    {group.title}
+                  </p>
+                  <ul className="space-y-0.5">
+                    {group.items.map((item) => renderNavLink(item, true))}
+                  </ul>
+                </div>
+              ))}
               <div className="border-t border-white/40 dark:border-white/10" />
-              <ul className="space-y-1">
+              <ul className="space-y-0.5">
                 {SECONDARY_ITEMS.map((item) => renderNavLink(item, true))}
                 <li>
                   <button
@@ -375,7 +623,9 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Global Mony IA Assistant & Document Analyzer Drawer */}
+      {/* Global Command Palette, Keyboard Shortcuts & Mony IA Drawer */}
+      <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} onOpenAI={openAI} />
+      <ShortcutsHelpModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <MonyAIDrawer open={aiOpen} initialTab={aiTab} onClose={() => setAiOpen(false)} />
     </div>
   )

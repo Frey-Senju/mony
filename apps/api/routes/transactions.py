@@ -137,6 +137,8 @@ def _serialize_transaction(tx: Transaction) -> "TransactionResponse":
         category_icon=primary_cat.icon if primary_cat else None,
         user_edited=bool(getattr(tx, "user_edited", False)),
         origin_metadata=getattr(tx, "origin_metadata", None),
+        tags=list(getattr(tx, "tags", None) or []),
+        parent_transaction_id=getattr(tx, "parent_transaction_id", None),
         created_at=tx.created_at,
         updated_at=tx.updated_at,
     )
@@ -165,6 +167,7 @@ class TransactionCreate(BaseModel):
     original_purchase_date: Optional[date] = None
     category_id: Optional[str] = None
     category_name: Optional[str] = None
+    tags: Optional[list[str]] = None
 
 
 class TransactionUpdate(BaseModel):
@@ -187,6 +190,19 @@ class TransactionUpdate(BaseModel):
     original_purchase_date: Optional[date] = None
     category_id: Optional[str] = None
     category_name: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class SplitItemInput(BaseModel):
+    description: str = Field(min_length=1, max_length=255)
+    amount: Decimal = Field(gt=0, decimal_places=2)
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+    tags: Optional[list[str]] = None
+
+
+class SplitTransactionRequest(BaseModel):
+    parts: list[SplitItemInput] = Field(min_length=2, max_length=10)
 
 
 class BulkCategorizeRequest(BaseModel):
@@ -228,6 +244,8 @@ class TransactionResponse(BaseModel):
     category_icon: Optional[str] = None
     user_edited: bool = False
     origin_metadata: Optional[dict] = None
+    tags: list[str] = Field(default_factory=list)
+    parent_transaction_id: Optional[UUID | str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -315,6 +333,7 @@ async def create_transaction(
         is_recurring=payload.is_recurring,
         recurring_pattern=payload.recurring_pattern,
         payment_method=payload.payment_method,
+        tags=[t.strip() for t in (payload.tags or []) if t.strip()],
         installment_number=payload.installment_number,
         installment_total=payload.installment_total,
         statement_month=payload.statement_month,
@@ -877,3 +896,82 @@ async def delete_transaction(
     transaction.deleted_at = datetime.utcnow()
     db.commit()
     return None
+
+
+@router.post("/{transaction_id}/split", status_code=201)
+async def split_transaction(
+    transaction_id: str,
+    payload: SplitTransactionRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Split a single transaction into 2..10 categorized parts preserving exact total
+    amount and account balance (EPIC-006 Story 6.8).
+    """
+    uid = parse_uuid(user_id, "user_id")
+    tid = parse_uuid(transaction_id, "transaction_id")
+    parent = (
+        db.query(Transaction)
+        .filter(Transaction.id == tid, Transaction.user_id == uid, Transaction.deleted_at.is_(None))
+        .first()
+    )
+    if not parent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transação não encontrada.")
+
+    parts_sum = sum(Decimal(str(p.amount)) for p in payload.parts)
+    orig_amt = Decimal(str(parent.amount))
+    if abs(parts_sum - orig_amt) > Decimal("0.02"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A soma das partes (R$ {parts_sum:.2f}) deve ser igual ao valor original (R$ {orig_amt:.2f}).",
+        )
+
+    # First part updates parent in-place (preserves external_id/dedup_hash/origin_metadata!)
+    first = payload.parts[0]
+    parent.description = first.description.strip()
+    parent.amount = Decimal(str(first.amount))
+    parent.user_edited = True
+    if first.tags is not None:
+        parent.tags = [t.strip() for t in first.tags if t.strip()]
+    cat0 = _resolve_category(db, uid, first.category_id, first.category_name)
+    if cat0:
+        _set_transaction_category(db, parent, cat0)
+
+    created_children: list[Transaction] = []
+    from uuid import uuid4 as _uuid4
+    for part in payload.parts[1:]:
+        child = Transaction(
+            id=_uuid4(),
+            user_id=uid,
+            account_id=parent.account_id,
+            type=parent.type,
+            amount=Decimal(str(part.amount)),
+            currency=parent.currency or "BRL",
+            description=part.description.strip(),
+            notes=parent.notes,
+            transaction_date=parent.transaction_date,
+            merchant_name=parent.merchant_name,
+            payment_method=parent.payment_method,
+            statement_month=parent.statement_month,
+            source=parent.source or "manual",
+            user_edited=True,
+            parent_transaction_id=parent.id,
+            tags=[t.strip() for t in (part.tags or []) if t.strip()],
+        )
+        db.add(child)
+        db.flush()
+        cat = _resolve_category(db, uid, part.category_id, part.category_name)
+        if cat:
+            _set_transaction_category(db, child, cat)
+        created_children.append(child)
+
+    db.commit()
+    all_ids = [parent.id] + [c.id for c in created_children]
+    rows = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(Transaction.id.in_(all_ids))
+        .all()
+    )
+    return {"split_count": len(rows), "items": [_serialize_transaction(r) for r in rows]}

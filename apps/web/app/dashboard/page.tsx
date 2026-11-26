@@ -19,6 +19,7 @@ import { Charts } from '@/components/dashboard/Charts'
 import { TransactionModal } from '@/components/dashboard/TransactionModal'
 import { BulkActions } from '@/components/dashboard/BulkActions'
 import { InstallmentForecast } from '@/components/dashboard/InstallmentForecast'
+import { SetupChecklist } from '@/components/dashboard/SetupChecklist'
 import { useTransactions, type FilterState, type Transaction } from '@/hooks/useTransactions'
 import { useFilter } from '@/hooks/useFilter'
 import { useCategories } from '@/hooks/useCategories'
@@ -479,6 +480,8 @@ function DashboardContent() {
             </Link>
           </div>
         )}
+
+        <SetupChecklist token={accessToken} budgetsCount={budgets.length} />
 
         {/* Summary Cards */}
         <section aria-labelledby="summary-heading">

@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import { APPEARANCE_BOOTSTRAP_SCRIPT } from '@/app/_theme/model'
 import { AppearanceProvider } from '@/app/_theme/provider'
 import { LiquidGlassBackdrop } from '@/app/_theme/liquid-backdrop'
+import { ToastProvider } from '@/components/ui/ToastProvider'
 import './globals.css'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
@@ -54,10 +55,12 @@ export default function RootLayout({
           Pular para o conteúdo principal
         </a>
         <AppearanceProvider>
-          <LiquidGlassBackdrop />
-          <div className="relative z-10 min-h-screen flex flex-col">
-            {children}
-          </div>
+          <ToastProvider>
+            <LiquidGlassBackdrop />
+            <div className="relative z-10 min-h-screen flex flex-col">
+              {children}
+            </div>
+          </ToastProvider>
         </AppearanceProvider>
       </body>
     </html>

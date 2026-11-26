@@ -373,6 +373,27 @@ function AppearanceStudio() {
               onChange={(checked) => updateSettings({ highContrast: checked })}
             />
             <LiquidSwitch
+              id="switch-colorblind"
+              label="Paleta segura para daltonismo (Okabe-Ito)"
+              description="Aplica cores de alto contraste cromático em todos os gráficos do Mony"
+              checked={settings.colorblindMode}
+              onChange={(checked) => updateSettings({ colorblindMode: checked })}
+            />
+            <LiquidSwitch
+              id="switch-comfortable-reading"
+              label="Leitura confortável (Dislexia & Espaçamento)"
+              description="Aumenta espaçamento entre letras, palavras e linhas para leitura prolongada"
+              checked={settings.comfortableReading}
+              onChange={(checked) => updateSettings({ comfortableReading: checked })}
+            />
+            <LiquidSwitch
+              id="switch-privacy-mode"
+              label="Modo Privacidade (Shift+P)"
+              description="Oculta valores R$ com desfoque para usar o Mony em locais públicos"
+              checked={settings.privacyMode}
+              onChange={(checked) => updateSettings({ privacyMode: checked })}
+            />
+            <LiquidSwitch
               id="switch-ambient-motion"
               label="Movimento fluido de fundo"
               description="Orbes e ondas luminosas sutis no plano de fundo"

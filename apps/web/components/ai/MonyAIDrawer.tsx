@@ -147,8 +147,21 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
     [token, refreshToken]
   )
 
-  const [tab, setTab] = useState<'chat' | 'import'>(initialTab)
+  const [tab, setTab] = useState<'chat' | 'copilot' | 'import'>(initialTab)
   const [aiStatus, setAiStatus] = useState<{ provider: string; model: string; llm_connected: boolean } | null>(null)
+
+  // Copilot (1-click confirmed actions) state
+  const [copilotPrompt, setCopilotPrompt] = useState('')
+  const [copilotLoading, setCopilotLoading] = useState(false)
+  const [copilotExecuting, setCopilotExecuting] = useState(false)
+  const [copilotPlan, setCopilotPlan] = useState<{
+    action_type: string
+    requires_confirmation: boolean
+    summary: string
+    preview_details: string[]
+    payload: Record<string, unknown>
+  } | null>(null)
+  const [copilotResult, setCopilotResult] = useState<string | null>(null)
 
   // Chat state
   const [messages, setMessages] = useState<ChatItem[]>([
@@ -516,6 +529,52 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
     }
   }
 
+  const handleCopilotPlan = async (e?: React.FormEvent) => {
+    e?.preventDefault()
+    if (!copilotPrompt.trim() || copilotLoading) return
+    setCopilotLoading(true)
+    setCopilotResult(null)
+    setCopilotPlan(null)
+    try {
+      const res = await authFetch(`${API_URL}/ai/copilot/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: copilotPrompt.trim() }),
+      })
+      if (res.ok) {
+        setCopilotPlan(await res.json())
+      }
+    } finally {
+      setCopilotLoading(false)
+    }
+  }
+
+  const handleCopilotExecute = async () => {
+    if (!copilotPlan || !copilotPlan.requires_confirmation || copilotExecuting) return
+    setCopilotExecuting(true)
+    try {
+      const res = await authFetch(`${API_URL}/ai/copilot/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action_type: copilotPlan.action_type,
+          payload: copilotPlan.payload,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (res.ok && data.ok) {
+        setCopilotResult(data.message || 'Ação executada com sucesso!')
+        setCopilotPlan(null)
+        setCopilotPrompt('')
+        window.dispatchEvent(new CustomEvent('mony:transactions-updated'))
+      } else {
+        setCopilotResult(data.detail || 'Não foi possível executar esta ação.')
+      }
+    } finally {
+      setCopilotExecuting(false)
+    }
+  }
+
   if (!open) return null
 
   const selectedCount = editableItems.filter((i) => i.selected !== false).length
@@ -563,7 +622,7 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
         {/* Segmented tabs */}
         <div className="px-6 pt-4 pb-2">
           <div
-            className="grid grid-cols-2 p-1 rounded-2xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15"
+            className="grid grid-cols-3 p-1 rounded-2xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15"
             role="tablist"
             aria-label="Modos da Mony IA"
           >
@@ -572,30 +631,127 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               role="tab"
               aria-selected={tab === 'chat'}
               onClick={() => setTab('chat')}
-              className={`flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-medium transition-all ${
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
                 tab === 'chat' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
               }`}
             >
               <Sparkles className="w-4 h-4" aria-hidden="true" />
-              Falar com a IA
+              Chat &amp; Voz
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'copilot'}
+              onClick={() => setTab('copilot')}
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
+                tab === 'copilot' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+              Copiloto
             </button>
             <button
               type="button"
               role="tab"
               aria-selected={tab === 'import'}
               onClick={() => setTab('import')}
-              className={`flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-medium transition-all ${
+              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
                 tab === 'import' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
               }`}
             >
               <Paperclip className="w-4 h-4" aria-hidden="true" />
-              Importar Fatura / Arquivo
+              Importar
             </button>
           </div>
         </div>
 
-        {/* Tab 1: Chat */}
-        {tab === 'chat' ? (
+        {/* Tab 2: Copilot 1-Click Actions */}
+        {tab === 'copilot' ? (
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            <div className="glass-card p-4 space-y-2 text-xs text-slate-600 dark:text-slate-300">
+              <p className="font-bold text-sm text-slate-900 dark:text-white">
+                Mony Copiloto — Execute ações em linguagem natural
+              </p>
+              <p>
+                Diga o que deseja fazer. A IA monta um cartão de prévia seguro e só executa após sua confirmação.
+              </p>
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[
+                  'Criar budget de R$ 900 para Alimentação',
+                  'Criar meta Viagem de R$ 8000',
+                  'Mudar todas as compras da Uber para Trabalho',
+                  'Paguei R$ 145 no PIX no mercado',
+                ].map((ex) => (
+                  <button
+                    key={ex}
+                    type="button"
+                    onClick={() => setCopilotPrompt(ex)}
+                    className="px-2.5 py-1 rounded-lg bg-white/60 dark:bg-white/10 hover:bg-white dark:hover:bg-white/15 text-[11px] font-medium text-slate-700 dark:text-slate-200 transition"
+                  >
+                    {ex}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <form onSubmit={handleCopilotPlan} className="flex gap-2">
+              <input
+                type="text"
+                value={copilotPrompt}
+                onChange={(e) => setCopilotPrompt(e.target.value)}
+                placeholder="Ex: Criar budget de R$ 800 para Lazer..."
+                className="input-base flex-1"
+              />
+              <button
+                type="submit"
+                disabled={copilotLoading || !copilotPrompt.trim()}
+                className="liquid-btn liquid-btn-primary px-4 py-2 rounded-xl text-sm font-semibold disabled:opacity-50"
+              >
+                {copilotLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Planejar'}
+              </button>
+            </form>
+
+            {copilotResult && (
+              <div role="status" className="glass-card p-4 border-emerald-400/60 text-sm text-emerald-700 dark:text-emerald-300 flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                {copilotResult}
+              </div>
+            )}
+
+            {copilotPlan && (
+              <div className="glass-card p-5 border-violet-400/50 space-y-3">
+                <p className="text-xs font-bold uppercase tracking-wider text-violet-600 dark:text-violet-300">
+                  Prévia da Ação ({copilotPlan.action_type})
+                </p>
+                <p className="text-sm font-bold text-slate-900 dark:text-white">{copilotPlan.summary}</p>
+                <ul className="space-y-1 text-xs text-slate-600 dark:text-slate-300">
+                  {copilotPlan.preview_details.map((d, i) => (
+                    <li key={i}>• {d}</li>
+                  ))}
+                </ul>
+                {copilotPlan.requires_confirmation && (
+                  <div className="flex justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setCopilotPlan(null)}
+                      className="liquid-btn liquid-btn-glass px-3.5 py-2 rounded-xl text-xs font-medium"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCopilotExecute}
+                      disabled={copilotExecuting}
+                      className="liquid-btn liquid-btn-primary px-4 py-2 rounded-xl text-xs font-semibold disabled:opacity-50"
+                    >
+                      {copilotExecuting ? 'Executando...' : 'Confirmar e Executar'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : tab === 'chat' ? (
           <div className="flex-1 flex flex-col min-h-0">
             <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
               {messages.map((msg, idx) => (

@@ -277,6 +277,8 @@ class Transaction(Base):
     # external_id is the bank-side transaction ID; populated only when source != manual.
     source = Column(String(20), nullable=False, default=TransactionSource.MANUAL.value)
     external_id = Column(String(200), nullable=True)
+    tags = Column(JSON, nullable=True, default=list)
+    parent_transaction_id = Column(PG_UUID(as_uuid=True), nullable=True)
 
     # Payment method & credit-card invoice installment tracking
     payment_method = Column(String(30), nullable=True)
@@ -1027,6 +1029,36 @@ class AISuggestion(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "dedup_key", name="uq_ai_suggestions_user_dedup"),
         Index("idx_ai_suggestions_user_status", "user_id", "status", "module"),
+    )
+
+    user = relationship("User")
+
+
+class Debt(Base):
+    """Debts, loans, mortgages and financing obligations (EPIC-006 Story 6.6)."""
+
+    __tablename__ = "debts"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    debt_type = Column(String(40), nullable=False, default="other")  # mortgage | vehicle | personal_loan | credit_card | consortium | student | other
+    creditor = Column(String(255), nullable=True)
+    original_amount = Column(Numeric(15, 2), nullable=False)
+    current_balance = Column(Numeric(15, 2), nullable=False)
+    interest_rate_monthly = Column(Numeric(8, 4), nullable=False, default=Decimal("0"))
+    monthly_payment = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    remaining_installments = Column(Integer, nullable=True)
+    due_day = Column(Integer, nullable=False, default=10)
+    amortization_system = Column(String(20), nullable=False, default="price")  # price | sac | other
+    is_active = Column(Boolean, nullable=False, default=True)
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_debts_user_active", "user_id", "is_active"),
     )
 
     user = relationship("User")

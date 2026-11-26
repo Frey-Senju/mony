@@ -13,6 +13,7 @@ import {
   APPEARANCE_STORAGE_KEY,
   DEFAULT_APPEARANCE,
   applyAppearanceToDocument,
+  getChartPalette,
   normalizeAppearanceSettings,
   resolveThemeMode,
   type AppearanceSettings,
@@ -22,10 +23,12 @@ import {
 type AppearanceContextValue = {
   settings: AppearanceSettings;
   resolvedTheme: ResolvedTheme;
+  chartPalette: readonly string[];
   updateSettings: (patch: Partial<AppearanceSettings>) => void;
   replaceSettings: (next: AppearanceSettings) => void;
   resetSettings: () => void;
   toggleDarkMode: () => void;
+  togglePrivacyMode: () => void;
 };
 
 const AppearanceContext = createContext<AppearanceContextValue | null>(null);
@@ -110,16 +113,29 @@ export function AppearanceProvider({ children }: { children: ReactNode }) {
     });
   }, [systemDark]);
 
+  const togglePrivacyMode = useCallback(() => {
+    setSettings((current) =>
+      normalizeAppearanceSettings({ ...current, privacyMode: !current.privacyMode }),
+    );
+  }, []);
+
+  const chartPalette = useMemo(
+    () => getChartPalette(settings.colorblindMode),
+    [settings.colorblindMode],
+  );
+
   const value = useMemo(
     () => ({
       settings,
       resolvedTheme,
+      chartPalette,
       updateSettings,
       replaceSettings,
       resetSettings,
       toggleDarkMode,
+      togglePrivacyMode,
     }),
-    [settings, resolvedTheme, updateSettings, replaceSettings, resetSettings, toggleDarkMode],
+    [settings, resolvedTheme, chartPalette, updateSettings, replaceSettings, resetSettings, toggleDarkMode, togglePrivacyMode],
   );
 
   return <AppearanceContext.Provider value={value}>{children}</AppearanceContext.Provider>;
@@ -131,10 +147,12 @@ export function useAppearance(): AppearanceContextValue {
     return {
       settings: DEFAULT_APPEARANCE,
       resolvedTheme: "light",
+      chartPalette: getChartPalette(false),
       updateSettings: () => undefined,
       replaceSettings: () => undefined,
       resetSettings: () => undefined,
       toggleDarkMode: () => undefined,
+      togglePrivacyMode: () => undefined,
     };
   }
   return context;
