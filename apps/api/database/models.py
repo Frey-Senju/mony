@@ -1062,3 +1062,40 @@ class Debt(Base):
     )
 
     user = relationship("User")
+
+
+class OFPendingTransaction(Base):
+    """Staging queue for Open Finance transactions awaiting explicit user approval (EPIC-007 Story 7.1)."""
+
+    __tablename__ = "of_pending_transactions"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    linked_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("of_linked_accounts.id", ondelete="SET NULL"), nullable=True)
+    mony_account_id = Column(PG_UUID(as_uuid=True), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    external_id = Column(String(200), nullable=True)
+    dedup_hash = Column(String(64), nullable=False)
+    type = Column(SQLEnum(TransactionType), nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
+    currency = Column(String(3), nullable=False, default="BRL")
+    description = Column(String(255), nullable=False)
+    merchant_name = Column(String(255), nullable=True)
+    transaction_date = Column(Date, nullable=False)
+    statement_month = Column(String(7), nullable=True)
+    payment_method = Column(String(30), nullable=True)
+    installment_number = Column(Integer, nullable=True)
+    installment_total = Column(Integer, nullable=True)
+    suggested_category_name = Column(String(100), nullable=True)
+    origin_metadata = Column(JSON, nullable=True)
+    status = Column(String(20), nullable=False, default="pending")  # pending | approved | rejected
+    approved_transaction_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    reviewed_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "dedup_hash", name="uq_of_pending_user_dedup"),
+        Index("idx_of_pending_user_status", "user_id", "status"),
+    )
+
+    user = relationship("User")
+    mony_account = relationship("Account")

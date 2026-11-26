@@ -8,6 +8,9 @@ interface SummaryCard {
   title: string
   value: string | number
   trend?: number
+  invertTrendColor?: boolean
+  progressPct?: number
+  isMoney?: boolean
   icon: React.ReactNode
   color: 'blue' | 'green' | 'red' | 'purple'
   subtitle?: string
@@ -62,6 +65,8 @@ export function SummaryCards({
       title: 'Gastos este mês',
       value: `-R$ ${Math.abs(totalSpent).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
       trend: spentTrend,
+      invertTrendColor: true,
+      isMoney: true,
       icon: <TrendingDown className="w-5 h-5" aria-hidden="true" />,
       color: 'red',
       subtitle: previousMonthData ? 'Despesas totais' : 'Primeiro mês de dados',
@@ -70,6 +75,7 @@ export function SummaryCards({
       title: 'Renda este mês',
       value: `R$ ${totalIncome.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
       trend: incomeTrend,
+      isMoney: true,
       icon: <TrendingUp className="w-5 h-5" aria-hidden="true" />,
       color: 'green',
       subtitle: previousMonthData ? 'Receitas totais' : 'Primeiro mês de dados',
@@ -78,6 +84,7 @@ export function SummaryCards({
       title: 'Saldo disponível',
       value: `R$ ${currentBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`,
       trend: balanceTrend,
+      isMoney: true,
       icon: <Wallet className="w-5 h-5" aria-hidden="true" />,
       color: 'blue',
       subtitle: 'Todas as contas',
@@ -89,7 +96,7 @@ export function SummaryCards({
         budgetsExceeded > 0
           ? `${budgetsExceeded} ultrapassado${budgetsExceeded > 1 ? 's' : ''}`
           : `${clampedBudget}%`,
-      trend: clampedBudget > 80 ? -5 : 2,
+      progressPct: clampedBudget,
       icon: <Target className="w-5 h-5" aria-hidden="true" />,
       color: 'purple',
       subtitle: budgetsExceeded > 0 ? 'Ver budgets' : `${100 - clampedBudget}% restante`,
@@ -117,7 +124,11 @@ export function SummaryCards({
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
                   {card.title}
                 </p>
-                <p className="text-2xl font-bold text-slate-900 dark:text-white mt-2 truncate">
+                <p
+                  className={`text-2xl font-bold text-slate-900 dark:text-white mt-2 truncate ${
+                    card.isMoney ? 'money-value' : ''
+                  }`}
+                >
                   {card.value}
                 </p>
                 {card.subtitle && (
@@ -132,20 +143,37 @@ export function SummaryCards({
                 {card.icon}
               </div>
             </div>
-            {card.trend !== undefined && (
-              <div className="mt-4 flex items-center gap-1 text-xs">
-                <span
-                  className={
-                    card.trend >= 0
-                      ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
-                      : 'text-rose-600 dark:text-rose-400 font-semibold'
-                  }
-                >
-                  {card.trend > 0 ? '+' : ''}
-                  {card.trend}%
-                </span>
-                <span className="text-slate-500 dark:text-slate-400">vs. mês anterior</span>
+            {card.progressPct !== undefined ? (
+              <div className="mt-4 space-y-1">
+                <div className="h-1.5 rounded-full bg-slate-200/70 dark:bg-white/10 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all ${
+                      card.progressPct >= 100
+                        ? 'bg-rose-500'
+                        : card.progressPct >= 80
+                        ? 'bg-amber-500'
+                        : 'bg-purple-500'
+                    }`}
+                    style={{ width: `${card.progressPct}%` }}
+                  />
+                </div>
               </div>
+            ) : (
+              card.trend !== undefined && (
+                <div className="mt-4 flex items-center gap-1 text-xs">
+                  <span
+                    className={
+                      (card.invertTrendColor ? card.trend <= 0 : card.trend >= 0)
+                        ? 'text-emerald-600 dark:text-emerald-400 font-semibold'
+                        : 'text-rose-600 dark:text-rose-400 font-semibold'
+                    }
+                  >
+                    {card.trend > 0 ? '+' : ''}
+                    {card.trend}%
+                  </span>
+                  <span className="text-slate-500 dark:text-slate-400">vs. mês anterior</span>
+                </div>
+              )
             )}
           </>
         )

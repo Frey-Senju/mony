@@ -16,7 +16,7 @@ export interface Transaction {
   is_recurring: boolean
   recurring_pattern?: string
   is_reconciled: boolean
-  source?: 'manual' | 'open_finance'
+  source?: 'manual' | 'open_finance' | 'spreadsheet' | 'copilot' | string
   external_id?: string | null
   payment_method?: string | null
   installment_number?: number | null
@@ -27,6 +27,9 @@ export interface Transaction {
   category_name?: string
   category_color?: string
   category_icon?: string
+  user_edited?: boolean
+  origin_metadata?: Record<string, unknown> | null
+  tags?: string[]
   created_at: string
   updated_at: string
 }

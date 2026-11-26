@@ -34,6 +34,7 @@ from database.models import (
     OFConsent,
     OFInstitution,
     OFLinkedAccount,
+    OFPendingTransaction,
     OFSyncJob,
     SyncJobStatus,
     Transaction,
@@ -41,7 +42,7 @@ from database.models import (
     TransactionType,
 )
 from routes.categories import ensure_default_categories
-from routes.transactions import _resolve_category, _set_transaction_category
+from routes.transactions import _balance_delta, _resolve_category, _set_transaction_category
 from services.ai_analyzer import _classify_category, _detect_payment_method, _extract_installment
 from services.dedup_engine import (
     assign_batch_dedup_hashes,
@@ -222,6 +223,24 @@ async def _sync_pluggy_account_txs(
     reconciled = 0
 
     for item, dhash in zip(parsed, dedup_hashes):
+        # Check if already staged, approved, or rejected in the approval queue
+        existing_pending = (
+            db.query(OFPendingTransaction)
+            .filter(
+                OFPendingTransaction.user_id == uid,
+                (OFPendingTransaction.dedup_hash == dhash)
+                | (
+                    (OFPendingTransaction.external_id == item["external_id"])
+                    if item["external_id"]
+                    else False
+                ),
+            )
+            .first()
+        )
+        if existing_pending is not None:
+            skipped_dedup += 1
+            continue
+
         action, existing = check_3layer_dedup(
             db,
             user_id=uid,
@@ -263,9 +282,20 @@ async def _sync_pluggy_account_txs(
         ):
             tx_type = TransactionType.TRANSFER
 
-        tx = Transaction(
+        cat_label = rule_category or _classify_category(
+            f"{item['description']} {item['merchant_name'] or ''}",
+            cat_names,
+            tx_type.value,
+        )
+
+        # Story 7.1: Stage in approval queue — NEVER enters user expenses without explicit approval!
+        pending = OFPendingTransaction(
+            id=uuid4(),
             user_id=uid,
-            account_id=mony_account.id,
+            linked_account_id=linked.id,
+            mony_account_id=mony_account.id,
+            external_id=item["external_id"] or None,
+            dedup_hash=dhash,
             type=tx_type,
             amount=item["amount"],
             currency=item["currency"],
@@ -276,11 +306,8 @@ async def _sync_pluggy_account_txs(
             payment_method=item["payment_method"],
             installment_number=item["installment_number"],
             installment_total=item["installment_total"],
-            is_reconciled=True,
-            source=TransactionSource.OPEN_FINANCE.value,
-            external_id=item["external_id"] or None,
-            dedup_hash=dhash,
-            user_edited=False,
+            suggested_category_name=cat_label,
+            status="pending",
             origin_metadata={
                 "provider": "pluggy",
                 "external_id": item["external_id"] or None,
@@ -292,22 +319,9 @@ async def _sync_pluggy_account_txs(
                 "pluggy_account_id": pluggy_account_id,
             },
         )
-        db.add(tx)
+        db.add(pending)
         db.flush()
-
-        cat_label = rule_category or _classify_category(
-            f"{item['description']} {item['merchant_name'] or ''}",
-            cat_names,
-            tx_type.value,
-        )
-        cat = _resolve_category(db, uid, category_name=cat_label)
-        if cat is not None:
-            _set_transaction_category(db, tx, cat)
-
         inserted += 1
-
-    if inserted > 0:
-        detect_and_link_paired_transfers(db, uid, days_back=90)
 
     linked.last_sync_at = datetime.utcnow()
     linked.last_sync_attempt_at = datetime.utcnow()
@@ -744,3 +758,341 @@ async def pluggy_webhook(
             logger.warning("Pluggy webhook sync failed for linked=%s: %s", linked.id, exc)
     db.commit()
     return {"received": True, "event": event, "accounts_synced": synced}
+
+
+# ============ Stories 7.1 & 7.2: Approval Queue & Safe Open Finance Cleanup ============
+
+
+class PendingUpdateRequest(BaseModel):
+    description: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    amount: Optional[float] = Field(default=None, gt=0)
+    type: Optional[TransactionType] = None
+    mony_account_id: Optional[str] = None
+    suggested_category_name: Optional[str] = Field(default=None, max_length=100)
+    statement_month: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    payment_method: Optional[str] = Field(default=None, max_length=30)
+    transaction_date: Optional[date] = None
+
+
+class PendingActionRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+    approve_all: bool = False
+
+
+class CleanOpenFinanceRequest(BaseModel):
+    clear_pending: bool = True
+    clear_auto_cards: bool = False
+
+
+def _serialize_pending(p: OFPendingTransaction, acct_map: dict[UUID, str]) -> dict[str, Any]:
+    return {
+        "id": str(p.id),
+        "mony_account_id": str(p.mony_account_id),
+        "account_name": acct_map.get(p.mony_account_id, "Conta"),
+        "type": p.type.value if hasattr(p.type, "value") else str(p.type),
+        "amount": round(float(p.amount or 0), 2),
+        "currency": p.currency or "BRL",
+        "description": p.description,
+        "merchant_name": p.merchant_name,
+        "transaction_date": p.transaction_date.isoformat() if p.transaction_date else None,
+        "statement_month": p.statement_month,
+        "payment_method": p.payment_method,
+        "installment_number": p.installment_number,
+        "installment_total": p.installment_total,
+        "suggested_category_name": p.suggested_category_name or "Outros",
+        "status": p.status,
+        "created_at": p.created_at.isoformat() if p.created_at else None,
+    }
+
+
+@router.get("/pending")
+async def list_pending_open_finance(
+    status_filter: str = "pending",
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """List Open Finance transactions waiting in the approval queue (Story 7.1)."""
+    uid = parse_uuid(user_id, "user_id")
+    accts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    acct_map = {a.id: a.name for a in accts}
+
+    q = db.query(OFPendingTransaction).filter(OFPendingTransaction.user_id == uid)
+    if status_filter in ("pending", "approved", "rejected"):
+        q = q.filter(OFPendingTransaction.status == status_filter)
+    rows = q.order_by(OFPendingTransaction.transaction_date.desc(), OFPendingTransaction.created_at.desc()).limit(500).all()
+
+    pending_total = (
+        db.query(OFPendingTransaction)
+        .filter(OFPendingTransaction.user_id == uid, OFPendingTransaction.status == "pending")
+        .count()
+    )
+    items = [_serialize_pending(r, acct_map) for r in rows]
+    total_expenses = round(sum(i["amount"] for i in items if i["type"] == "expense"), 2)
+    total_income = round(sum(i["amount"] for i in items if i["type"] == "income"), 2)
+    return {
+        "items": items,
+        "pending_count": pending_total,
+        "total_expenses": total_expenses,
+        "total_income": total_income,
+    }
+
+
+@router.patch("/pending/{pending_id}")
+async def edit_pending_open_finance(
+    pending_id: str,
+    payload: PendingUpdateRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Edit a pending Open Finance transaction before approving it (Story 7.1)."""
+    uid = parse_uuid(user_id, "user_id")
+    pid = parse_uuid(pending_id, "pending_id")
+    row = (
+        db.query(OFPendingTransaction)
+        .filter(
+            OFPendingTransaction.id == pid,
+            OFPendingTransaction.user_id == uid,
+            OFPendingTransaction.status == "pending",
+        )
+        .first()
+    )
+    if not row:
+        raise HTTPException(status_code=404, detail="Transação pendente não encontrada.")
+
+    data = payload.model_dump(exclude_unset=True)
+    if "mony_account_id" in data and data["mony_account_id"]:
+        aid = parse_uuid(data.pop("mony_account_id"), "mony_account_id")
+        acct = db.query(Account).filter(Account.id == aid, Account.user_id == uid, Account.deleted_at.is_(None)).first()
+        if not acct:
+            raise HTTPException(status_code=404, detail="Conta de destino não encontrada.")
+        row.mony_account_id = acct.id
+    for k, v in data.items():
+        if k == "amount" and v is not None:
+            setattr(row, k, Decimal(str(v)))
+        else:
+            setattr(row, k, v)
+    db.commit()
+    db.refresh(row)
+    accts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    return _serialize_pending(row, {a.id: a.name for a in accts})
+
+
+@router.post("/pending/approve")
+async def approve_pending_open_finance(
+    payload: PendingActionRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Approve 1 or many pending Open Finance transactions into real expenses/income (Story 7.1)."""
+    uid = parse_uuid(user_id, "user_id")
+    q = db.query(OFPendingTransaction).filter(
+        OFPendingTransaction.user_id == uid,
+        OFPendingTransaction.status == "pending",
+    )
+    if not payload.approve_all:
+        if not payload.ids:
+            raise HTTPException(status_code=400, detail="Selecione ao menos uma transação para aprovar.")
+        uuids = [parse_uuid(i, "pending_id") for i in payload.ids]
+        q = q.filter(OFPendingTransaction.id.in_(uuids))
+
+    targets = q.all()
+    if not targets:
+        return {"approved": 0, "skipped_duplicates": 0}
+
+    ensure_default_categories(db, uid)
+    approved = 0
+    skipped = 0
+
+    for p in targets:
+        # Final dedup safety against existing transactions
+        dup = (
+            db.query(Transaction)
+            .filter(
+                Transaction.user_id == uid,
+                Transaction.deleted_at.is_(None),
+                (Transaction.dedup_hash == p.dedup_hash)
+                | ((Transaction.external_id == p.external_id) if p.external_id else False),
+            )
+            .first()
+        )
+        if dup is not None:
+            p.status = "approved"
+            p.approved_transaction_id = dup.id
+            p.reviewed_at = datetime.utcnow()
+            skipped += 1
+            continue
+
+        tx = Transaction(
+            id=uuid4(),
+            user_id=uid,
+            account_id=p.mony_account_id,
+            type=p.type,
+            amount=p.amount,
+            currency=p.currency or "BRL",
+            description=p.description,
+            merchant_name=p.merchant_name,
+            transaction_date=p.transaction_date,
+            statement_month=p.statement_month,
+            payment_method=p.payment_method,
+            installment_number=p.installment_number,
+            installment_total=p.installment_total,
+            is_reconciled=True,
+            source=TransactionSource.OPEN_FINANCE.value,
+            external_id=p.external_id,
+            dedup_hash=p.dedup_hash,
+            user_edited=False,
+            origin_metadata=p.origin_metadata,
+        )
+        db.add(tx)
+        db.flush()
+
+        acct = db.query(Account).filter(Account.id == p.mony_account_id).first()
+        if acct is not None:
+            acct.balance = Decimal(str(acct.balance or 0)) + _balance_delta(tx.type, Decimal(str(tx.amount)))
+
+        cat = _resolve_category(db, uid, category_name=p.suggested_category_name or "Outros")
+        if cat is not None:
+            _set_transaction_category(db, tx, cat)
+
+        p.status = "approved"
+        p.approved_transaction_id = tx.id
+        p.reviewed_at = datetime.utcnow()
+        approved += 1
+
+    if approved > 0:
+        detect_and_link_paired_transfers(db, uid, days_back=90)
+        detect_and_register_recurrences(db, uid, lookback_days=180)
+        run_proactive_review(db, uid, lookback_days=120)
+
+    db.commit()
+    return {"approved": approved, "skipped_duplicates": skipped}
+
+
+@router.post("/pending/reject")
+async def reject_pending_open_finance(
+    payload: PendingActionRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Reject 1 or many pending Open Finance transactions so they never enter expenses or re-sync (Story 7.1)."""
+    uid = parse_uuid(user_id, "user_id")
+    q = db.query(OFPendingTransaction).filter(
+        OFPendingTransaction.user_id == uid,
+        OFPendingTransaction.status == "pending",
+    )
+    if not payload.approve_all:
+        if not payload.ids:
+            raise HTTPException(status_code=400, detail="Selecione ao menos uma transação para rejeitar.")
+        uuids = [parse_uuid(i, "pending_id") for i in payload.ids]
+        q = q.filter(OFPendingTransaction.id.in_(uuids))
+
+    targets = q.all()
+    now = datetime.utcnow()
+    for p in targets:
+        p.status = "rejected"
+        p.reviewed_at = now
+    db.commit()
+    return {"rejected": len(targets)}
+
+
+@router.get("/imported-summary")
+async def get_open_finance_imported_summary(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Report how many Open Finance records currently exist in the user's account (Story 7.2)."""
+    uid = parse_uuid(user_id, "user_id")
+    tx_count = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.source == TransactionSource.OPEN_FINANCE.value,
+        )
+        .count()
+    )
+    pending_count = (
+        db.query(OFPendingTransaction)
+        .filter(OFPendingTransaction.user_id == uid, OFPendingTransaction.status == "pending")
+        .count()
+    )
+    auto_cards = (
+        db.query(CreditCard)
+        .filter(
+            CreditCard.user_id == uid,
+            CreditCard.deleted_at.is_(None),
+            CreditCard.external_account_id.isnot(None),
+        )
+        .count()
+    )
+    return {
+        "transactions_open_finance": tx_count,
+        "pending_approval": pending_count,
+        "auto_credit_cards": auto_cards,
+    }
+
+
+@router.delete("/imported-data")
+async def clean_open_finance_imported_data(
+    clear_pending: bool = True,
+    clear_auto_cards: bool = False,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Safely erase all transactions previously imported via Open Finance (source='open_finance'),
+    reverting their balance impact while preserving 100% of manual & spreadsheet transactions (Story 7.2).
+    """
+    uid = parse_uuid(user_id, "user_id")
+    of_txs = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.source == TransactionSource.OPEN_FINANCE.value,
+        )
+        .all()
+    )
+
+    now = datetime.utcnow()
+    accts_cache: dict[UUID, Account] = {
+        a.id: a for a in db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    }
+    deleted_txs = 0
+    for tx in of_txs:
+        acct = accts_cache.get(tx.account_id)
+        if acct is not None:
+            acct.balance = Decimal(str(acct.balance or 0)) - _balance_delta(tx.type, Decimal(str(tx.amount)))
+        tx.deleted_at = now
+        deleted_txs += 1
+
+    deleted_pending = 0
+    if clear_pending:
+        deleted_pending = (
+            db.query(OFPendingTransaction)
+            .filter(OFPendingTransaction.user_id == uid)
+            .delete(synchronize_session=False)
+        )
+
+    deleted_cards = 0
+    if clear_auto_cards:
+        cards = (
+            db.query(CreditCard)
+            .filter(
+                CreditCard.user_id == uid,
+                CreditCard.deleted_at.is_(None),
+                CreditCard.external_account_id.isnot(None),
+            )
+            .all()
+        )
+        for c in cards:
+            c.deleted_at = now
+            deleted_cards += 1
+
+    db.commit()
+    return {
+        "deleted_transactions": deleted_txs,
+        "deleted_pending": deleted_pending,
+        "deleted_auto_cards": deleted_cards,
+        "manual_and_spreadsheet_preserved": True,
+    }

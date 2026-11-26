@@ -20,6 +20,7 @@ import {
 } from 'lucide-react'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories } from '@/hooks/useCategories'
+import { SpreadsheetImporterTab } from '@/components/ai/SpreadsheetImporterTab'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -147,7 +148,7 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
     [token, refreshToken]
   )
 
-  const [tab, setTab] = useState<'chat' | 'copilot' | 'import'>(initialTab)
+  const [tab, setTab] = useState<'chat' | 'copilot' | 'import' | 'spreadsheet'>(initialTab)
   const [aiStatus, setAiStatus] = useState<{ provider: string; model: string; llm_connected: boolean } | null>(null)
 
   // Copilot (1-click confirmed actions) state
@@ -622,7 +623,7 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
         {/* Segmented tabs */}
         <div className="px-6 pt-4 pb-2">
           <div
-            className="grid grid-cols-3 p-1 rounded-2xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15"
+            className="grid grid-cols-4 p-1 rounded-2xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15 gap-0.5"
             role="tablist"
             aria-label="Modos da Mony IA"
           >
@@ -631,23 +632,23 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               role="tab"
               aria-selected={tab === 'chat'}
               onClick={() => setTab('chat')}
-              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
+              className={`flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] sm:text-xs font-medium transition-all ${
                 tab === 'chat' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
               }`}
             >
-              <Sparkles className="w-4 h-4" aria-hidden="true" />
-              Chat &amp; Voz
+              <Sparkles className="w-3.5 h-3.5" aria-hidden="true" />
+              Chat
             </button>
             <button
               type="button"
               role="tab"
               aria-selected={tab === 'copilot'}
               onClick={() => setTab('copilot')}
-              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
+              className={`flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] sm:text-xs font-medium transition-all ${
                 tab === 'copilot' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
               }`}
             >
-              <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
+              <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
               Copiloto
             </button>
             <button
@@ -655,18 +656,36 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               role="tab"
               aria-selected={tab === 'import'}
               onClick={() => setTab('import')}
-              className={`flex items-center justify-center gap-1.5 py-2 rounded-xl text-xs sm:text-sm font-medium transition-all ${
+              className={`flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] sm:text-xs font-medium transition-all ${
                 tab === 'import' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
               }`}
             >
-              <Paperclip className="w-4 h-4" aria-hidden="true" />
-              Importar
+              <Paperclip className="w-3.5 h-3.5" aria-hidden="true" />
+              Fatura
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'spreadsheet'}
+              onClick={() => setTab('spreadsheet')}
+              className={`flex items-center justify-center gap-1 py-2 rounded-xl text-[11px] sm:text-xs font-medium transition-all ${
+                tab === 'spreadsheet' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" aria-hidden="true" />
+              Planilha
             </button>
           </div>
         </div>
 
-        {/* Tab 2: Copilot 1-Click Actions */}
-        {tab === 'copilot' ? (
+        {/* Tab 4: 2026 Financial Spreadsheet Importer */}
+        {tab === 'spreadsheet' ? (
+          <SpreadsheetImporterTab
+            authFetch={authFetch}
+            accounts={accounts}
+            defaultAccountId={selectedAccountId}
+          />
+        ) : tab === 'copilot' ? (
           <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
             <div className="glass-card p-4 space-y-2 text-xs text-slate-600 dark:text-slate-300">
               <p className="font-bold text-sm text-slate-900 dark:text-white">

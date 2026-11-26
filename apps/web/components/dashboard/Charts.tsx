@@ -16,6 +16,7 @@ import {
   Legend,
   ResponsiveContainer,
 } from 'recharts'
+import { useAppearance } from '@/app/_theme/provider'
 
 interface Transaction {
   id: string
@@ -23,6 +24,11 @@ interface Transaction {
   type: 'income' | 'expense'
   transaction_date: string
   category_id?: string
+  category_name?: string
+}
+
+function parseLocalDate(dateStr: string): Date {
+  return new Date(`${(dateStr || '').slice(0, 10)}T12:00:00`)
 }
 
 export interface ChartsProps {
@@ -31,6 +37,7 @@ export interface ChartsProps {
 }
 
 export function Charts({ transactions, loading = false }: ChartsProps) {
+  const { chartPalette } = useAppearance()
   // Calculate monthly spending trend (last 12 months)
   const monthlyTrendData = useMemo(() => {
     const months: { [key: string]: { expense: number; income: number } } = {}
@@ -45,7 +52,7 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
 
     // Aggregate transactions by month
     transactions.forEach((tx) => {
-      const date = new Date(tx.transaction_date)
+      const date = parseLocalDate(tx.transaction_date)
       const key = date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
       if (months[key]) {
         if (tx.type === 'expense') {
@@ -63,7 +70,7 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
     }))
   }, [transactions])
 
-  // Calculate category breakdown (by category_id)
+  // Calculate category breakdown (prefers real category_name; falls back to legacy map)
   const categoryBreakdownData = useMemo(() => {
     const categories: { [key: string]: number } = {}
     const categoryMap: { [key: string]: string } = {
@@ -77,16 +84,18 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
       '8': 'Outros',
     }
 
-    // Aggregate expenses by category
     transactions
       .filter((tx) => tx.type === 'expense')
       .forEach((tx) => {
-        const categoryName = tx.category_id ? (categoryMap[tx.category_id] || 'Outros') : 'Sem categoria'
+        const categoryName =
+          tx.category_name ||
+          (tx.category_id ? categoryMap[tx.category_id] || 'Outros' : 'Sem categoria')
         categories[categoryName] = (categories[categoryName] || 0) + tx.amount
       })
 
     return Object.entries(categories)
       .filter(([_, value]) => value > 0)
+      .sort((a, b) => b[1] - a[1])
       .map(([name, value]) => ({
         name,
         value: Math.abs(value),
@@ -105,7 +114,7 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
     }
 
     transactions.forEach((tx) => {
-      const date = new Date(tx.transaction_date)
+      const date = parseLocalDate(tx.transaction_date)
       const key = date.toLocaleDateString('pt-BR', { month: 'short', year: '2-digit' })
       if (months[key]) {
         if (tx.type === 'expense') {
@@ -123,7 +132,7 @@ export function Charts({ transactions, loading = false }: ChartsProps) {
     }))
   }, [transactions])
 
-  const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6']
+  const COLORS = chartPalette
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {

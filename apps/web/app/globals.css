@@ -707,6 +707,45 @@ body {
   filter: blur(3px);
 }
 
+/* ─── EPIC-007: Translucent Thin Scrollbars & Subtle Page Entrance ─── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 0.55);
+}
+
+@keyframes monyFadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+main > * {
+  animation: monyFadeInUp 220ms var(--ease-spring) both;
+}
+
+:root[data-motion="off"] main > * {
+  animation: none !important;
+}
+
 @media print {
   [data-testid="dashboard-nav"],
   .apple-ambient-canvas,

@@ -16,13 +16,15 @@ interface Transaction {
   category_name?: string
   category_color?: string
   category_icon?: string
-  source?: 'manual' | 'open_finance'
+  source?: 'manual' | 'open_finance' | 'spreadsheet' | 'copilot' | string
   external_id?: string | null
   payment_method?: string | null
   installment_number?: number | null
   installment_total?: number | null
   statement_month?: string | null
   original_purchase_date?: string | null
+  user_edited?: boolean
+  tags?: string[]
 }
 
 export interface TransactionListProps {
@@ -100,7 +102,9 @@ export function TransactionList({
   }
 
   const formatDate = (dateStr: string) => {
-    return new Date(dateStr).toLocaleDateString('pt-BR', {
+    const clean = (dateStr || '').slice(0, 10)
+    const d = clean ? new Date(`${clean}T12:00:00`) : new Date(dateStr)
+    return d.toLocaleDateString('pt-BR', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -257,6 +261,25 @@ export function TransactionList({
                               Open Finance
                             </span>
                           )}
+                          {transaction.source === 'spreadsheet' && (
+                            <span className="inline-flex items-center text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-100/80 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
+                              Planilha
+                            </span>
+                          )}
+                          {transaction.user_edited && (
+                            <span className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100/70 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
+                              Editada
+                            </span>
+                          )}
+                          {Array.isArray(transaction.tags) &&
+                            transaction.tags.slice(0, 3).map((tag) => (
+                              <span
+                                key={tag}
+                                className="inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-indigo-100/80 text-indigo-700 dark:bg-indigo-900/35 dark:text-indigo-300"
+                              >
+                                {tag.startsWith('#') ? tag : `#${tag}`}
+                              </span>
+                            ))}
                         </div>
                         {transaction.merchant_name && (
                           <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -272,7 +295,7 @@ export function TransactionList({
                           : 'text-rose-600 dark:text-rose-400'
                       }`}
                     >
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="flex items-center justify-end gap-1.5 money-value">
                         {transaction.type === 'income' ? (
                           <TrendingUp className="w-4 h-4" aria-hidden="true" />
                         ) : (

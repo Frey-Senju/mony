@@ -103,6 +103,7 @@ export const TwoFASetup = ({ onSuccess, onCancel }: TwoFASetupProps) => {
       {qrCode && (
         <div className="flex justify-center">
           <div className="bg-white p-4 rounded-lg border border-gray-200">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={qrCode} alt="2FA QR Code" className="w-64 h-64" />
           </div>
         </div>

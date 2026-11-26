@@ -51,7 +51,7 @@ interface NavItem {
   label: string
   testId: string
   icon: React.ReactNode
-  badgeKey?: 'ai' | 'recurring'
+  badgeKey?: 'ai' | 'recurring' | 'openfinance'
 }
 
 interface NavGroup {
@@ -99,7 +99,7 @@ const NAV_GROUPS: NavGroup[] = [
 
 const SECONDARY_ITEMS: NavItem[] = [
   { href: '/settings/profile', label: 'Perfil & 2FA', testId: 'nav-profile', icon: <UserCircle className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/settings/connections', label: 'Conexões', testId: 'nav-connections', icon: <Landmark className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/settings/connections', label: 'Conexões', testId: 'nav-connections', badgeKey: 'openfinance', icon: <Landmark className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/settings/appearance', label: 'Aparência', testId: 'nav-appearance', icon: <Palette className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
 ]
 
@@ -117,21 +117,29 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const [aiTab, setAiTab] = useState<'chat' | 'import'>('chat')
   const [cmdOpen, setCmdOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const [badges, setBadges] = useState<{ ai: number; recurring: number }>({ ai: 0, recurring: 0 })
+  const [badges, setBadges] = useState<{ ai: number; recurring: number; openfinance: number }>({
+    ai: 0,
+    recurring: 0,
+    openfinance: 0,
+  })
 
   const fetchBadges = useCallback(async () => {
     if (!token) return
     try {
-      const [aiRes, recRes] = await Promise.all([
+      const [aiRes, recRes, ofRes] = await Promise.all([
         fetch(`${API_URL}/ai/suggestions?status=pending`, {
           headers: { Authorization: `Bearer ${token}` },
         }).catch(() => null),
         fetch(`${API_URL}/recurring`, {
           headers: { Authorization: `Bearer ${token}` },
         }).catch(() => null),
+        fetch(`${API_URL}/open-finance/pluggy/pending?status_filter=pending`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => null),
       ])
       let aiCount = 0
       let recCount = 0
+      let ofCount = 0
       if (aiRes && aiRes.ok) {
         const d = await aiRes.json()
         aiCount = Number(d?.total_pending ?? 0)
@@ -140,7 +148,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         const d = await recRes.json()
         recCount = Number(d?.summary?.pending_this_month_count ?? 0)
       }
-      setBadges({ ai: aiCount, recurring: recCount })
+      if (ofRes && ofRes.ok) {
+        const d = await ofRes.json()
+        ofCount = Number(d?.pending_count ?? 0)
+      }
+      setBadges({ ai: aiCount, recurring: recCount, openfinance: ofCount })
     } catch {
       // silent badge fallback
     }

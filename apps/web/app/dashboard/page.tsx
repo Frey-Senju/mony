@@ -3,10 +3,12 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
 import {
+  ArrowUp,
   Calendar,
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  Landmark,
   Plus,
   Wallet,
   X,
@@ -17,6 +19,9 @@ import { TransactionList } from '@/components/dashboard/TransactionList'
 import { FilterBar, PAYMENT_METHOD_LABELS } from '@/components/dashboard/FilterBar'
 import { Charts } from '@/components/dashboard/Charts'
 import { TransactionModal } from '@/components/dashboard/TransactionModal'
+import { UniversalEditTransactionModal } from '@/components/transactions/UniversalEditTransactionModal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 import { BulkActions } from '@/components/dashboard/BulkActions'
 import { InstallmentForecast } from '@/components/dashboard/InstallmentForecast'
 import { SetupChecklist } from '@/components/dashboard/SetupChecklist'
@@ -119,6 +124,38 @@ function DashboardContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isBulkLoading, setIsBulkLoading] = useState(false)
   const [bulkCatModalOpen, setBulkCatModalOpen] = useState(false)
+  const [confirmState, setConfirmState] = useState<{ mode: 'single' | 'bulk'; id?: string } | null>(null)
+  const [showScrollTop, setShowScrollTop] = useState(false)
+
+  // Greeting based on local hour
+  const greeting = (() => {
+    const h = new Date().getHours()
+    if (h < 12) return 'Bom dia'
+    if (h < 18) return 'Boa tarde'
+    return 'Boa noite'
+  })()
+
+  // Keyboard shortcut 'N' -> New Transaction + Scroll-to-top visibility
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+        return
+      }
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        setSelectedTransaction(undefined)
+        setIsModalOpen(true)
+      }
+    }
+    const onScroll = () => setShowScrollTop(window.scrollY > 450)
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onScroll)
+    }
+  }, [])
   const [bulkCategoryId, setBulkCategoryId] = useState('')
 
   const fetchAccounts = useCallback(async () => {
@@ -245,22 +282,34 @@ function DashboardContent() {
     }
   }
 
-  const handleBulkDelete = async () => {
-    if (!confirm(`Tem certeza que deseja deletar ${selectedIds.size} transação(ões)?`)) {
-      return
-    }
+  const handleBulkDelete = () => {
+    if (selectedIds.size === 0) return
+    setConfirmState({ mode: 'bulk' })
+  }
+
+  const executeConfirmDelete = async () => {
+    if (!confirmState) return
     setIsBulkLoading(true)
     try {
-      for (const id of Array.from(selectedIds)) {
-        await deleteTransaction(id)
+      if (confirmState.mode === 'bulk') {
+        const count = selectedIds.size
+        for (const id of Array.from(selectedIds)) {
+          await deleteTransaction(id)
+        }
+        setSelectedIds(new Set())
+        dispatchToast(`${count} transação(ões) excluída(s).`, 'info')
+      } else if (confirmState.id) {
+        await deleteTransaction(confirmState.id)
+        dispatchToast('Transação excluída.', 'info')
       }
-      setSelectedIds(new Set())
       setRefreshKey((k) => k + 1)
       await fetchAccounts()
     } catch (error) {
       console.error('Failed to delete transactions:', error)
+      dispatchToast('Não foi possível excluir a transação.', 'error')
     } finally {
       setIsBulkLoading(false)
+      setConfirmState(null)
     }
   }
 
@@ -316,16 +365,8 @@ function DashboardContent() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (confirm('Tem certeza que deseja deletar esta transação?')) {
-      try {
-        await deleteTransaction(id)
-        setRefreshKey((k) => k + 1)
-        await fetchAccounts()
-      } catch (error) {
-        console.error('Failed to delete transaction:', error)
-      }
-    }
+  const handleDelete = (id: string) => {
+    setConfirmState({ mode: 'single', id })
   }
 
   const handleReconcile = async (id: string, reconciled: boolean) => {
@@ -352,10 +393,17 @@ function DashboardContent() {
                 Dashboard Financeiro
               </h1>
               <p className="text-slate-600 dark:text-slate-300 mt-1">
-                Bem-vindo, {user?.full_name || 'Usuário'}
+                {greeting}, {user?.full_name || 'Usuário'} · pressione <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-white/60 dark:bg-white/10">N</kbd> para novo lançamento
               </p>
             </div>
             <div className="flex items-center gap-2.5 flex-wrap">
+              <Link
+                href="/settings/connections"
+                className="liquid-btn liquid-btn-glass inline-flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-sm font-medium"
+              >
+                <Landmark className="w-4 h-4 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                Open Finance
+              </Link>
               <Link
                 href="/dashboard/accounts"
                 className="liquid-btn liquid-btn-glass inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium"
@@ -580,19 +628,65 @@ function DashboardContent() {
         loading={isBulkLoading}
       />
 
-      {/* Transaction Modal */}
-      <TransactionModal
-        transaction={selectedTransaction}
-        isOpen={isModalOpen}
-        onClose={() => {
-          setIsModalOpen(false)
-          setSelectedTransaction(undefined)
-        }}
-        onSave={handleModalSave}
-        accounts={accounts}
-        loading={loading}
-        categories={categories}
+      {/* Transaction Modal (Universal Editor with Tags & Split when editing!) */}
+      {isModalOpen && selectedTransaction && accessToken ? (
+        <UniversalEditTransactionModal
+          token={accessToken}
+          transaction={selectedTransaction}
+          accounts={accounts}
+          categories={categories.map((c) => c.name)}
+          onClose={() => {
+            setIsModalOpen(false)
+            setSelectedTransaction(undefined)
+          }}
+          onSaved={async () => {
+            setRefreshKey((k) => k + 1)
+            dispatchToast('Transação atualizada com sucesso!', 'success')
+            await Promise.all([fetchTransactions(buildApiFilters(), 0, 20), fetchAccounts()])
+          }}
+        />
+      ) : (
+        <TransactionModal
+          transaction={selectedTransaction}
+          isOpen={isModalOpen}
+          onClose={() => {
+            setIsModalOpen(false)
+            setSelectedTransaction(undefined)
+          }}
+          onSave={handleModalSave}
+          accounts={accounts}
+          loading={loading}
+          categories={categories}
+        />
+      )}
+
+      {/* Accessible Liquid Glass Delete Confirmation */}
+      <ConfirmDialog
+        open={Boolean(confirmState)}
+        title={
+          confirmState?.mode === 'bulk'
+            ? `Excluir ${selectedIds.size} transação(ões)?`
+            : 'Excluir esta transação?'
+        }
+        description="Esta ação remove o lançamento e recalcula o saldo da conta automaticamente."
+        confirmLabel="Excluir"
+        variant="danger"
+        loading={isBulkLoading}
+        onConfirm={executeConfirmDelete}
+        onCancel={() => setConfirmState(null)}
       />
+
+      {/* Subtle Scroll-to-Top Floating Button */}
+      {showScrollTop && (
+        <button
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          aria-label="Voltar ao topo"
+          className="fixed bottom-20 lg:bottom-6 left-4 lg:left-auto lg:right-6 z-30 liquid-btn liquid-btn-glass p-2.5 rounded-full shadow-lg no-print"
+        >
+          <ArrowUp className="w-4 h-4" aria-hidden="true" />
+        </button>
+      )}
 
       {/* Bulk Categorize Modal */}
       {bulkCatModalOpen && (

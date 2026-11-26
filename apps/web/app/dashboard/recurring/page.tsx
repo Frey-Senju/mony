@@ -16,6 +16,8 @@ import {
   TrendingDown,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories } from '@/hooks/useCategories'
 import { PAYMENT_METHOD_LABELS } from '@/components/dashboard/FilterBar'
@@ -87,6 +89,8 @@ function RecurringContent() {
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
   const [detecting, setDetecting] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<RecurringRule | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [banner, setBanner] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -304,13 +308,24 @@ function RecurringContent() {
     await loadData()
   }
 
-  const handleDelete = async (rule: RecurringRule) => {
-    if (!token || !confirm(`Remover a recorrência "${rule.description}"?`)) return
-    await fetch(`${API_URL}/recurring/${rule.id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    await loadData()
+  const handleDelete = (rule: RecurringRule) => {
+    setDeleteTarget(rule)
+  }
+
+  const confirmDelete = async () => {
+    if (!token || !deleteTarget) return
+    setDeleting(true)
+    try {
+      await fetch(`${API_URL}/recurring/${deleteTarget.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      dispatchToast(`Recorrência "${deleteTarget.description}" removida.`, 'info')
+      setDeleteTarget(null)
+      await loadData()
+    } finally {
+      setDeleting(false)
+    }
   }
 
   return (
@@ -720,6 +735,16 @@ function RecurringContent() {
           </form>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title="Remover recorrência?"
+        description={`A regra "${deleteTarget?.description || ''}" deixará de gerar lembretes e lançamentos futuros. Transações já lançadas não serão apagadas.`}
+        confirmLabel="Remover"
+        variant="danger"
+        loading={deleting}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

@@ -104,8 +104,8 @@ describe('Dashboard Components', () => {
         />
       )
 
-      // Check for trend text (vs. mês anterior)
-      expect(screen.getAllByText(/vs\. mês anterior/)).toHaveLength(4)
+      // Check for trend text (vs. mês anterior) on income, expenses, and balance cards
+      expect(screen.getAllByText(/vs\. mês anterior/)).toHaveLength(3)
     })
   })
 

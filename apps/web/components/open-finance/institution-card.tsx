@@ -13,6 +13,7 @@ export function InstitutionCard({ institution, onConnect, loading }: Institution
     <div className="flex items-center justify-between p-4 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 hover:border-blue-400 dark:hover:border-blue-500 transition-colors">
       <div className="flex items-center gap-3">
         {institution.logo_url ? (
+          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={institution.logo_url}
             alt={institution.name}

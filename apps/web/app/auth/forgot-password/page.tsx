@@ -3,8 +3,8 @@ import { ForgotPasswordForm } from '@/components/auth/ForgotPasswordForm'
 import { MonyLogo } from '@/components/brand/MonyLogo'
 
 export const metadata = {
-  title: 'Reset Password',
-  description: 'Reset your Mony account password',
+  title: 'Recuperar senha',
+  description: 'Redefina a senha da sua conta Mony',
 }
 
 export default function ForgotPasswordPage() {
@@ -15,9 +15,9 @@ export default function ForgotPasswordPage() {
           <Link href="/" className="inline-flex">
             <MonyLogo size="lg" showWordmark />
           </Link>
-          <h1 className="mt-5 text-2xl font-bold text-slate-900 dark:text-white">Reset password</h1>
+          <h1 className="mt-5 text-2xl font-bold text-slate-900 dark:text-white">Recuperar senha</h1>
           <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-300">
-            We&apos;ll send you a link to reset your password
+            Enviaremos um link para redefinir sua senha com segurança
           </p>
         </div>
 

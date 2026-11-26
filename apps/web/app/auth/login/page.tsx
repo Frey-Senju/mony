@@ -3,8 +3,8 @@ import { LoginForm } from '@/components/auth/LoginForm'
 import { MonyLogo } from '@/components/brand/MonyLogo'
 
 export const metadata = {
-  title: 'Sign In',
-  description: 'Sign in to your Mony account',
+  title: 'Entrar',
+  description: 'Acesse sua conta Mony',
 }
 
 export default function LoginPage() {
@@ -15,9 +15,9 @@ export default function LoginPage() {
           <Link href="/" className="inline-flex">
             <MonyLogo size="lg" showWordmark />
           </Link>
-          <h1 className="mt-5 text-2xl font-bold text-slate-900 dark:text-white">Sign in</h1>
+          <h1 className="mt-5 text-2xl font-bold text-slate-900 dark:text-white">Entrar no Mony</h1>
           <p className="mt-1.5 text-sm text-slate-600 dark:text-slate-300">
-            Manage your finances with ease
+            Organize suas finanças, faturas e investimentos com clareza
           </p>
         </div>
 

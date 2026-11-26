@@ -24,6 +24,7 @@ import { InstitutionCard } from '@/components/open-finance/institution-card'
 import { LinkedAccountCard } from '@/components/open-finance/linked-account-card'
 import { DisconnectModal } from '@/components/open-finance/disconnect-modal'
 import { ConsentLoading } from '@/components/open-finance/consent-loading'
+import { OpenFinanceApprovalAndClean } from '@/components/open-finance/OpenFinanceApprovalAndClean'
 import {
   listInstitutions,
   listLinkedAccounts,
@@ -448,6 +449,15 @@ function ConnectionsContent() {
             </button>
           </div>
         )}
+
+        {/* Story 7.1 & 7.2: Mandatory Approval Queue & Safe Open Finance Cleanup */}
+        <OpenFinanceApprovalAndClean
+          token={tokens?.access_token}
+          onChanged={() => {
+            fetchLinkedAccounts()
+            fetchPluggyStatus()
+          }}
+        />
 
         {/* Pluggy Open Finance Real Hero Panel */}
         <section className="glass-panel rounded-3xl p-6 space-y-5">

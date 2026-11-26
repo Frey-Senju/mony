@@ -687,3 +687,297 @@ async def voice_transaction(
         "saved": bool(saved_id),
         "transaction_id": saved_id,
     }
+
+
+# ============ Story 7.3: AI 2026 Financial Spreadsheet Importer (Google Sheets / .xlsx) ============
+
+
+class SpreadsheetItemInput(BaseModel):
+    description: str = Field(min_length=1, max_length=255)
+    merchant_name: Optional[str] = None
+    type: str = "expense"
+    amount: Decimal = Field(gt=0)
+    category_name: str = "Outros"
+    payment_method: Optional[str] = "other"
+    payment_account_label: Optional[str] = None
+    transaction_date: date
+    original_purchase_date: Optional[date] = None
+    statement_month: str = Field(pattern=r"^\d{4}-\d{2}$")
+    installment_number: Optional[int] = Field(default=None, ge=1)
+    installment_total: Optional[int] = Field(default=None, ge=1)
+    is_recurring: bool = False
+    is_reconciled: bool = True
+
+
+class SpreadsheetImportRequest(BaseModel):
+    account_id: str
+    auto_create_categories: bool = True
+    auto_create_accounts: bool = True
+    auto_register_recurring: bool = True
+    skip_duplicates: bool = True
+    items: List[SpreadsheetItemInput] = Field(min_length=1)
+
+
+@router.post("/analyze-spreadsheet")
+async def analyze_spreadsheet_endpoint(
+    sheets_url: Optional[str] = Form(default=None),
+    year: int = Form(default=2026),
+    months: Optional[str] = Form(default=None),
+    file: Optional[UploadFile] = File(default=None),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Analyze a multi-month 2026 financial spreadsheet via public Google Sheets URL
+    or uploaded .xlsx file (EPIC-007 Story 7.3).
+    """
+    from services.spreadsheet_importer import download_google_sheet_xlsx, parse_2026_spreadsheet
+
+    uid = parse_uuid(user_id, "user_id")
+    xlsx_bytes: Optional[bytes] = None
+    source_name = "planilha-2026.xlsx"
+
+    if file is not None:
+        raw = await file.read()
+        if len(raw) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="Arquivo excede o limite de 10 MB.")
+        if not raw.startswith(b"PK"):
+            raise HTTPException(status_code=400, detail="Envie um arquivo Excel (.xlsx) válido ou cole o link do Google Sheets.")
+        xlsx_bytes = raw
+        source_name = file.filename or source_name
+    elif sheets_url and sheets_url.strip():
+        try:
+            xlsx_bytes = download_google_sheet_xlsx(sheets_url.strip())
+            source_name = "Google Sheets"
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        raise HTTPException(status_code=400, detail="Informe o link do Google Sheets ou envie um arquivo .xlsx.")
+
+    selected_months: Optional[list[int]] = None
+    if months and months.strip():
+        try:
+            selected_months = [int(x.strip()) for x in months.split(",") if x.strip() and 1 <= int(x.strip()) <= 12]
+        except ValueError:
+            selected_months = None
+
+    try:
+        parsed = parse_2026_spreadsheet(xlsx_bytes, year=year, selected_months=selected_months)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler a planilha: {exc}") from exc
+
+    # Annotate potential duplicates per statement_month
+    fps_by_month: dict[str, set[tuple]] = {}
+    dup_count = 0
+    for item in parsed["items"]:
+        sm = item["statement_month"]
+        if sm not in fps_by_month:
+            fps_by_month[sm] = _existing_month_fingerprints(db, uid, sm)
+        item_fps = _tx_fingerprints(
+            item["description"],
+            item.get("merchant_name"),
+            item["amount"],
+            item.get("installment_number"),
+            item.get("transaction_date"),
+        )
+        is_dup = bool(item_fps & fps_by_month[sm])
+        item["is_duplicate"] = is_dup
+        if is_dup:
+            dup_count += 1
+
+    parsed["source_name"] = source_name
+    parsed["duplicates_detected"] = dup_count
+    return parsed
+
+
+@router.post("/import-spreadsheet", status_code=status.HTTP_201_CREATED)
+async def import_spreadsheet_endpoint(
+    payload: SpreadsheetImportRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Batch-import reviewed spreadsheet entries (incomes + expenses) across multiple
+    months, optionally auto-creating missing categories, payment accounts, and
+    infinite (∞) recurring rules (EPIC-007 Story 7.3).
+    """
+    from uuid import uuid4
+    from database.models import AccountType, RecurringRule
+
+    uid = parse_uuid(user_id, "user_id")
+    default_aid = parse_uuid(payload.account_id, "account_id")
+    default_acct = (
+        db.query(Account)
+        .filter(Account.id == default_aid, Account.user_id == uid, Account.deleted_at.is_(None))
+        .first()
+    )
+    if not default_acct:
+        raise HTTPException(status_code=404, detail="Conta padrão não encontrada.")
+
+    ensure_default_categories(db, uid)
+    cat_cache: dict[str, Category] = {
+        c.name.lower(): c
+        for c in db.query(Category).filter(Category.user_id == uid, Category.deleted_at.is_(None)).all()
+    }
+    acct_cache: dict[str, Account] = {
+        a.name.lower(): a
+        for a in db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    }
+    existing_rec_sigs: set[str] = {
+        (r.detection_signature or "").lower()
+        for r in db.query(RecurringRule).filter(RecurringRule.user_id == uid, RecurringRule.deleted_at.is_(None)).all()
+    }
+
+    CAT_COLORS = ["#0072B2", "#009E73", "#E69F00", "#CC79A7", "#56B4E9", "#D55E00", "#6366F1", "#10B981"]
+    fps_by_month: dict[str, set[tuple]] = {}
+    imported = 0
+    skipped = 0
+    created_categories = 0
+    created_accounts = 0
+    created_recurrences = 0
+
+    for item in payload.items:
+        sm = item.statement_month
+        if sm not in fps_by_month:
+            fps_by_month[sm] = _existing_month_fingerprints(db, uid, sm)
+
+        item_fps = _tx_fingerprints(
+            item.description,
+            item.merchant_name,
+            item.amount,
+            item.installment_number,
+            item.transaction_date,
+        )
+        if payload.skip_duplicates and (item_fps & fps_by_month[sm]):
+            skipped += 1
+            continue
+
+        # Resolve or create target account from payment_account_label (e.g. 'Cartão Bradesco', 'Cartão XP', 'Sofisa')
+        target_acct = default_acct
+        if payload.auto_create_accounts and item.payment_account_label:
+            label = re.sub(r"\s+", " ", item.payment_account_label).strip()
+            low_label = label.lower()
+            if low_label not in ("pix", "boleto", "dinheiro", "transferência", "transferencia", "débito", "debito"):
+                matched_acct = acct_cache.get(low_label)
+                if matched_acct is None:
+                    matched_acct = next((a for k, a in acct_cache.items() if low_label in k or k in low_label), None)
+                if matched_acct is None:
+                    is_cc = "cart" in low_label or "xp" in low_label or "bradesco" in low_label or "sofisa" in low_label
+                    matched_acct = Account(
+                        id=uuid4(),
+                        user_id=uid,
+                        name=label[:100],
+                        type=AccountType.CREDIT_CARD if is_cc else AccountType.CHECKING,
+                        balance=Decimal("0.00"),
+                        currency="BRL",
+                        icon="💳" if is_cc else "🏦",
+                        color="#6366F1" if is_cc else "#0071E3",
+                        is_default=False,
+                    )
+                    db.add(matched_acct)
+                    db.flush()
+                    acct_cache[low_label] = matched_acct
+                    created_accounts += 1
+                target_acct = matched_acct
+
+        # Resolve or create category
+        cat_name = (item.category_name or "Outros").strip()[:100]
+        cat_obj = cat_cache.get(cat_name.lower())
+        if cat_obj is None and payload.auto_create_categories:
+            slug = re.sub(r"[^a-z0-9]+", "-", cat_name.lower()).strip("-")[:80] or f"cat-{len(cat_cache)+1}"
+            # Avoid slug collision
+            if any((c.slug or "") == slug for c in cat_cache.values()):
+                slug = f"{slug}-{len(cat_cache)+1}"
+            cat_obj = Category(
+                id=uuid4(),
+                user_id=uid,
+                name=cat_name,
+                slug=slug,
+                color=CAT_COLORS[len(cat_cache) % len(CAT_COLORS)],
+                icon="🏷️",
+                is_system=False,
+            )
+            db.add(cat_obj)
+            db.flush()
+            cat_cache[cat_name.lower()] = cat_obj
+            created_categories += 1
+        if cat_obj is None:
+            cat_obj = cat_cache.get("outros")
+
+        try:
+            tx_type = TransactionType(item.type)
+        except ValueError:
+            tx_type = TransactionType.EXPENSE
+
+        amt_dec = Decimal(f"{float(item.amount):.2f}")
+        tx = Transaction(
+            id=uuid4(),
+            user_id=uid,
+            account_id=target_acct.id,
+            type=tx_type,
+            amount=amt_dec,
+            currency=target_acct.currency or "BRL",
+            description=item.description.strip()[:255],
+            merchant_name=(item.merchant_name or item.description).strip()[:255],
+            notes=f"Importado da Planilha 2026 ({item.payment_account_label})" if item.payment_account_label else "Importado da Planilha 2026",
+            transaction_date=item.transaction_date,
+            original_purchase_date=item.original_purchase_date or item.transaction_date,
+            statement_month=sm,
+            payment_method=item.payment_method or "other",
+            installment_number=item.installment_number,
+            installment_total=item.installment_total,
+            is_recurring=item.is_recurring,
+            is_reconciled=item.is_reconciled,
+            source="spreadsheet",
+            origin_metadata={
+                "provider": "spreadsheet_2026",
+                "payment_account_label": item.payment_account_label,
+                "statement_month": sm,
+            },
+        )
+        db.add(tx)
+        db.flush()
+        if cat_obj is not None:
+            _set_transaction_category(db, tx, cat_obj)
+
+        target_acct.balance = Decimal(str(target_acct.balance or 0)) + _balance_delta(tx_type, amt_dec)
+        fps_by_month[sm].update(item_fps)
+        imported += 1
+
+        # Auto-register infinite (∞) recurring items once
+        if payload.auto_register_recurring and item.is_recurring:
+            sig = f"sheet:{tx_type.value}:{_norm_fp_text(item.description)[:40]}"
+            if sig not in existing_rec_sigs:
+                existing_rec_sigs.add(sig)
+                db.add(
+                    RecurringRule(
+                        id=uuid4(),
+                        user_id=uid,
+                        account_id=target_acct.id,
+                        type=tx_type,
+                        amount=amt_dec,
+                        description=item.description.strip()[:255],
+                        merchant_name=(item.merchant_name or item.description).strip()[:255],
+                        category_name=cat_obj.name if cat_obj else cat_name,
+                        payment_method=item.payment_method or "other",
+                        frequency="monthly",
+                        day_of_month=min(28, max(1, item.transaction_date.day)),
+                        is_active=True,
+                        auto_create=False,
+                        source="spreadsheet",
+                        detection_signature=sig,
+                    )
+                )
+                created_recurrences += 1
+
+    if imported > 0:
+        run_proactive_review(db, uid, lookback_days=120)
+
+    db.commit()
+    return {
+        "imported": imported,
+        "skipped_duplicates": skipped,
+        "created_categories": created_categories,
+        "created_accounts": created_accounts,
+        "created_recurrences": created_recurrences,
+    }
