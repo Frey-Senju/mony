@@ -8,13 +8,15 @@ import {
   Sparkles,
   ArrowLeftRight,
   Tag,
-  CheckCircle2,
   AlertCircle,
   RefreshCw,
   Power,
-  X,
+  Search,
+  FlaskConical,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories } from '@/hooks/useCategories'
 
@@ -73,9 +75,20 @@ function RulesContent() {
   const [loading, setLoading] = useState(true)
   const [applying, setApplying] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [banner, setBanner] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lastReport, setLastReport] = useState<ApplyReport | null>(null)
+  const [testSample, setTestSample] = useState('')
+  const [ruleSearch, setRuleSearch] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<RuleItem | null>(null)
+  const [deletingRule, setDeletingRule] = useState(false)
+
+  const catMetaByName = React.useMemo(() => {
+    const map: Record<string, { color: string; icon?: string }> = {}
+    for (const c of categories) {
+      map[c.name.toLowerCase()] = { color: c.color, icon: c.icon }
+    }
+    return map
+  }, [categories])
 
   const [form, setForm] = useState({
     pattern: '',
@@ -134,11 +147,12 @@ function RulesContent() {
       const data = await res.json()
       if (data.applied) setLastReport(data.applied)
       setForm((prev) => ({ ...prev, pattern: '' }))
-      setBanner(
+      dispatchToast(
         `Regra "${form.pattern.trim()}" criada!` +
           (data.applied?.total_updated
             ? ` ${data.applied.total_updated} lançamento(s) atualizado(s).`
-            : '')
+            : ''),
+        'success'
       )
       await loadRules()
       if (typeof window !== 'undefined') {
@@ -174,7 +188,7 @@ function RulesContent() {
       if (!res.ok) throw new Error('Não foi possível aplicar o modelo')
       const data = await res.json()
       if (data.applied) setLastReport(data.applied)
-      setBanner(`Modelo "${preset.label}" ativado com sucesso!`)
+      dispatchToast(`Modelo "${preset.label}" ativado com sucesso!`, 'success')
       await loadRules()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao criar regra rápida')
@@ -199,10 +213,11 @@ function RulesContent() {
       if (!res.ok) throw new Error('Erro ao executar motor de regras')
       const report: ApplyReport = await res.json()
       setLastReport(report)
-      setBanner(
+      dispatchToast(
         `Varredura concluída (${report.scanned} lançamentos): ${report.categorized} categorizado(s) · ${
           report.transfers_by_rule + report.transfers_by_heuristic + report.paired_transfers_detected
-        } transferência(s) interna(s) isolada(s).`
+        } transferência(s) isolada(s).`,
+        'success'
       )
       await loadRules()
       if (typeof window !== 'undefined') {
@@ -228,13 +243,20 @@ function RulesContent() {
     await loadRules()
   }
 
-  const deleteRule = async (id: string) => {
-    if (!token || !confirm('Remover esta regra automática?')) return
-    await fetch(`${API_URL}/rules/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    await loadRules()
+  const executeDeleteRule = async () => {
+    if (!token || !deleteTarget) return
+    setDeletingRule(true)
+    try {
+      await fetch(`${API_URL}/rules/${deleteTarget.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      dispatchToast(`Regra "${deleteTarget.pattern}" removida.`, 'info')
+      setDeleteTarget(null)
+      await loadRules()
+    } finally {
+      setDeletingRule(false)
+    }
   }
 
   const categoryOptions =
@@ -286,17 +308,6 @@ function RulesContent() {
         </button>
       </header>
 
-      {banner && (
-        <div className="glass-card p-3.5 border-emerald-400/50 flex items-center justify-between text-sm text-emerald-700 dark:text-emerald-300">
-          <span className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            {banner}
-          </span>
-          <button type="button" onClick={() => setBanner(null)} aria-label="Fechar">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
       {error && (
         <div className="glass-card p-3.5 border-rose-400/50 flex items-center gap-2 text-sm text-rose-700 dark:text-rose-300">
           <AlertCircle className="w-4 h-4 shrink-0" />
@@ -423,6 +434,35 @@ function RulesContent() {
           </div>
         </form>
 
+        {/* Live Pattern Tester before saving */}
+        <div className="pt-2 border-t border-white/25 dark:border-white/10 flex flex-col sm:flex-row sm:items-center gap-2.5 text-xs">
+          <span className="inline-flex items-center gap-1.5 font-semibold text-slate-600 dark:text-slate-300 shrink-0">
+            <FlaskConical className="w-3.5 h-3.5 text-violet-500" aria-hidden="true" />
+            Testar texto:
+          </span>
+          <input
+            type="text"
+            value={testSample}
+            onChange={(e) => setTestSample(e.target.value)}
+            placeholder="Cole um texto de fatura (ex.: PAG*UBER TRIP) para testar..."
+            className="input-base text-xs py-1.5 flex-1"
+          />
+          {testSample.trim() && form.pattern.trim() && (() => {
+            const matched = testSample.toLowerCase().includes(form.pattern.trim().toLowerCase())
+            return (
+              <span
+                className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full font-bold shrink-0 ${
+                  matched
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
+                }`}
+              >
+                {matched ? '✓ Casou com a regra!' : '✗ Não casa com este padrão'}
+              </span>
+            )
+          })()}
+        </div>
+
         {/* Quick presets */}
         {presets.length > 0 && (
           <div className="pt-2 border-t border-white/20 dark:border-white/10">
@@ -454,9 +494,23 @@ function RulesContent() {
 
       {/* Rules List */}
       <section className="glass-panel space-y-3">
-        <h2 className="text-base font-bold text-slate-900 dark:text-white">
-          Suas Regras ({rules.length})
-        </h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">
+            Suas Regras ({rules.length})
+          </h2>
+          {rules.length > 3 && (
+            <div className="relative w-full sm:w-64">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+              <input
+                type="search"
+                value={ruleSearch}
+                onChange={(e) => setRuleSearch(e.target.value)}
+                placeholder="Filtrar padrão ou categoria..."
+                className="input-base pl-8 py-1.5 text-xs"
+              />
+            </div>
+          )}
+        </div>
 
         {loading ? (
           <p className="text-sm text-slate-500 py-4">Carregando regras...</p>
@@ -466,7 +520,18 @@ function RulesContent() {
           </div>
         ) : (
           <div className="space-y-2">
-            {rules.map((rule) => (
+            {rules
+              .filter((r) => {
+                const q = ruleSearch.trim().toLowerCase()
+                if (!q) return true
+                return (
+                  r.pattern.toLowerCase().includes(q) ||
+                  (r.category_name || '').toLowerCase().includes(q)
+                )
+              })
+              .map((rule) => {
+                const catMeta = rule.category_name ? catMetaByName[rule.category_name.toLowerCase()] : undefined
+                return (
               <div
                 key={rule.id}
                 className={`glass-card p-3.5 flex flex-wrap items-center justify-between gap-3 ${
@@ -493,11 +558,23 @@ function RulesContent() {
                         {rule.pattern}
                       </span>
                       <span className="text-xs text-slate-500">→</span>
-                      <span className="text-xs font-semibold text-slate-800 dark:text-slate-100">
-                        {rule.action === 'mark_transfer'
-                          ? 'Transferência Interna (isolar do total)'
-                          : rule.category_name || 'Outros'}
-                      </span>
+                      {rule.action === 'mark_transfer' ? (
+                        <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+                          Transferência Interna (isolar do total)
+                        </span>
+                      ) : (
+                        <span
+                          className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold"
+                          style={{
+                            backgroundColor: `${catMeta?.color || '#0071E3'}20`,
+                            color: catMeta?.color || '#0071E3',
+                            border: `1px solid ${catMeta?.color || '#0071E3'}45`,
+                          }}
+                        >
+                          <span aria-hidden="true">{catMeta?.icon || '🏷️'}</span>
+                          <span>{rule.category_name || 'Outros'}</span>
+                        </span>
+                      )}
                     </div>
                     <p className="text-[11px] text-slate-500 mt-0.5">
                       {rule.matches_count} lançamento(s) classificado(s) · prioridade #{rule.priority}
@@ -517,7 +594,7 @@ function RulesContent() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => deleteRule(rule.id)}
+                    onClick={() => setDeleteTarget(rule)}
                     className="p-2 rounded-xl text-rose-500 hover:bg-rose-500/10"
                     aria-label="Excluir regra"
                   >
@@ -525,10 +602,22 @@ function RulesContent() {
                   </button>
                 </div>
               </div>
-            ))}
+                )
+              })}
           </div>
         )}
       </section>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Remover regra "${deleteTarget?.pattern || ''}"?`}
+        description="Lançamentos já categorizados não serão alterados."
+        confirmLabel="Remover"
+        variant="danger"
+        loading={deletingRule}
+        onConfirm={executeDeleteRule}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

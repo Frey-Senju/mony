@@ -6,6 +6,7 @@ import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { GoalCard } from '@/components/goals/GoalCard'
 import { GoalFormModal } from '@/components/goals/GoalFormModal'
 import { DepositModal } from '@/components/goals/DepositModal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useGoals, type Goal } from '@/hooks/useGoals'
 import { dispatchToast } from '@/components/ui/ToastProvider'
 
@@ -26,7 +27,8 @@ function GoalsContent() {
   const [formOpen, setFormOpen] = useState(false)
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null)
   const [depositGoal, setDepositGoal] = useState<Goal | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Goal | null>(null)
+  const [deletingGoal, setDeletingGoal] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [monthlyContribution, setMonthlyContribution] = useState(1000)
   const [cdiRatePct, setCdiRatePct] = useState(11.0)
@@ -63,15 +65,32 @@ function GoalsContent() {
     }
   }
 
-  const handleDelete = async (id: string) => {
+  const executeDeleteGoal = async () => {
+    if (!deleteTarget) return
     setActionError(null)
+    setDeletingGoal(true)
+    const removed = deleteTarget
     try {
-      await removeGoal(id)
-      dispatchToast('Meta removida.', 'info')
+      await removeGoal(removed.id)
+      setDeleteTarget(null)
+      dispatchToast(`Meta "${removed.name}" removida.`, 'info', {
+        action: {
+          label: 'Desfazer',
+          onClick: async () => {
+            await addGoal({
+              name: removed.name,
+              target_amount: Number(removed.target_amount),
+              description: removed.description || undefined,
+              target_date: removed.target_date || undefined,
+            })
+            dispatchToast(`Meta "${removed.name}" recriada!`, 'success')
+          },
+        },
+      })
     } catch (e) {
       setActionError(e instanceof Error ? e.message : 'Erro ao excluir meta')
     } finally {
-      setDeleteConfirm(null)
+      setDeletingGoal(false)
     }
   }
 
@@ -261,43 +280,16 @@ function GoalsContent() {
               </h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {activeGoals.map((g) => (
-                  <div key={g.id} className="space-y-2">
-                    <GoalCard
-                      goal={g}
-                      onDeposit={() => setDepositGoal(g)}
-                      onEdit={() => {
-                        setEditingGoal(g)
-                        setFormOpen(true)
-                      }}
-                      onDelete={() => setDeleteConfirm(g.id)}
-                    />
-                    {deleteConfirm === g.id && (
-                      <div
-                        role="alert"
-                        className="glass-card p-3 border-rose-400/60 flex items-center justify-between gap-2 text-xs"
-                      >
-                        <span className="text-rose-700 dark:text-rose-300 font-medium">
-                          Excluir a meta &quot;{g.name}&quot;?
-                        </span>
-                        <div className="flex gap-2">
-                          <button
-                            type="button"
-                            onClick={() => setDeleteConfirm(null)}
-                            className="liquid-btn liquid-btn-glass px-2.5 py-1 rounded-lg"
-                          >
-                            Cancelar
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDelete(g.id)}
-                            className="px-2.5 py-1 rounded-lg bg-rose-600 text-white font-semibold"
-                          >
-                            Excluir
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  <GoalCard
+                    key={g.id}
+                    goal={g}
+                    onDeposit={() => setDepositGoal(g)}
+                    onEdit={() => {
+                      setEditingGoal(g)
+                      setFormOpen(true)
+                    }}
+                    onDelete={() => setDeleteTarget(g)}
+                  />
                 ))}
               </div>
             </section>
@@ -318,7 +310,7 @@ function GoalsContent() {
                       setEditingGoal(g)
                       setFormOpen(true)
                     }}
-                    onDelete={() => setDeleteConfirm(g.id)}
+                    onDelete={() => setDeleteTarget(g)}
                   />
                 ))}
               </div>
@@ -342,6 +334,17 @@ function GoalsContent() {
         goal={depositGoal}
         onClose={() => setDepositGoal(null)}
         onSubmit={handleDeposit}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Excluir a meta "${deleteTarget?.name || ''}"?`}
+        description="Você poderá recriar a meta logo em seguida clicando em Desfazer."
+        confirmLabel="Excluir"
+        variant="danger"
+        loading={deletingGoal}
+        onConfirm={executeDeleteGoal}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   )

@@ -2,11 +2,13 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Star, Wallet, Tag, X, Link2, ShieldCheck, Sparkles } from 'lucide-react'
+import { Plus, Pencil, Trash2, Star, Wallet, Tag, X, Link2, ShieldCheck, Sparkles, Copy, Search } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories, type Category } from '@/hooks/useCategories'
 import { AISuggestionsBanner } from '@/components/ai/AISuggestionsBanner'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -84,6 +86,9 @@ function AccountsContent() {
   const [catIcon, setCatIcon] = useState('🏷️')
   const [catError, setCatError] = useState<string | null>(null)
   const [catSaving, setCatSaving] = useState(false)
+  const [catSearch, setCatSearch] = useState('')
+  const [deleteCatTarget, setDeleteCatTarget] = useState<Category | null>(null)
+  const [deletingCat, setDeletingCat] = useState(false)
 
   // Category Edit modal state
   const [editingCat, setEditingCat] = useState<Category | null>(null)
@@ -257,6 +262,7 @@ function AccountsContent() {
         description: editCatDesc.trim() || undefined,
       })
       setEditingCat(null)
+      dispatchToast(`Categoria ${editCatIcon || '🏷️'} ${editCatName.trim()} atualizada!`, 'success')
     } catch (err) {
       setCatError(err instanceof Error ? err.message : 'Erro ao atualizar categoria')
     } finally {
@@ -264,7 +270,24 @@ function AccountsContent() {
     }
   }
 
+  const executeDeleteCategory = async () => {
+    if (!deleteCatTarget) return
+    setDeletingCat(true)
+    try {
+      await deleteCategory(deleteCatTarget.id)
+      dispatchToast(`Categoria "${deleteCatTarget.name}" removida.`, 'info')
+      setDeleteCatTarget(null)
+    } finally {
+      setDeletingCat(false)
+    }
+  }
+
   const totalBalance = accounts.reduce((acc, a) => acc + Number(a.balance || 0), 0)
+  const positiveAccounts = accounts.filter((a) => Number(a.balance || 0) > 0)
+  const positiveTotal = positiveAccounts.reduce((s, a) => s + Number(a.balance || 0), 0)
+  const filteredCategories = catSearch.trim()
+    ? categories.filter((c) => c.name.toLowerCase().includes(catSearch.trim().toLowerCase()))
+    : categories
   const typeLabel = (t: string) => ACCOUNT_TYPES.find((x) => x.value === t)?.label ?? t
 
   return (
@@ -361,25 +384,75 @@ function AccountsContent() {
             />
           )}
 
-          {/* Net worth summary */}
-          <div className="glass-panel flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                Patrimônio Consolidado
-              </p>
-              <p className="text-3xl font-bold text-slate-900 dark:text-white mt-1" data-testid="accounts-total-balance">
-                R$ {totalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
+          {/* Net worth summary + Apple Storage style distribution bar */}
+          <div className="glass-panel space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  Patrimônio Consolidado
+                </p>
+                <div className="flex items-center gap-2 mt-1">
+                  <p className="text-3xl font-bold text-slate-900 dark:text-white money-value" data-testid="accounts-total-balance">
+                    R$ {totalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const val = `R$ ${totalBalance.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`
+                      navigator.clipboard?.writeText(val).then(() => {
+                        dispatchToast(`Saldo consolidado copiado: ${val}`, 'info', { durationMs: 2500 })
+                      }).catch(() => undefined)
+                    }}
+                    title="Copiar patrimônio consolidado"
+                    aria-label="Copiar patrimônio consolidado"
+                    className="p-1.5 rounded-xl text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-white/10 transition"
+                  >
+                    <Copy className="w-4 h-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={openCreate}
+                className="liquid-btn liquid-btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
+                data-testid="new-account-btn"
+              >
+                <Plus className="w-4 h-4" aria-hidden="true" />
+                Nova Conta
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={openCreate}
-              className="liquid-btn liquid-btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
-              data-testid="new-account-btn"
-            >
-              <Plus className="w-4 h-4" aria-hidden="true" />
-              Nova Conta
-            </button>
+
+            {positiveAccounts.length > 1 && positiveTotal > 0 && (
+              <div className="space-y-2 pt-2 border-t border-white/40 dark:border-white/10">
+                <div className="flex h-3 w-full rounded-full overflow-hidden bg-slate-200/70 dark:bg-white/10 gap-0.5">
+                  {positiveAccounts.map((acct, idx) => {
+                    const share = (Number(acct.balance) / positiveTotal) * 100
+                    const segColor = acct.color || COLOR_SWATCHES[idx % COLOR_SWATCHES.length]
+                    return (
+                      <div
+                        key={acct.id}
+                        title={`${acct.name}: R$ ${Number(acct.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })} (${share.toFixed(1)}%)`}
+                        className="h-full first:rounded-l-full last:rounded-r-full transition-all duration-500"
+                        style={{ width: `${Math.max(2, share)}%`, backgroundColor: segColor }}
+                      />
+                    )
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-600 dark:text-slate-300">
+                  {positiveAccounts.map((acct, idx) => {
+                    const share = (Number(acct.balance) / positiveTotal) * 100
+                    const segColor = acct.color || COLOR_SWATCHES[idx % COLOR_SWATCHES.length]
+                    return (
+                      <span key={acct.id} className="inline-flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: segColor }} />
+                        <span className="font-medium truncate max-w-[140px]">{acct.name}</span>
+                        <span className="text-slate-500 dark:text-slate-400 tabular-nums">{share.toFixed(0)}%</span>
+                      </span>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {error && (
@@ -523,11 +596,24 @@ function AccountsContent() {
             />
           )}
 
-          {/* Create custom category */}
+          {/* Create custom category with Live Badge Preview */}
           <form onSubmit={handleCreateCategory} className="glass-panel space-y-4">
-            <h2 className="text-base font-semibold text-slate-900 dark:text-white">
-              Nova Categoria Personalizada
-            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h2 className="text-base font-semibold text-slate-900 dark:text-white">
+                Nova Categoria Personalizada
+              </h2>
+              <span
+                className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold transition"
+                style={{
+                  backgroundColor: `${catColor}24`,
+                  color: catColor,
+                  border: `1px solid ${catColor}55`,
+                }}
+              >
+                <span aria-hidden="true">{catIcon || '🏷️'}</span>
+                <span>{catName.trim() || 'Prévia da categoria'}</span>
+              </span>
+            </div>
             {catError && (
               <div role="alert" className="p-3 rounded-xl bg-red-50/90 dark:bg-red-950/40 text-xs text-red-700 dark:text-red-300">
                 {catError}
@@ -585,6 +671,19 @@ function AccountsContent() {
             </div>
           </form>
 
+          {/* Instant Category Search */}
+          <div className="relative max-w-sm">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+            <input
+              type="search"
+              value={catSearch}
+              onChange={(e) => setCatSearch(e.target.value)}
+              placeholder={`Buscar entre ${categories.length} categorias...`}
+              aria-label="Buscar categorias"
+              className="input-base pl-10 py-2 text-xs"
+            />
+          </div>
+
           {/* Categories grid */}
           {catLoading ? (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -594,7 +693,7 @@ function AccountsContent() {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {categories.map((cat: Category) => (
+              {filteredCategories.map((cat: Category) => (
                 <div key={cat.id} className="glass-card p-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3 min-w-0">
                     <span
@@ -624,7 +723,7 @@ function AccountsContent() {
                     {!cat.is_default && !cat.is_system && (
                       <button
                         type="button"
-                        onClick={() => deleteCategory(cat.id)}
+                        onClick={() => setDeleteCatTarget(cat)}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-red-600 dark:hover:text-red-400"
                         aria-label={`Excluir categoria ${cat.name}`}
                       >
@@ -636,6 +735,17 @@ function AccountsContent() {
               ))}
             </div>
           )}
+
+          <ConfirmDialog
+            open={Boolean(deleteCatTarget)}
+            title={`Excluir categoria "${deleteCatTarget?.name || ''}"?`}
+            description="Lançamentos existentes permanecerão salvos no seu histórico."
+            confirmLabel="Excluir"
+            variant="danger"
+            loading={deletingCat}
+            onConfirm={executeDeleteCategory}
+            onCancel={() => setDeleteCatTarget(null)}
+          />
         </div>
       )}
 

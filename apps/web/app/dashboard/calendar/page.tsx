@@ -96,6 +96,19 @@ function CalendarContent() {
   const [data, setData] = useState<ProjectionPayload | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedDay, setSelectedDay] = useState<CalendarDay | null>(null)
+  const [eventFilter, setEventFilter] = useState<'all' | 'in' | 'out'>('all')
+
+  const isCurrentMonth = year === now.getFullYear() && month === now.getMonth() + 1
+
+  const goToday = () => {
+    const today = new Date()
+    setYear(today.getFullYear())
+    setMonth(today.getMonth() + 1)
+    if (data) {
+      const todayCell = data.calendar_days.find((d) => d.is_today)
+      if (todayCell) setSelectedDay(todayCell)
+    }
+  }
 
   const fetchData = useCallback(async () => {
     if (!token) return
@@ -119,6 +132,41 @@ function CalendarContent() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
+
+  useEffect(() => {
+    document.title = `Mony · Calendário (${PT_MONTHS[month - 1]} ${year})`
+  }, [year, month])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+        return
+      }
+      if (!e.altKey || e.ctrlKey || e.metaKey) return
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        setMonth((m) => {
+          if (m <= 1) {
+            setYear((y) => y - 1)
+            return 12
+          }
+          return m - 1
+        })
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        setMonth((m) => {
+          if (m >= 12) {
+            setYear((y) => y + 1)
+            return 1
+          }
+          return m + 1
+        })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const shiftMonth = (delta: number) => {
     let m = month + delta
@@ -262,10 +310,20 @@ function CalendarContent() {
               {PT_MONTHS[month - 1]} de {year}
             </h2>
             <div className="flex items-center gap-1.5">
+              {!isCurrentMonth && (
+                <button
+                  type="button"
+                  onClick={goToday}
+                  className="liquid-btn liquid-btn-glass px-3 py-1.5 rounded-xl text-xs font-semibold text-blue-600 dark:text-blue-400"
+                >
+                  Hoje
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => shiftMonth(-1)}
                 aria-label="Mês anterior"
+                title="Mês anterior (Alt + ←)"
                 className="liquid-btn liquid-btn-glass p-2 rounded-xl"
               >
                 <ChevronLeft className="w-4 h-4" />
@@ -274,6 +332,7 @@ function CalendarContent() {
                 type="button"
                 onClick={() => shiftMonth(1)}
                 aria-label="Próximo mês"
+                title="Próximo mês (Alt + →)"
                 className="liquid-btn liquid-btn-glass p-2 rounded-xl"
               >
                 <ChevronRight className="w-4 h-4" />
@@ -314,12 +373,12 @@ function CalendarContent() {
                     </span>
                     <div className="space-y-0.5 text-[10px] leading-tight">
                       {d.total_in > 0 && (
-                        <p className="text-emerald-600 dark:text-emerald-400 font-semibold truncate">
+                        <p className="text-emerald-600 dark:text-emerald-400 font-semibold truncate money-value">
                           +{brl(d.total_in)}
                         </p>
                       )}
                       {d.total_out > 0 && (
-                        <p className="text-rose-600 dark:text-rose-400 font-semibold truncate">
+                        <p className="text-rose-600 dark:text-rose-400 font-semibold truncate money-value">
                           -{brl(d.total_out)}
                         </p>
                       )}
@@ -333,49 +392,81 @@ function CalendarContent() {
 
         {/* Day Events Drawer */}
         <aside className="lg:col-span-4 glass-panel space-y-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-              Agenda do Dia
-            </p>
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
-              {selectedDay ? selectedDay.date.split('-').reverse().join('/') : 'Selecione um dia'}
-            </h3>
-          </div>
-
-          {!selectedDay || selectedDay.events.length === 0 ? (
-            <p className="text-sm text-slate-500 dark:text-slate-400 py-8 text-center">
-              Nenhum vencimento ou lançamento previsto para este dia.
-            </p>
-          ) : (
-            <ul className="space-y-2.5">
-              {selectedDay.events.map((ev, i) => (
-                <li key={i} className="glass-card p-3 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    {ev.kind === 'card_due' ? (
-                      <CreditCard className="w-4 h-4 text-rose-500 shrink-0" aria-hidden="true" />
-                    ) : ev.kind === 'dividend' ? (
-                      <Coins className="w-4 h-4 text-emerald-500 shrink-0" aria-hidden="true" />
-                    ) : (
-                      <Repeat className="w-4 h-4 text-blue-500 shrink-0" aria-hidden="true" />
-                    )}
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{ev.title}</p>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{ev.category}</p>
-                    </div>
-                  </div>
-                  <span
-                    className={`text-xs font-bold shrink-0 money-value ${
-                      ev.direction === 'in'
-                        ? 'text-emerald-600 dark:text-emerald-400'
-                        : 'text-rose-600 dark:text-rose-400'
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                Agenda do Dia
+              </p>
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mt-0.5">
+                {selectedDay ? selectedDay.date.split('-').reverse().join('/') : 'Selecione um dia'}
+              </h3>
+            </div>
+            {selectedDay && selectedDay.events.length > 0 && (
+              <div className="inline-flex p-0.5 rounded-xl bg-white/50 dark:bg-white/10 border border-white/60 dark:border-white/15 text-[11px]">
+                {(
+                  [
+                    ['all', 'Todos'],
+                    ['in', 'Entradas'],
+                    ['out', 'Saídas'],
+                  ] as const
+                ).map(([k, lbl]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => setEventFilter(k)}
+                    className={`px-2 py-0.5 rounded-lg font-semibold transition ${
+                      eventFilter === k ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
                     }`}
                   >
-                    {ev.direction === 'in' ? '+' : '-'} {brl(ev.amount)}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          )}
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {(() => {
+            const visibleEvents = (selectedDay?.events || []).filter(
+              (ev) => eventFilter === 'all' || ev.direction === eventFilter
+            )
+            if (!selectedDay || visibleEvents.length === 0) {
+              return (
+                <p className="text-sm text-slate-500 dark:text-slate-400 py-8 text-center">
+                  Nenhum vencimento ou lançamento {eventFilter === 'in' ? 'de entrada' : eventFilter === 'out' ? 'de saída' : 'previsto'} para este dia.
+                </p>
+              )
+            }
+            return (
+              <ul className="space-y-2.5">
+                {visibleEvents.map((ev, i) => (
+                  <li key={i} className="glass-card p-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      {ev.kind === 'card_due' ? (
+                        <CreditCard className="w-4 h-4 text-rose-500 shrink-0" aria-hidden="true" />
+                      ) : ev.kind === 'dividend' ? (
+                        <Coins className="w-4 h-4 text-emerald-500 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <Repeat className="w-4 h-4 text-blue-500 shrink-0" aria-hidden="true" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold text-slate-900 dark:text-white truncate">{ev.title}</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{ev.category}</p>
+                      </div>
+                    </div>
+                    <span
+                      className={`text-xs font-bold shrink-0 money-value ${
+                        ev.direction === 'in'
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {ev.direction === 'in' ? '+' : '-'} {brl(ev.amount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )
+          })()}
         </aside>
       </div>
     </div>

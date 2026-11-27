@@ -27,8 +27,11 @@ import {
   AlertCircle,
   Search,
   Layers,
+  ArrowDownUp,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 import { useAuth } from '@/stores/auth/useAuth'
 import {
   PerformancePanel,
@@ -417,37 +420,77 @@ function InvestmentsContent() {
     }
   }
 
-  const deleteAsset = async (asset: EnrichedAsset) => {
-    if (!token || !confirm(`Remover ${asset.ticker} da sua carteira?`)) return
-    await fetch(`${API_URL}/investments/assets/${asset.id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    await loadAll()
+  const [assetSearch, setAssetSearch] = useState('')
+  const [assetSort, setAssetSort] = useState<'value_desc' | 'gain_desc' | 'dy_desc' | 'weight_desc' | 'alpha_asc'>('value_desc')
+  const [pendingDelete, setPendingDelete] = useState<{
+    kind: 'asset' | 'trade' | 'dividend'
+    id: string
+    label: string
+  } | null>(null)
+  const [deletingItem, setDeletingItem] = useState(false)
+
+  const deleteAsset = (asset: EnrichedAsset) => {
+    setPendingDelete({ kind: 'asset', id: asset.id, label: `Remover ${asset.ticker} da sua carteira?` })
   }
 
-  const deleteTrade = async (id: string) => {
-    if (!token || !confirm('Remover esta operação e recalcular o preço médio?')) return
-    await fetch(`${API_URL}/investments/trades/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    await loadAll()
+  const deleteTrade = (id: string) => {
+    setPendingDelete({ kind: 'trade', id, label: 'Remover esta operação e recalcular o preço médio?' })
   }
 
-  const deleteDividend = async (id: string) => {
-    if (!token || !confirm('Remover este provento?')) return
-    await fetch(`${API_URL}/investments/dividends/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    await loadAll()
+  const deleteDividend = (id: string) => {
+    setPendingDelete({ kind: 'dividend', id, label: 'Remover este provento?' })
+  }
+
+  const executePendingDelete = async () => {
+    if (!token || !pendingDelete) return
+    setDeletingItem(true)
+    try {
+      const endpoint =
+        pendingDelete.kind === 'asset'
+          ? `/investments/assets/${pendingDelete.id}`
+          : pendingDelete.kind === 'trade'
+            ? `/investments/trades/${pendingDelete.id}`
+            : `/investments/dividends/${pendingDelete.id}`
+      await fetch(`${API_URL}${endpoint}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      dispatchToast('Item removido da carteira.', 'info')
+      setPendingDelete(null)
+      await loadAll()
+    } finally {
+      setDeletingItem(false)
+    }
   }
 
   const s = portfolio?.summary
-  const filteredAssets = (portfolio?.assets || []).filter(
-    (a) => classFilter === 'all' || a.asset_class === classFilter
-  )
+  const filteredAssets = (portfolio?.assets || [])
+    .filter((a) => classFilter === 'all' || a.asset_class === classFilter)
+    .filter((a) => {
+      const q = assetSearch.trim().toLowerCase()
+      if (!q) return true
+      return (
+        a.ticker.toLowerCase().includes(q) ||
+        a.name.toLowerCase().includes(q) ||
+        (a.sector || '').toLowerCase().includes(q) ||
+        (a.broker || '').toLowerCase().includes(q)
+      )
+    })
+    .sort((a, b) => {
+      switch (assetSort) {
+        case 'gain_desc':
+          return (Number(b.gain_pct) || 0) - (Number(a.gain_pct) || 0)
+        case 'dy_desc':
+          return (Number(b.dy_12m) || 0) - (Number(a.dy_12m) || 0)
+        case 'weight_desc':
+          return (Number(b.portfolio_pct) || 0) - (Number(a.portfolio_pct) || 0)
+        case 'alpha_asc':
+          return a.ticker.localeCompare(b.ticker)
+        case 'value_desc':
+        default:
+          return (Number(b.current_value) || 0) - (Number(a.current_value) || 0)
+      }
+    })
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -581,7 +624,7 @@ function InvestmentsContent() {
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">Patrimônio Total</p>
-          <p className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">
+          <p className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1 money-value">
             {brl(s?.total_value || 0)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">{s?.assets_count || 0} ativo(s) em custódia</p>
@@ -589,7 +632,7 @@ function InvestmentsContent() {
 
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">Total Aplicado (Custo)</p>
-          <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">
+          <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1 money-value">
             {brl(s?.total_cost || 0)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">Preço médio ponderado</p>
@@ -598,7 +641,7 @@ function InvestmentsContent() {
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">Rentabilidade Total</p>
           <p
-            className={`text-2xl font-bold mt-1 ${
+            className={`text-2xl font-bold mt-1 money-value ${
               (s?.total_gain || 0) >= 0
                 ? 'text-emerald-600 dark:text-emerald-400'
                 : 'text-rose-600 dark:text-rose-400'
@@ -617,7 +660,7 @@ function InvestmentsContent() {
 
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500 dark:text-slate-400">Proventos (12m)</p>
-          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 mt-1 money-value">
             {brl(s?.dividends_12m || 0)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">
@@ -751,21 +794,49 @@ function InvestmentsContent() {
           </div>
 
           {viewTab === 'assets' && (
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {CLASS_FILTERS.map((cf) => (
-                <button
-                  key={cf.id}
-                  type="button"
-                  onClick={() => setClassFilter(cf.id)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium transition border ${
-                    classFilter === cf.id
-                      ? 'liquid-btn-primary border-transparent'
-                      : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300'
-                  }`}
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {CLASS_FILTERS.map((cf) => (
+                  <button
+                    key={cf.id}
+                    type="button"
+                    onClick={() => setClassFilter(cf.id)}
+                    className={`px-2.5 py-1 rounded-full text-xs font-medium transition border ${
+                      classFilter === cf.id
+                        ? 'liquid-btn-primary border-transparent'
+                        : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300'
+                    }`}
+                  >
+                    {cf.label}
+                  </button>
+                ))}
+              </div>
+              <div className="relative">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" aria-hidden="true" />
+                <input
+                  type="search"
+                  value={assetSearch}
+                  onChange={(e) => setAssetSearch(e.target.value)}
+                  placeholder="Ticker ou setor..."
+                  aria-label="Filtrar ativos por ticker ou setor"
+                  className="input-base pl-8 py-1 text-xs w-40"
+                />
+              </div>
+              <div className="inline-flex items-center gap-1">
+                <ArrowDownUp className="w-3.5 h-3.5 text-slate-400" aria-hidden="true" />
+                <select
+                  value={assetSort}
+                  onChange={(e) => setAssetSort(e.target.value as typeof assetSort)}
+                  aria-label="Ordenar ativos"
+                  className="px-2 py-1 rounded-xl text-xs font-semibold bg-white/65 dark:bg-white/10 border border-white/60 dark:border-white/15 text-slate-700 dark:text-slate-200"
                 >
-                  {cf.label}
-                </button>
-              ))}
+                  <option value="value_desc">Maior Saldo</option>
+                  <option value="gain_desc">Maior Rentabilidade %</option>
+                  <option value="dy_desc">Maior DY 12m</option>
+                  <option value="weight_desc">Maior Peso %</option>
+                  <option value="alpha_asc">Alfabética (A→Z)</option>
+                </select>
+              </div>
             </div>
           )}
         </div>
@@ -1300,6 +1371,16 @@ function InvestmentsContent() {
           </form>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={pendingDelete?.label || 'Confirmar exclusão?'}
+        description="Esta ação remove o registro e atualiza os cálculos da sua carteira."
+        confirmLabel="Remover"
+        variant="danger"
+        loading={deletingItem}
+        onConfirm={executePendingDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   )
 }
