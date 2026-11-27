@@ -30,8 +30,33 @@ import {
   Keyboard,
   X,
   ArrowRight,
+  Download,
+  Receipt,
 } from 'lucide-react'
 import { useAppearance } from '@/app/_theme/provider'
+import { useAuth } from '@/stores/auth/useAuth'
+import { dispatchToast } from '@/components/ui/ToastProvider'
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+interface GlobalSearchResult {
+  transactions: Array<{
+    id: string
+    description: string
+    amount: number
+    type: string
+    date: string
+    statement_month: string
+    category_name: string
+  }>
+  accounts: Array<{ id: string; name: string; balance: number; icon?: string | null }>
+  goals: Array<{ id: string; name: string; current_amount: number; target_amount: number }>
+  cards: Array<{ id: string; name: string; brand: string; last4?: string | null }>
+}
+
+function brlShort(v: number): string {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
+}
 
 export interface CommandPaletteProps {
   open: boolean
@@ -43,7 +68,7 @@ interface CommandItem {
   id: string
   label: string
   subtitle?: string
-  group: 'Ações Rápidas' | 'Navegação' | 'Configurações'
+  group: 'Resultados' | 'Ações Rápidas' | 'Navegação' | 'Configurações'
   keywords: string
   icon: React.ReactNode
   shortcut?: string
@@ -52,10 +77,45 @@ interface CommandItem {
 
 export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps) {
   const router = useRouter()
+  const { tokens } = useAuth()
+  const token = tokens?.access_token
   const { settings, resolvedTheme, toggleDarkMode, togglePrivacyMode } = useAppearance()
   const [query, setQuery] = useState('')
   const [selectedIndex, setSelectedIndex] = useState(0)
+  const [searchResults, setSearchResults] = useState<GlobalSearchResult | null>(null)
+  const [searching, setSearching] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  // Live debounced global search across transactions, accounts, goals & cards
+  useEffect(() => {
+    if (!open || !token) return
+    const q = query.trim()
+    if (q.length < 2) {
+      setSearchResults(null)
+      setSearching(false)
+      return
+    }
+    let active = true
+    setSearching(true)
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await fetch(`${API_URL}/insights/global-search?q=${encodeURIComponent(q)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (active && res.ok) {
+          setSearchResults(await res.json())
+        }
+      } catch {
+        // silent fallback
+      } finally {
+        if (active) setSearching(false)
+      }
+    }, 220)
+    return () => {
+      active = false
+      window.clearTimeout(timer)
+    }
+  }, [open, token, query])
 
   const commands = useMemo<CommandItem[]>(() => {
     const go = (href: string) => () => {
@@ -257,26 +317,118 @@ export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps)
         run: go('/settings/appearance'),
       },
       {
+        id: 'act-backup',
+        label: 'Exportar Backup Completo da Conta (JSON)',
+        subtitle: 'Baixa 100% dos seus lançamentos, contas, metas e regras',
+        group: 'Ações Rápidas',
+        keywords: 'backup exportar json portabilidade dados download',
+        icon: <Download className="w-4 h-4 text-emerald-500" aria-hidden="true" />,
+        run: async () => {
+          onClose()
+          if (!token) return
+          try {
+            const res = await fetch(`${API_URL}/auth/export-backup`, {
+              headers: { Authorization: `Bearer ${token}` },
+            })
+            if (!res.ok) throw new Error('Falha ao gerar backup')
+            const data = await res.json()
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+            const url = URL.createObjectURL(blob)
+            const a = document.createElement('a')
+            a.href = url
+            a.download = `mony-backup-${new Date().toISOString().slice(0, 10)}.json`
+            a.click()
+            URL.revokeObjectURL(url)
+            dispatchToast(`Backup salvo (${data?.counts?.transactions ?? 0} lançamentos)!`, 'success')
+          } catch {
+            dispatchToast('Não foi possível gerar o backup agora.', 'error')
+          }
+        },
+      },
+      {
         id: 'cfg-profile',
-        label: 'Perfil, Senha & 2FA',
+        label: 'Perfil, Senha, 2FA & Backup',
         group: 'Configurações',
-        keywords: 'perfil conta senha seguranca 2fa',
+        keywords: 'perfil conta senha seguranca 2fa backup',
         icon: <UserCircle className="w-4 h-4" aria-hidden="true" />,
         run: go('/settings/profile'),
       },
     ]
-  }, [onClose, onOpenAI, resolvedTheme, router, settings.privacyMode, toggleDarkMode, togglePrivacyMode])
+  }, [onClose, onOpenAI, resolvedTheme, router, settings.privacyMode, toggleDarkMode, togglePrivacyMode, token])
+
+  const dynamicItems = useMemo<CommandItem[]>(() => {
+    if (!searchResults) return []
+    const items: CommandItem[] = []
+    for (const tx of searchResults.transactions || []) {
+      items.push({
+        id: `tx-${tx.id}`,
+        label: tx.description,
+        subtitle: `${tx.date.slice(8, 10)}/${tx.date.slice(5, 7)}/${tx.date.slice(0, 4)} · ${tx.category_name} · ${tx.type === 'income' ? '+' : '-'}${brlShort(tx.amount)}`,
+        group: 'Resultados',
+        keywords: tx.description.toLowerCase(),
+        icon: <Receipt className={`w-4 h-4 ${tx.type === 'income' ? 'text-emerald-500' : 'text-rose-500'}`} aria-hidden="true" />,
+        run: () => {
+          onClose()
+          router.push(`/dashboard?month=${encodeURIComponent(tx.statement_month)}`)
+        },
+      })
+    }
+    for (const acc of searchResults.accounts || []) {
+      items.push({
+        id: `acc-${acc.id}`,
+        label: `${acc.icon || '🏦'} ${acc.name}`,
+        subtitle: `Conta · Saldo ${brlShort(acc.balance)}`,
+        group: 'Resultados',
+        keywords: acc.name.toLowerCase(),
+        icon: <Wallet className="w-4 h-4 text-blue-500" aria-hidden="true" />,
+        run: () => {
+          onClose()
+          router.push('/dashboard/accounts')
+        },
+      })
+    }
+    for (const g of searchResults.goals || []) {
+      items.push({
+        id: `goal-${g.id}`,
+        label: g.name,
+        subtitle: `Meta · ${brlShort(g.current_amount)} / ${brlShort(g.target_amount)}`,
+        group: 'Resultados',
+        keywords: g.name.toLowerCase(),
+        icon: <Target className="w-4 h-4 text-violet-500" aria-hidden="true" />,
+        run: () => {
+          onClose()
+          router.push('/dashboard/goals')
+        },
+      })
+    }
+    for (const c of searchResults.cards || []) {
+      items.push({
+        id: `card-${c.id}`,
+        label: c.name,
+        subtitle: `Cartão ${c.brand.toUpperCase()}${c.last4 ? ` · •••• ${c.last4}` : ''}`,
+        group: 'Resultados',
+        keywords: c.name.toLowerCase(),
+        icon: <CreditCard className="w-4 h-4 text-amber-500" aria-hidden="true" />,
+        run: () => {
+          onClose()
+          router.push('/dashboard/cards')
+        },
+      })
+    }
+    return items
+  }, [searchResults, onClose, router])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     if (!q) return commands
-    return commands.filter(
+    const staticMatches = commands.filter(
       (c) =>
         c.label.toLowerCase().includes(q) ||
         (c.subtitle && c.subtitle.toLowerCase().includes(q)) ||
         c.keywords.includes(q)
     )
-  }, [commands, query])
+    return [...dynamicItems, ...staticMatches]
+  }, [commands, dynamicItems, query])
 
   useEffect(() => {
     if (open) {
@@ -315,7 +467,7 @@ export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps)
 
   if (!open) return null
 
-  const groups: Array<CommandItem['group']> = ['Ações Rápidas', 'Navegação', 'Configurações']
+  const groups: Array<CommandItem['group']> = ['Resultados', 'Ações Rápidas', 'Navegação', 'Configurações']
 
   return (
     <div
@@ -336,10 +488,15 @@ export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps)
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ir para tela ou executar ação... (ex: calendário, dívidas, privacidade)"
-            aria-label="Buscar comandos e páginas"
+            placeholder="Buscar lançamentos (ex: Giassi, 2731), contas, metas ou comandos..."
+            aria-label="Buscar lançamentos, comandos e páginas"
             className="flex-1 bg-transparent text-sm text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
           />
+          {searching && (
+            <span className="text-[10px] font-semibold text-blue-500 animate-pulse shrink-0">
+              Buscando...
+            </span>
+          )}
           <button
             type="button"
             onClick={onClose}

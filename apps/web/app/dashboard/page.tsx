@@ -9,6 +9,7 @@ import {
   ChevronRight,
   CreditCard,
   Landmark,
+  LayoutGrid,
   Plus,
   SlidersHorizontal,
   Wallet,
@@ -25,6 +26,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { dispatchToast } from '@/components/ui/ToastProvider'
 import { BulkActions } from '@/components/dashboard/BulkActions'
 import { InstallmentForecast } from '@/components/dashboard/InstallmentForecast'
+import { Next7DaysWidget } from '@/components/dashboard/Next7DaysWidget'
 import { SetupChecklist } from '@/components/dashboard/SetupChecklist'
 import { useTransactions, type FilterState, type Transaction } from '@/hooks/useTransactions'
 import { useFilter } from '@/hooks/useFilter'
@@ -132,8 +134,45 @@ function DashboardContent() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isBulkLoading, setIsBulkLoading] = useState(false)
   const [bulkCatModalOpen, setBulkCatModalOpen] = useState(false)
+  const [bulkMonthModalOpen, setBulkMonthModalOpen] = useState(false)
+  const [bulkMonthValue, setBulkMonthValue] = useState(() => getCurrentYearMonth())
   const [confirmState, setConfirmState] = useState<{ mode: 'single' | 'bulk'; id?: string } | null>(null)
   const [showScrollTop, setShowScrollTop] = useState(false)
+  const [widgetMenuOpen, setWidgetMenuOpen] = useState(false)
+  const [visibleWidgets, setVisibleWidgets] = useState({
+    summary: true,
+    next7d: true,
+    installments: true,
+    charts: true,
+  })
+
+  // Load saved widget visibility & ?month=YYYY-MM deep link (from Ctrl+K)
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('mony_dashboard_widgets_v1')
+      if (saved) setVisibleWidgets((prev) => ({ ...prev, ...JSON.parse(saved) }))
+      const params = new URLSearchParams(window.location.search)
+      const qMonth = params.get('month')
+      if (qMonth && /^\d{4}-\d{2}$/.test(qMonth)) {
+        setSelectedMonth(qMonth)
+        setAllMonthsMode(false)
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const toggleWidget = (key: keyof typeof visibleWidgets) => {
+    setVisibleWidgets((prev) => {
+      const next = { ...prev, [key]: !prev[key] }
+      try {
+        localStorage.setItem('mony_dashboard_widgets_v1', JSON.stringify(next))
+      } catch {
+        // ignore
+      }
+      return next
+    })
+  }
 
   // Greeting based on local hour
   const greeting = (() => {
@@ -408,9 +447,39 @@ function DashboardContent() {
       await bulkCategorize(Array.from(selectedIds), bulkCategoryId)
       setBulkCatModalOpen(false)
       setSelectedIds(new Set())
+      dispatchToast('Categoria atualizada em lote!', 'success')
       await fetchTransactions(buildApiFilters(), 0, 1000)
     } catch (error) {
       console.error('Failed to bulk categorize:', error)
+    } finally {
+      setIsBulkLoading(false)
+    }
+  }
+
+  const confirmBulkChangeMonth = async () => {
+    if (!bulkMonthValue || selectedIds.size === 0 || !accessToken) return
+    setIsBulkLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/transactions/bulk-update`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          transaction_ids: Array.from(selectedIds),
+          statement_month: bulkMonthValue,
+        }),
+      })
+      if (!res.ok) throw new Error('Erro ao mover mês em lote')
+      const count = selectedIds.size
+      setBulkMonthModalOpen(false)
+      setSelectedIds(new Set())
+      setRefreshKey((k) => k + 1)
+      dispatchToast(`${count} lançamento(s) movido(s) para ${bulkMonthValue}!`, 'success')
+      await fetchTransactions(buildApiFilters(), 0, 1000)
+    } catch (err) {
+      dispatchToast(err instanceof Error ? err.message : 'Erro ao mover mês', 'error')
     } finally {
       setIsBulkLoading(false)
     }
@@ -516,6 +585,39 @@ function DashboardContent() {
                 <Wallet className="w-4 h-4" aria-hidden="true" />
                 Gerenciar Contas
               </Link>
+              <div className="relative no-print">
+                <button
+                  type="button"
+                  onClick={() => setWidgetMenuOpen((v) => !v)}
+                  className="liquid-btn liquid-btn-glass inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold"
+                  title="Mostrar ou ocultar blocos do Dashboard"
+                >
+                  <LayoutGrid className="w-4 h-4" aria-hidden="true" />
+                  <span className="hidden sm:inline">Organizar</span>
+                </button>
+                {widgetMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-56 glass-modal p-3 space-y-2 z-30 shadow-xl text-xs">
+                    <p className="font-bold text-slate-900 dark:text-white px-1">Blocos do Dashboard</p>
+                    {(
+                      [
+                        ['summary', 'Cards de Resumo'],
+                        ['next7d', 'Próximos 7 Dias'],
+                        ['installments', 'Projeção de Parcelas'],
+                        ['charts', 'Análise Financeira (Gráficos)'],
+                      ] as const
+                    ).map(([k, lbl]) => (
+                      <label key={k} className="flex items-center justify-between px-1.5 py-1 rounded-lg hover:bg-white/50 dark:hover:bg-white/10 cursor-pointer">
+                        <span className="text-slate-700 dark:text-slate-200">{lbl}</span>
+                        <input
+                          type="checkbox"
+                          checked={visibleWidgets[k]}
+                          onChange={() => toggleWidget(k)}
+                        />
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -704,6 +806,7 @@ function DashboardContent() {
         <SetupChecklist token={accessToken} budgetsCount={budgets.length} />
 
         {/* Summary Cards */}
+        {visibleWidgets.summary && (
         <section aria-labelledby="summary-heading">
           <div className="flex items-center justify-between mb-4">
             <h2 id="summary-heading" className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -733,8 +836,13 @@ function DashboardContent() {
             }
           />
         </section>
+        )}
+
+        {/* Next 7 Days Compact Widget */}
+        {visibleWidgets.next7d && <Next7DaysWidget token={accessToken} refreshKey={refreshKey} />}
 
         {/* Installment Future Commitment Forecast */}
+        {visibleWidgets.installments && (
         <section aria-labelledby="installments-heading">
           <h2 id="installments-heading" className="sr-only">
             Projeção de Parcelas Futuras
@@ -746,8 +854,10 @@ function DashboardContent() {
             onSelectMonth={handleSelectMonth}
           />
         </section>
+        )}
 
         {/* Charts (100% Liquid Glass + real 12-month annual series + interactive Donut) */}
+        {visibleWidgets.charts && (
         <section aria-labelledby="charts-heading">
           <h2 id="charts-heading" className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
             Análise Financeira
@@ -767,6 +877,7 @@ function DashboardContent() {
             }}
           />
         </section>
+        )}
 
         {/* Transaction Spreadsheet (All rows on 1 page · Separated Income/Expenses · Click-anywhere inline edit) */}
         <section ref={spreadsheetRef} aria-labelledby="transactions-heading" className="space-y-4">
@@ -856,16 +967,77 @@ function DashboardContent() {
         </section>
       </div>
 
-      {/* Bulk Actions Toolbar */}
-      <BulkActions
-        selectedCount={selectedIds.size}
-        onDelete={handleBulkDelete}
-        onCategorize={handleBulkCategorize}
-        onExport={handleBulkExport}
-        onArchive={handleBulkArchive}
-        onClearSelection={() => setSelectedIds(new Set())}
-        loading={isBulkLoading}
-      />
+      {/* Bulk Actions Toolbar (with instant Excel-like sum & average + Move Month!) */}
+      {(() => {
+        const selectedItems = transactions.filter((t) => selectedIds.has(t.id))
+        const sum = selectedItems.reduce((s, t) => s + (Number(t.amount) || 0), 0)
+        const avg = selectedItems.length > 0 ? sum / selectedItems.length : 0
+        return (
+          <BulkActions
+            selectedCount={selectedIds.size}
+            selectedSum={sum}
+            selectedAvg={avg}
+            onDelete={handleBulkDelete}
+            onCategorize={handleBulkCategorize}
+            onChangeMonth={() => {
+              setBulkMonthValue(selectedMonth)
+              setBulkMonthModalOpen(true)
+            }}
+            onExport={handleBulkExport}
+            onArchive={handleBulkArchive}
+            onClearSelection={() => setSelectedIds(new Set())}
+            loading={isBulkLoading}
+          />
+        )
+      })()}
+
+      {/* Bulk Move Statement Month Modal */}
+      {bulkMonthModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-sm flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setBulkMonthModalOpen(false)}
+        >
+          <div className="glass-modal max-w-sm w-full p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-500" />
+                Mover Mês da Fatura ({selectedIds.size})
+              </h3>
+              <button type="button" onClick={() => setBulkMonthModalOpen(false)} aria-label="Fechar">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Escolha o novo mês de competência/fatura para os {selectedIds.size} lançamentos selecionados:
+            </p>
+            <input
+              type="month"
+              value={bulkMonthValue}
+              onChange={(e) => setBulkMonthValue(e.target.value)}
+              className="input-base text-sm font-semibold"
+            />
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setBulkMonthModalOpen(false)}
+                className="liquid-btn liquid-btn-glass px-4 py-2 rounded-xl text-xs font-semibold"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isBulkLoading || !bulkMonthValue}
+                onClick={confirmBulkChangeMonth}
+                className="liquid-btn liquid-btn-primary px-5 py-2 rounded-xl text-xs font-semibold disabled:opacity-50"
+              >
+                {isBulkLoading ? 'Movendo...' : 'Mover Lançamentos'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Transaction Modal (Universal Editor with Tags & Split when editing!) */}
       {isModalOpen && selectedTransaction && accessToken ? (

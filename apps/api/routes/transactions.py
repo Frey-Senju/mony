@@ -977,3 +977,66 @@ async def split_transaction(
         .all()
     )
     return {"split_count": len(rows), "items": [_serialize_transaction(r) for r in rows]}
+
+
+class BulkUpdateRequest(BaseModel):
+    transaction_ids: list[str] = Field(..., min_length=1, max_length=500)
+    statement_month: Optional[str] = Field(default=None, pattern=r"^\d{4}-\d{2}$")
+    is_reconciled: Optional[bool] = None
+    category_id: Optional[str] = None
+    category_name: Optional[str] = None
+
+
+@router.post("/bulk-update", status_code=200)
+async def bulk_update_transactions(
+    payload: BulkUpdateRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    Update statement_month, is_reconciled, and/or category across multiple
+    transactions atomically while preserving Open Finance origin & anti-duplicate fields.
+    """
+    uid = parse_uuid(user_id, "user_id")
+    tids: list[UUID] = []
+    for raw_id in payload.transaction_ids:
+        try:
+            tids.append(UUID(str(raw_id)))
+        except ValueError:
+            continue
+    if not tids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Nenhum ID válido informado.")
+
+    rows = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.id.in_(tids),
+            Transaction.deleted_at.is_(None),
+        )
+        .all()
+    )
+
+    cat: Optional[Category] = None
+    if payload.category_id or payload.category_name:
+        cat = _resolve_category(db, uid, payload.category_id, payload.category_name)
+
+    updated_count = 0
+    for tx in rows:
+        changed = False
+        if payload.statement_month is not None:
+            tx.statement_month = payload.statement_month
+            changed = True
+        if payload.is_reconciled is not None:
+            tx.is_reconciled = payload.is_reconciled
+            changed = True
+        if cat is not None:
+            _set_transaction_category(db, tx, cat)
+            changed = True
+        if changed:
+            tx.user_edited = True
+            tx.updated_at = datetime.utcnow()
+            updated_count += 1
+
+    db.commit()
+    return {"updated": updated_count}

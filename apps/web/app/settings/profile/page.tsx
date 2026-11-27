@@ -9,9 +9,12 @@ import {
   Save,
   CheckCircle2,
   AlertCircle,
+  Download,
+  Database,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { TwoFASetup } from '@/components/auth/TwoFASetup'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 import { useAuth } from '@/stores/auth/useAuth'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -67,6 +70,37 @@ function ProfileContent() {
   const [disabling2FA, setDisabling2FA] = useState(false)
   const [twoFaMsg, setTwoFaMsg] = useState<string | null>(null)
   const [twoFaErr, setTwoFaErr] = useState<string | null>(null)
+  const [exportingBackup, setExportingBackup] = useState(false)
+
+  const handleDownloadFullBackup = async () => {
+    if (!token) return
+    setExportingBackup(true)
+    try {
+      const res = await fetch(`${API_URL}/auth/export-backup`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Falha ao gerar backup da conta')
+      const data = await res.json()
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `mony-backup-${new Date().toISOString().slice(0, 10)}.json`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      const c = data?.counts || {}
+      dispatchToast(
+        `Backup completo baixado! ${c.transactions ?? 0} lançamentos, ${c.accounts ?? 0} contas, ${c.categories ?? 0} categorias.`,
+        'success'
+      )
+    } catch (err) {
+      dispatchToast(err instanceof Error ? err.message : 'Erro ao exportar backup', 'error')
+    } finally {
+      setExportingBackup(false)
+    }
+  }
 
   const loadProfile = useCallback(async () => {
     if (!token) return
@@ -518,6 +552,34 @@ function ProfileContent() {
                 </button>
               </div>
             )}
+          </div>
+
+          {/* EPIC-008: Full Account Backup & Portability */}
+          <div className="glass-panel space-y-4">
+            <div className="flex items-start gap-3">
+              <span className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+                <Database className="w-5 h-5" aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                  Backup Completo &amp; Portabilidade de Dados
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                  Baixe em 1 clique um arquivo JSON organizado com 100% da sua vida financeira no Mony (contas, categorias, transações, budgets, metas, cartões, recorrências, regras, dívidas e investimentos). Seus dados pertencem a você.
+                </p>
+              </div>
+            </div>
+            <div>
+              <button
+                type="button"
+                disabled={exportingBackup}
+                onClick={handleDownloadFullBackup}
+                className="liquid-btn liquid-btn-primary inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+              >
+                <Download className="w-4 h-4" aria-hidden="true" />
+                {exportingBackup ? 'Gerando backup...' : 'Baixar Backup Completo (JSON)'}
+              </button>
+            </div>
           </div>
         </>
       )}

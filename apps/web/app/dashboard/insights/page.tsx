@@ -18,7 +18,9 @@ import {
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { TrendChart, formatMonthLabel, type MonthDataPoint } from '@/components/insights/TrendChart'
 import { AnomalyAlert } from '@/components/insights/AnomalyAlert'
+import { SpendingXRayAndReview } from '@/components/insights/SpendingXRayAndReview'
 import { useInsights } from '@/hooks/useInsights'
+import { useCategories } from '@/hooks/useCategories'
 import { useAuth } from '@/stores/auth/useAuth'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -78,6 +80,7 @@ function InsightsContent() {
   const auth = useAuth()
   const token = auth.tokens?.access_token
   const { insights, loading, error } = useInsights(token)
+  const { categories: userCategories } = useCategories(token)
   const [chartData, setChartData] = useState<MonthDataPoint[]>([])
   const [chartLoading, setChartLoading] = useState(false)
   const [health, setHealth] = useState<HealthScoreData | null>(null)
@@ -417,6 +420,9 @@ function InsightsContent() {
           )}
         </div>
       </div>
+
+      {/* EPIC-008: Mony Review Wrapped, Merchant Ranking, Weekday Heatmap & Month Comparator */}
+      <SpendingXRayAndReview token={token} categories={userCategories} />
 
       {/* Evolução 6 meses */}
       <section className="glass-card p-5 space-y-3">

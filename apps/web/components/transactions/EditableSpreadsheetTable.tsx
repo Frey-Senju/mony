@@ -17,6 +17,8 @@ import {
   Trash2,
   ShieldCheck,
   X,
+  Sparkles,
+  AlertTriangle,
 } from 'lucide-react'
 import type { Category } from '@/hooks/useCategories'
 import { dispatchToast } from '@/components/ui/ToastProvider'
@@ -143,6 +145,85 @@ function getDefaultDateForMonth(ym?: string): string {
   return `${ym}-10`
 }
 
+interface ParsedNL {
+  description: string
+  amount: number
+  type: 'income' | 'expense'
+  payment_method: string
+  category_name: string
+}
+
+function parseNaturalQuickEntry(raw: string, categories: Category[]): ParsedNL | null {
+  const text = raw.trim()
+  if (!text) return null
+  // Extract monetary value (e.g. 245,90 | 245.90 | 1.250,50 | R$ 80 | 50)
+  const amountRegex = /(?:r\$\s*)?(\d{1,3}(?:\.\d{3})+,\d{1,2}|\d+(?:[.,]\d{1,2})?)/i
+  const m = text.match(amountRegex)
+  if (!m) return null
+  const numStr = m[1].includes(',') ? m[1].replace(/\./g, '').replace(',', '.') : m[1]
+  const amount = parseFloat(numStr)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+
+  const lower = text.toLowerCase()
+  const isIncome = /\b(sal[aá]rio|freela|freelance|recebi|entrada|dividendo|rendimento|reembolso|b[oô]nus|pagamento recebido)\b/i.test(lower)
+
+  let payment = 'credit_card'
+  if (/\b(pix)\b/i.test(lower)) payment = 'pix'
+  else if (/\b(d[eé]bito)\b/i.test(lower)) payment = 'debit_card'
+  else if (/\b(boleto)\b/i.test(lower)) payment = 'boleto'
+  else if (/\b(transf|transfer[eê]ncia|ted|doc)\b/i.test(lower)) payment = 'bank_transfer'
+  else if (/\b(dinheiro|esp[eé]cie)\b/i.test(lower)) payment = 'cash'
+  else if (/\b(cart[aã]o|cr[eé]dito|visa|master|elo)\b/i.test(lower)) payment = 'credit_card'
+  else if (isIncome) payment = 'bank_transfer'
+
+  // Strip value and payment keywords to produce clean description
+  const cleanDesc = text
+    .replace(amountRegex, ' ')
+    .replace(/\b(no|na|em|via|com|por|de|do|da)?\s*(cart[aã]o(\s+de\s+cr[eé]dito)?|cr[eé]dito|d[eé]bito|pix|boleto|transfer[eê]ncia|transf\.?|dinheiro)\b/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!cleanDesc) return null
+
+  // Infer best matching category from user's real categories
+  let categoryName = isIncome
+    ? categories.find((c) => /entrada|trabalho|sal[aá]rio|receita/i.test(c.name))?.name || 'Trabalho'
+    : 'Outros'
+
+  const catHeuristics: Array<[RegExp, RegExp]> = [
+    [/mercado|giassi|angeloni|carrefour|atacad|padaria|ifood|99 food|restaurante|lanche|caf[eé]|pizza|sushi|a[cç]ougue/i, /mercado|alimenta|compras/i],
+    [/uber|99pop|posto|gasolina|combust|estacionamento|ped[aá]gio|oficina|mec[aâ]nic/i, /carro|gasolina|transporte/i],
+    [/aluguel|condom[ií]nio|celesc|energia|luz|[aá]gua|internet|vero|vivo|claro|tim|imobili[aá]ria/i, /casa|moradia/i],
+    [/farm[aá]cia|drogaria|m[eé]dic|dentista|wellhub|academia|exame|hospital|sa[uú]de|unimed/i, /sa[uú]de/i],
+    [/netflix|spotify|prime|youtube|apple|cinema|bar|viagem|hotel|cacau|krea|jogo|steam|lazer|divers[aã]o/i, /divers[aã]o|lazer|viagem/i],
+    [/curso|faculdade|escola|livro|udemy|alura|educa|brasil paralelo/i, /educa/i],
+    [/invest|cdb|tesouro|a[cç][aã]o|fii|binance|xp|nuinvest|econom/i, /econom|invest/i],
+  ]
+
+  if (!isIncome) {
+    for (const [textRe, catRe] of catHeuristics) {
+      if (textRe.test(lower)) {
+        const hit = categories.find((c) => catRe.test(c.name))
+        if (hit) {
+          categoryName = hit.name
+          break
+        }
+      }
+    }
+    if (categoryName === 'Outros') {
+      const directHit = categories.find((c) => lower.includes(c.name.toLowerCase()) && c.name.length >= 3)
+      if (directHit) categoryName = directHit.name
+    }
+  }
+
+  return {
+    description: cleanDesc.charAt(0).toUpperCase() + cleanDesc.slice(1),
+    amount,
+    type: isIncome ? 'income' : 'expense',
+    payment_method: payment,
+    category_name: categoryName,
+  }
+}
+
 export function EditableSpreadsheetTable({
   token,
   transactions,
@@ -192,6 +273,16 @@ export function EditableSpreadsheetTable({
   const [catNameDraft, setCatNameDraft] = useState('')
   const [savingCat, setSavingCat] = useState(false)
 
+  // Power-User 3.0: Natural language quick-entry bar, duplicate filter & inline new category modal
+  const [nlInput, setNlInput] = useState('')
+  const [nlSubmitting, setNlSubmitting] = useState(false)
+  const [onlyDuplicates, setOnlyDuplicates] = useState(false)
+  const [creatingCatForTx, setCreatingCatForTx] = useState<SpreadsheetTx | null>(null)
+  const [newCatName, setNewCatName] = useState('')
+  const [newCatEmoji, setNewCatEmoji] = useState('🏷️')
+  const [newCatColor, setNewCatColor] = useState('#0071E3')
+  const [creatingCatBusy, setCreatingCatBusy] = useState(false)
+
   useEffect(() => {
     setQaDate(getDefaultDateForMonth(defaultMonth))
   }, [defaultMonth])
@@ -214,6 +305,26 @@ export function EditableSpreadsheetTable({
       transactions.map((t) => (localOverrides[t.id] ? { ...t, ...localOverrides[t.id] } : t)),
     [transactions, localOverrides]
   )
+
+  const nlPreview = useMemo(() => parseNaturalQuickEntry(nlInput, categories), [nlInput, categories])
+
+  // Detect probable duplicates (same date + exact cent amount + normalized description)
+  const duplicateIds = useMemo(() => {
+    const groups = new Map<string, string[]>()
+    for (const t of mergedTransactions) {
+      const key = `${(t.transaction_date || '').slice(0, 10)}|${Math.round((Number(t.amount) || 0) * 100)}|${(t.description || '').trim().toLowerCase().slice(0, 22)}`
+      const arr = groups.get(key) || []
+      arr.push(t.id)
+      groups.set(key, arr)
+    }
+    const dupSet = new Set<string>()
+    for (const ids of groups.values()) {
+      if (ids.length > 1) {
+        ids.forEach((id) => dupSet.add(id))
+      }
+    }
+    return dupSet
+  }, [mergedTransactions])
 
   // Category chips present in the current dataset (sorted by count desc)
   const presentCategories = useMemo(() => {
@@ -249,6 +360,7 @@ export function EditableSpreadsheetTable({
   const filteredSorted = useMemo(() => {
     const q = searchText.trim().toLowerCase()
     const list = mergedTransactions.filter((t) => {
+      if (onlyDuplicates && !duplicateIds.has(t.id)) return false
       if (checkFilter === 'checked' && !t.is_reconciled) return false
       if (checkFilter === 'unchecked' && t.is_reconciled) return false
       if (categoryChip && (t.category_name || 'Outros').toLowerCase() !== categoryChip.toLowerCase()) {
@@ -291,7 +403,7 @@ export function EditableSpreadsheetTable({
       }
     })
     return copy
-  }, [mergedTransactions, checkFilter, categoryChip, searchText, sortBy, acctMap])
+  }, [mergedTransactions, onlyDuplicates, duplicateIds, checkFilter, categoryChip, searchText, sortBy, acctMap])
 
   const incomes = useMemo(() => filteredSorted.filter((t) => t.type === 'income'), [filteredSorted])
   const expenses = useMemo(() => filteredSorted.filter((t) => t.type === 'expense'), [filteredSorted])
@@ -629,6 +741,115 @@ export function EditableSpreadsheetTable({
     onSelectionChange(next)
   }
 
+  const toggleBulkSection = (items: SpreadsheetTx[]) => {
+    if (!selectedIds || !onSelectionChange || items.length === 0) return
+    const allSelected = items.every((t) => selectedIds.has(t.id))
+    const next = new Set(selectedIds)
+    if (allSelected) {
+      items.forEach((t) => next.delete(t.id))
+    } else {
+      items.forEach((t) => next.add(t.id))
+    }
+    onSelectionChange(next)
+  }
+
+  const handleNaturalSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!token || !nlPreview) return
+    const accountId = accounts[0]?.id
+    if (!accountId) {
+      dispatchToast('Cadastre uma conta antes de lançar.', 'error')
+      return
+    }
+    setNlSubmitting(true)
+    try {
+      const txDate = getDefaultDateForMonth(defaultMonth)
+      const stmtYm = defaultMonth || txDate.slice(0, 7)
+      const res = await fetch(`${API_URL}/transactions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          account_id: accountId,
+          type: nlPreview.type,
+          amount: nlPreview.amount,
+          currency: 'BRL',
+          description: nlPreview.description,
+          merchant_name: nlPreview.description,
+          transaction_date: txDate,
+          statement_month: stmtYm,
+          payment_method: nlPreview.payment_method,
+          category_name: nlPreview.category_name,
+          is_reconciled: false,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || 'Erro ao lançar')
+      }
+      dispatchToast(
+        `${nlPreview.type === 'income' ? 'Entrada' : 'Saída'} "${nlPreview.description}" (${brl(nlPreview.amount)}) lançada!`,
+        'success'
+      )
+      setNlInput('')
+      window.dispatchEvent(new Event('mony:transactions-updated'))
+      await onRefresh()
+    } catch (err) {
+      dispatchToast(err instanceof Error ? err.message : 'Erro ao lançar', 'error')
+    } finally {
+      setNlSubmitting(false)
+    }
+  }
+
+  const handleCreateCategoryInline = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = newCatName.trim()
+    if (!trimmed || !token) return
+    setCreatingCatBusy(true)
+    try {
+      const res = await fetch(`${API_URL}/categories`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: trimmed,
+          icon: newCatEmoji || '🏷️',
+          color: newCatColor,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || 'Erro ao criar categoria')
+      }
+      const targetTx = creatingCatForTx
+      setCreatingCatForTx(null)
+      setNewCatName('')
+      if (targetTx) {
+        await patchTx(
+          targetTx,
+          { category_name: trimmed },
+          {
+            category_name: trimmed,
+            category_color: newCatColor,
+            category_icon: newCatEmoji || '🏷️',
+            user_edited: true,
+          }
+        )
+      } else {
+        await onRefresh()
+      }
+      dispatchToast(`Categoria ${newCatEmoji} ${trimmed} criada e aplicada!`, 'success')
+    } catch (err) {
+      dispatchToast(err instanceof Error ? err.message : 'Erro ao criar categoria', 'error')
+    } finally {
+      setCreatingCatBusy(false)
+    }
+  }
+
   const renderSortArrow = (ascKey: SortKey, descKey: SortKey) => {
     if (sortBy === ascKey) return <ArrowUp className="w-3 h-3 text-blue-500" aria-hidden="true" />
     if (sortBy === descKey) return <ArrowDown className="w-3 h-3 text-blue-500" aria-hidden="true" />
@@ -692,7 +913,15 @@ export function EditableSpreadsheetTable({
               <thead className="sticky top-0 z-10 backdrop-blur-md bg-white/85 dark:bg-slate-900/90 shadow-sm">
                 <tr className="border-b border-white/50 dark:border-white/10 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
                   {selectedIds && onSelectionChange && (
-                    <th className="px-2.5 py-2.5 w-8 no-print" aria-label="Seleção em lote" />
+                    <th className="px-2.5 py-2.5 w-8 no-print" aria-label="Selecionar todos desta seção">
+                      <input
+                        type="checkbox"
+                        checked={sectionItems.length > 0 && sectionItems.every((t) => selectedIds.has(t.id))}
+                        onChange={() => toggleBulkSection(sectionItems)}
+                        title="Selecionar todos desta seção"
+                        aria-label={`Selecionar todos em ${title}`}
+                      />
+                    </th>
                   )}
                   <th className="px-2.5 py-2.5 text-center w-10">
                     <button
@@ -902,8 +1131,15 @@ export function EditableSpreadsheetTable({
                               value={catName}
                               onChange={async (e) => {
                                 const nextCat = e.target.value
-                                const matched = catByName[nextCat.toLowerCase()]
                                 setEditingCell(null)
+                                if (nextCat === '__new_cat__') {
+                                  setCreatingCatForTx(tx)
+                                  setNewCatName('')
+                                  setNewCatEmoji('🏷️')
+                                  setNewCatColor('#0071E3')
+                                  return
+                                }
+                                const matched = catByName[nextCat.toLowerCase()]
                                 await patchTx(
                                   tx,
                                   { category_name: nextCat },
@@ -931,6 +1167,7 @@ export function EditableSpreadsheetTable({
                                 </option>
                               ))}
                               {!catObj && <option value={catName}>{catIcon} {catName}</option>}
+                              <option value="__new_cat__">＋ Criar nova categoria...</option>
                             </select>
                           </div>
                         ) : (
@@ -1304,6 +1541,79 @@ export function EditableSpreadsheetTable({
 
   return (
     <div className="space-y-4">
+      {/* Power-User 3.0: Natural Language Quick-Entry Bar */}
+      {accounts.length > 0 && (
+        <form
+          onSubmit={handleNaturalSubmit}
+          className="glass-card p-3 space-y-2 border border-blue-400/25 no-print"
+        >
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <div className="relative flex-1">
+              <Sparkles className="w-4 h-4 text-blue-500 absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+              <input
+                type="text"
+                value={nlInput}
+                onChange={(e) => setNlInput(e.target.value)}
+                placeholder='Lançamento rápido: digite ex. "Giassi 245,90 cartão" ou "Freela 1500 pix" e aperte Enter'
+                aria-label="Lançamento rápido em texto livre"
+                className="input-base pl-9 py-2 text-xs"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={!nlPreview || nlSubmitting}
+              className="liquid-btn liquid-btn-primary px-4 py-2 rounded-xl text-xs font-semibold shrink-0 disabled:opacity-40"
+            >
+              {nlSubmitting ? 'Lançando...' : 'Lançar agora'}
+            </button>
+          </div>
+          {nlPreview && (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] pl-1">
+              <span className="text-slate-500 dark:text-slate-400">Prévia:</span>
+              <span
+                className={`px-2 py-0.5 rounded-full font-bold ${
+                  nlPreview.type === 'income'
+                    ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-rose-500/15 text-rose-700 dark:text-rose-300'
+                }`}
+              >
+                {nlPreview.type === 'income' ? '+ Entrada' : '- Saída'} {brl(nlPreview.amount)}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-white/65 dark:bg-white/10 font-semibold text-slate-800 dark:text-slate-100">
+                {nlPreview.description}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-700 dark:text-blue-300 font-semibold">
+                {catByName[nlPreview.category_name.toLowerCase()]?.icon || '🏷️'} {nlPreview.category_name}
+              </span>
+              <span className="px-2 py-0.5 rounded-full bg-slate-200/70 dark:bg-white/10 text-slate-600 dark:text-slate-300">
+                {PAYMENT_OPTIONS.find((p) => p.value === nlPreview.payment_method)?.label || nlPreview.payment_method}
+              </span>
+            </div>
+          )}
+        </form>
+      )}
+
+      {/* Probable Duplicates Alert Pill */}
+      {duplicateIds.size > 0 && (
+        <div className="glass-card px-4 py-2.5 border-amber-400/50 bg-amber-500/10 flex flex-wrap items-center justify-between gap-2 text-xs text-amber-900 dark:text-amber-200 no-print">
+          <span className="inline-flex items-center gap-2 font-medium">
+            <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" aria-hidden="true" />
+            Detectamos <strong>{duplicateIds.size}</strong> lançamento(s) com mesma data, valor e descrição parecida neste mês.
+          </span>
+          <button
+            type="button"
+            onClick={() => setOnlyDuplicates((v) => !v)}
+            className={`px-3 py-1 rounded-full text-xs font-bold transition ${
+              onlyDuplicates
+                ? 'bg-amber-600 text-white'
+                : 'bg-white/75 dark:bg-white/10 text-amber-800 dark:text-amber-200 hover:bg-white'
+            }`}
+          >
+            {onlyDuplicates ? 'Mostrar todos os lançamentos' : 'Revisar possíveis duplicatas'}
+          </button>
+        </div>
+      )}
+
       {/* Sort, Checkbox Filter, Progress & Export Toolbar */}
       <div className="glass-card p-3.5 space-y-3 no-print">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
@@ -1636,6 +1946,94 @@ export function EditableSpreadsheetTable({
               </button>
               <button type="submit" disabled={savingCat} className="liquid-btn liquid-btn-primary px-5 py-2 rounded-xl text-xs font-semibold disabled:opacity-50">
                 {savingCat ? 'Salvando...' : 'Salvar Personalização'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {/* Inline New Category Creator Modal (opened directly from cell select) */}
+      {creatingCatForTx && (
+        <div
+          className="fixed inset-0 z-[70] bg-slate-950/50 backdrop-blur-sm flex items-center justify-center p-4 no-print"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setCreatingCatForTx(null)}
+        >
+          <form
+            onSubmit={handleCreateCategoryInline}
+            onClick={(e) => e.stopPropagation()}
+            className="glass-modal max-w-sm w-full p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Plus className="w-4 h-4 text-blue-500" />
+                Nova Categoria Rápida
+              </h3>
+              <button type="button" onClick={() => setCreatingCatForTx(null)} aria-label="Fechar">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="flex justify-center py-1">
+              <span
+                className="inline-flex items-center gap-1.5 px-3.5 py-1 rounded-full text-xs font-bold"
+                style={{
+                  backgroundColor: `${newCatColor}24`,
+                  color: newCatColor,
+                  border: `1.5px solid ${newCatColor}66`,
+                }}
+              >
+                <span>{newCatEmoji}</span>
+                <span>{newCatName.trim() || 'Nova categoria'}</span>
+              </span>
+            </div>
+
+            <input
+              type="text"
+              required
+              autoFocus
+              value={newCatName}
+              onChange={(e) => setNewCatName(e.target.value)}
+              placeholder="Ex.: Pets, Streaming, Presentes..."
+              className="input-base text-sm"
+            />
+
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                maxLength={4}
+                value={newCatEmoji}
+                onChange={(e) => setNewCatEmoji(e.target.value)}
+                aria-label="Emoji"
+                className="input-base w-16 text-center text-base"
+              />
+              <input
+                type="color"
+                value={newCatColor}
+                onChange={(e) => setNewCatColor(e.target.value)}
+                aria-label="Cor"
+                className="w-10 h-9 rounded-lg cursor-pointer border border-slate-300 dark:border-white/20 bg-transparent"
+              />
+              <div className="flex flex-wrap gap-1">
+                {QUICK_COLORS.slice(0, 6).map((hex) => (
+                  <button
+                    key={hex}
+                    type="button"
+                    onClick={() => setNewCatColor(hex)}
+                    className="w-5 h-5 rounded-full"
+                    style={{ backgroundColor: hex }}
+                    aria-label={`Cor ${hex}`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" onClick={() => setCreatingCatForTx(null)} className="liquid-btn liquid-btn-glass px-3.5 py-2 rounded-xl text-xs font-semibold">
+                Cancelar
+              </button>
+              <button type="submit" disabled={creatingCatBusy || !newCatName.trim()} className="liquid-btn liquid-btn-primary px-4 py-2 rounded-xl text-xs font-semibold disabled:opacity-50">
+                {creatingCatBusy ? 'Criando...' : 'Criar e Aplicar'}
               </button>
             </div>
           </form>

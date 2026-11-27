@@ -12,19 +12,30 @@ Endpoints:
   GET /insights/auto-categorize?description=X&merchant=Y  — category suggestion
 """
 
+from calendar import monthrange
 from datetime import date, datetime
 from decimal import Decimal
+import re
 from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import and_, func
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, func, or_
+from sqlalchemy.orm import Session, joinedload
 
 from database.base import get_db
-from database.models import Category, Transaction, TransactionCategory, TransactionType
+from database.models import (
+    Account,
+    Category,
+    CreditCard,
+    Goal,
+    Transaction,
+    TransactionCategory,
+    TransactionType,
+)
 from utils.auth import get_current_user_from_header
+from utils.uuid_utils import parse_uuid
 
 router = APIRouter(prefix="/insights", tags=["insights"])
 
@@ -287,3 +298,366 @@ async def auto_categorize(
                 return AutoCategorizeResponse(category=category, confidence="low")
 
     return AutoCategorizeResponse(category=None, confidence="none")
+
+
+# ============ EPIC-008: Spending X-Ray, Month Comparator, Mony Review & Global Search ============
+
+WEEKDAY_LABELS_PT = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
+WEEKDAY_FULL_PT = ["segundas", "terças", "quartas", "quintas", "sextas", "sábados", "domingos"]
+
+
+def _prev_ym(ym: str) -> str:
+    try:
+        y, m = int(ym[:4]), int(ym[5:7])
+    except Exception:
+        t = date.today()
+        y, m = t.year, t.month
+    if m == 1:
+        return f"{y - 1}-12"
+    return f"{y}-{m - 1:02d}"
+
+
+def _clean_merchant_key(tx: Transaction) -> str:
+    raw = (tx.merchant_name or tx.description or "Outros").strip()
+    # Strip trailing installment suffixes like " 3/10" or "(2/6)" so the same merchant groups together
+    cleaned = re.sub(r"\s*\(?\d{1,2}\s*/\s*\d{1,2}\)?\s*$", "", raw).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned or raw or "Outros"
+
+
+def _tx_effective_ym(tx: Transaction) -> str:
+    if tx.statement_month and len(tx.statement_month) >= 7:
+        return tx.statement_month[:7]
+    if tx.transaction_date:
+        return tx.transaction_date.strftime("%Y-%m")
+    return date.today().strftime("%Y-%m")
+
+
+def _tx_cat_name(tx: Transaction) -> str:
+    if tx.categories:
+        c = tx.categories[0].category
+        if c and c.name:
+            return c.name
+    return "Outros"
+
+
+@router.get("/xray")
+async def get_spending_xray(
+    month: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    compare_month: Optional[str] = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-008 Spending X-Ray, Month A vs Month B Comparator, Weekday/Month-Third
+    Heatmap and Mony Review executive snapshot for any two competency months.
+    """
+    uid = parse_uuid(user_id, "user_id")
+    today = date.today()
+    ym_a = month or f"{today.year}-{today.month:02d}"
+    ym_b = compare_month or _prev_ym(ym_a)
+
+    # Fetch all non-deleted transactions matching either month (by statement_month or transaction_date)
+    all_txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(Transaction.user_id == uid, Transaction.deleted_at.is_(None))
+        .order_by(Transaction.transaction_date.desc())
+        .all()
+    )
+
+    txs_a = [t for t in all_txs if _tx_effective_ym(t) == ym_a]
+    txs_b = [t for t in all_txs if _tx_effective_ym(t) == ym_b]
+
+    def _summarize(tx_list: list[Transaction]) -> tuple[float, float, dict[str, float]]:
+        inc = 0.0
+        exp = 0.0
+        by_cat: dict[str, float] = {}
+        for t in tx_list:
+            amt = float(t.amount or 0)
+            if t.type == TransactionType.INCOME:
+                inc += amt
+            elif t.type == TransactionType.EXPENSE:
+                exp += amt
+                cname = _tx_cat_name(t)
+                by_cat[cname] = by_cat.get(cname, 0.0) + amt
+        return round(inc, 2), round(exp, 2), by_cat
+
+    inc_a, exp_a, cats_a = _summarize(txs_a)
+    inc_b, exp_b, cats_b = _summarize(txs_b)
+    net_a = round(inc_a - exp_a, 2)
+    net_b = round(inc_b - exp_b, 2)
+    savings_rate_a = round((net_a / inc_a) * 100, 1) if inc_a > 0 else 0.0
+
+    # Merchant ranking (expenses in month A)
+    merchant_buckets: dict[str, dict] = {}
+    expenses_a = [t for t in txs_a if t.type == TransactionType.EXPENSE]
+    for t in expenses_a:
+        m_display = _clean_merchant_key(t)
+        m_key = m_display.lower()
+        amt = float(t.amount or 0)
+        cname = _tx_cat_name(t)
+        if m_key not in merchant_buckets:
+            merchant_buckets[m_key] = {
+                "name": m_display,
+                "count": 0,
+                "total": 0.0,
+                "category_name": cname,
+                "items": [],
+            }
+        b = merchant_buckets[m_key]
+        b["count"] += 1
+        b["total"] += amt
+        if len(b["items"]) < 10:
+            b["items"].append(
+                {
+                    "id": str(t.id),
+                    "date": t.transaction_date.isoformat() if t.transaction_date else "",
+                    "description": t.description,
+                    "amount": round(amt, 2),
+                    "category_name": cname,
+                }
+            )
+
+    merchants = sorted(merchant_buckets.values(), key=lambda x: x["total"], reverse=True)
+    for m in merchants:
+        m["total"] = round(m["total"], 2)
+        m["avg_ticket"] = round(m["total"] / max(1, m["count"]), 2)
+        m["share_pct"] = round((m["total"] / exp_a) * 100, 1) if exp_a > 0 else 0.0
+
+    # Weekday heatmap & Month thirds (expenses in month A)
+    wd_totals = [0.0] * 7
+    wd_counts = [0] * 7
+    thirds = [
+        {"label": "Dias 1–10", "total": 0.0, "count": 0},
+        {"label": "Dias 11–20", "total": 0.0, "count": 0},
+        {"label": "Dias 21–31", "total": 0.0, "count": 0},
+    ]
+    for t in expenses_a:
+        if not t.transaction_date:
+            continue
+        amt = float(t.amount or 0)
+        wd = t.transaction_date.weekday()
+        wd_totals[wd] += amt
+        wd_counts[wd] += 1
+        day_num = t.transaction_date.day
+        idx = 0 if day_num <= 10 else (1 if day_num <= 20 else 2)
+        thirds[idx]["total"] += amt
+        thirds[idx]["count"] += 1
+
+    max_wd = max(wd_totals) if wd_totals else 0.0
+    avg_wd = (sum(wd_totals) / 7.0) if wd_totals else 0.0
+    weekday_heatmap = [
+        {
+            "day_index": i,
+            "label": WEEKDAY_LABELS_PT[i],
+            "total": round(wd_totals[i], 2),
+            "count": wd_counts[i],
+            "avg": round(wd_totals[i] / max(1, wd_counts[i]), 2) if wd_counts[i] else 0.0,
+            "pct_of_max": round((wd_totals[i] / max_wd) * 100, 1) if max_wd > 0 else 0.0,
+        }
+        for i in range(7)
+    ]
+    peak_wd_idx = max(range(7), key=lambda i: wd_totals[i]) if max_wd > 0 else 0
+    peak_above_pct = round(((wd_totals[peak_wd_idx] - avg_wd) / avg_wd) * 100) if avg_wd > 0 else 0
+    weekday_insight = (
+        f"Você gasta {peak_above_pct}% acima da média às {WEEKDAY_FULL_PT[peak_wd_idx]}"
+        if max_wd > 0 and peak_above_pct > 10
+        else "Seus gastos estão bem distribuídos ao longo da semana."
+    )
+
+    for th in thirds:
+        th["total"] = round(th["total"], 2)
+        th["share_pct"] = round((th["total"] / exp_a) * 100, 1) if exp_a > 0 else 0.0
+
+    # Biggest single expense
+    biggest_tx = max(expenses_a, key=lambda t: float(t.amount or 0), default=None)
+    biggest_expense = (
+        {
+            "id": str(biggest_tx.id),
+            "description": biggest_tx.description,
+            "amount": round(float(biggest_tx.amount or 0), 2),
+            "date": biggest_tx.transaction_date.isoformat() if biggest_tx.transaction_date else "",
+            "category_name": _tx_cat_name(biggest_tx),
+        }
+        if biggest_tx
+        else None
+    )
+
+    # Month pace projection
+    ya, ma = int(ym_a[:4]), int(ym_a[5:7])
+    days_in_month = monthrange(ya, ma)[1]
+    is_current_month = ya == today.year and ma == today.month
+    days_elapsed = today.day if is_current_month else days_in_month
+    daily_avg = round(exp_a / max(1, days_elapsed), 2) if exp_a > 0 else 0.0
+    projected_spend = round(daily_avg * days_in_month, 2) if is_current_month else exp_a
+    projected_net = round(inc_a - projected_spend, 2)
+
+    # Month A vs Month B category comparison
+    all_cat_names = sorted(set(cats_a.keys()) | set(cats_b.keys()))
+    comparison_rows = []
+    for cname in all_cat_names:
+        va = round(cats_a.get(cname, 0.0), 2)
+        vb = round(cats_b.get(cname, 0.0), 2)
+        delta = round(va - vb, 2)
+        delta_pct = round(((va - vb) / vb) * 100, 1) if vb > 0 else (100.0 if va > 0 else 0.0)
+        comparison_rows.append(
+            {
+                "category": cname,
+                "amount_a": va,
+                "amount_b": vb,
+                "delta": delta,
+                "delta_pct": delta_pct,
+            }
+        )
+    comparison_rows.sort(key=lambda r: abs(r["delta"]), reverse=True)
+
+    savings_cats = [r for r in comparison_rows if r["delta"] < 0]
+    increase_cats = [r for r in comparison_rows if r["delta"] > 0]
+    biggest_saving = min(savings_cats, key=lambda r: r["delta"]) if savings_cats else None
+    biggest_increase = max(increase_cats, key=lambda r: r["delta"]) if increase_cats else None
+
+    if inc_a > 0 and net_a >= 0:
+        headline = f"Mês no azul! Você economizou {savings_rate_a:.1f}% da sua renda ({ym_a})."
+    elif exp_a > 0 and inc_a > 0:
+        headline = f"Atenção: despesas superaram a renda em R$ {abs(net_a):,.2f} neste mês."
+    else:
+        headline = f"Resumo analítico consolidado para {ym_a}."
+
+    return {
+        "month": ym_a,
+        "compare_month": ym_b,
+        "review": {
+            "total_income": inc_a,
+            "total_expenses": exp_a,
+            "net": net_a,
+            "savings_rate_pct": savings_rate_a,
+            "tx_count": len(txs_a),
+            "expenses_count": len(expenses_a),
+            "daily_avg_spend": daily_avg,
+            "days_elapsed": days_elapsed,
+            "days_in_month": days_in_month,
+            "is_current_month": is_current_month,
+            "projected_month_end_spend": projected_spend,
+            "projected_net": projected_net,
+            "biggest_expense": biggest_expense,
+            "top_merchants": merchants[:3],
+            "biggest_saving_category": biggest_saving,
+            "biggest_increase_category": biggest_increase,
+            "headline": headline,
+        },
+        "merchants": merchants[:25],
+        "weekday_heatmap": weekday_heatmap,
+        "weekday_insight": weekday_insight,
+        "month_thirds": thirds,
+        "comparison": {
+            "month_a": ym_a,
+            "month_b": ym_b,
+            "income_a": inc_a,
+            "income_b": inc_b,
+            "expenses_a": exp_a,
+            "expenses_b": exp_b,
+            "net_a": net_a,
+            "net_b": net_b,
+            "categories": comparison_rows,
+        },
+    }
+
+
+@router.get("/global-search")
+async def global_search(
+    q: str = Query(..., min_length=1, max_length=120),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-008 Ctrl+K 2.0 real-time search across transactions, accounts, goals,
+    and credit cards scoped strictly to the authenticated user.
+    """
+    uid = parse_uuid(user_id, "user_id")
+    term = q.strip()
+    like = f"%{term}%"
+
+    # Numeric search support (e.g., typing "2731" finds R$ 2.731,91)
+    tx_filters = [
+        Transaction.description.ilike(like),
+        Transaction.merchant_name.ilike(like),
+        Transaction.notes.ilike(like),
+    ]
+    cleaned_num = term.replace("R$", "").replace(".", "").replace(",", ".").strip()
+    try:
+        num_val = float(cleaned_num)
+        if num_val > 0:
+            tx_filters.append(
+                and_(
+                    Transaction.amount >= Decimal(str(max(0, num_val - 1))),
+                    Transaction.amount <= Decimal(str(num_val + 1)),
+                )
+            )
+    except ValueError:
+        pass
+
+    txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            or_(*tx_filters),
+        )
+        .order_by(Transaction.transaction_date.desc())
+        .limit(8)
+        .all()
+    )
+
+    accounts = (
+        db.query(Account)
+        .filter(Account.user_id == uid, Account.deleted_at.is_(None), Account.name.ilike(like))
+        .limit(4)
+        .all()
+    )
+    goals = (
+        db.query(Goal)
+        .filter(Goal.user_id == uid, Goal.deleted_at.is_(None), Goal.name.ilike(like))
+        .limit(4)
+        .all()
+    )
+    cards = (
+        db.query(CreditCard)
+        .filter(CreditCard.user_id == uid, CreditCard.name.ilike(like))
+        .limit(4)
+        .all()
+    )
+
+    return {
+        "query": term,
+        "transactions": [
+            {
+                "id": str(t.id),
+                "description": t.description,
+                "amount": float(t.amount or 0),
+                "type": t.type.value if hasattr(t.type, "value") else str(t.type),
+                "date": t.transaction_date.isoformat() if t.transaction_date else "",
+                "statement_month": _tx_effective_ym(t),
+                "category_name": _tx_cat_name(t),
+            }
+            for t in txs
+        ],
+        "accounts": [
+            {"id": str(a.id), "name": a.name, "balance": float(a.balance or 0), "icon": a.icon}
+            for a in accounts
+        ],
+        "goals": [
+            {
+                "id": str(g.id),
+                "name": g.name,
+                "current_amount": float(g.current_amount or 0),
+                "target_amount": float(g.target_amount or 0),
+            }
+            for g in goals
+        ],
+        "cards": [
+            {"id": str(c.id), "name": c.name, "brand": c.brand, "last4": c.last4}
+            for c in cards
+        ],
+    }

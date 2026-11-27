@@ -581,3 +581,190 @@ async def confirm_password_reset(
     blacklist_token(payload.token, ttl_seconds=86400)
 
     return {"message": "Password reset successfully"}
+
+
+@router.get("/export-backup")
+async def export_full_account_backup(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-008 Full Account Data Portability Backup (JSON).
+    Exports all non-sensitive user financial data scoped strictly to user_id.
+    Never includes password_hash, 2FA secrets, or tokens.
+    """
+    from database.models import (
+        Budget,
+        Category,
+        CategoryRule,
+        CreditCard,
+        Debt,
+        Goal,
+        InvestmentAsset,
+        RecurringRule,
+        Transaction,
+        TransactionCategory,
+    )
+    from sqlalchemy.orm import joinedload
+
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    accounts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    categories = db.query(Category).filter(Category.user_id == uid, Category.deleted_at.is_(None)).all()
+    transactions = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(Transaction.user_id == uid, Transaction.deleted_at.is_(None))
+        .order_by(Transaction.transaction_date.desc())
+        .all()
+    )
+    budgets = db.query(Budget).filter(Budget.user_id == uid, Budget.deleted_at.is_(None)).all()
+    goals = db.query(Goal).filter(Goal.user_id == uid, Goal.deleted_at.is_(None)).all()
+    cards = db.query(CreditCard).filter(CreditCard.user_id == uid).all()
+    recurring = db.query(RecurringRule).filter(RecurringRule.user_id == uid).all()
+    rules = db.query(CategoryRule).filter(CategoryRule.user_id == uid).all()
+    debts = db.query(Debt).filter(Debt.user_id == uid, Debt.deleted_at.is_(None)).all()
+    assets = db.query(InvestmentAsset).filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None)).all()
+
+    return {
+        "schema_version": "mony-backup-v1",
+        "exported_at": datetime.now(dt_timezone.utc).isoformat(),
+        "profile": {
+            "full_name": user.full_name,
+            "email": user.email,
+            "preferred_currency": user.preferred_currency,
+            "timezone": user.timezone,
+            "plan": user.plan.value if hasattr(user.plan, "value") else str(user.plan),
+        },
+        "counts": {
+            "accounts": len(accounts),
+            "categories": len(categories),
+            "transactions": len(transactions),
+            "budgets": len(budgets),
+            "goals": len(goals),
+            "credit_cards": len(cards),
+            "recurring_rules": len(recurring),
+            "category_rules": len(rules),
+            "debts": len(debts),
+            "investment_assets": len(assets),
+        },
+        "accounts": [
+            {
+                "id": str(a.id),
+                "name": a.name,
+                "type": a.type.value if hasattr(a.type, "value") else str(a.type),
+                "balance": float(a.balance or 0),
+                "currency": a.currency,
+                "color": a.color,
+                "icon": a.icon,
+                "is_default": bool(a.is_default),
+            }
+            for a in accounts
+        ],
+        "categories": [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "color": c.color,
+                "icon": c.icon,
+                "description": c.description,
+                "is_system": bool(c.is_system),
+            }
+            for c in categories
+        ],
+        "transactions": [
+            {
+                "id": str(t.id),
+                "account_id": str(t.account_id),
+                "type": t.type.value if hasattr(t.type, "value") else str(t.type),
+                "amount": float(t.amount or 0),
+                "currency": t.currency,
+                "description": t.description,
+                "merchant_name": t.merchant_name,
+                "notes": t.notes,
+                "transaction_date": t.transaction_date.isoformat() if t.transaction_date else None,
+                "statement_month": t.statement_month,
+                "payment_method": t.payment_method,
+                "category_name": t.categories[0].category.name if (t.categories and t.categories[0].category) else None,
+                "is_reconciled": bool(t.is_reconciled),
+                "installment_number": t.installment_number,
+                "installment_total": t.installment_total,
+                "source": t.source.value if hasattr(t.source, "value") else str(t.source),
+                "tags": t.tags or [],
+            }
+            for t in transactions
+        ],
+        "budgets": [
+            {"id": str(b.id), "category": b.category, "limit_amount": float(b.limit_amount or 0), "currency": b.currency}
+            for b in budgets
+        ],
+        "goals": [
+            {
+                "id": str(g.id),
+                "name": g.name,
+                "target_amount": float(g.target_amount or 0),
+                "current_amount": float(g.current_amount or 0),
+                "target_date": g.target_date.isoformat() if g.target_date else None,
+            }
+            for g in goals
+        ],
+        "credit_cards": [
+            {
+                "id": str(c.id),
+                "name": c.name,
+                "brand": c.brand,
+                "last4": c.last4,
+                "credit_limit": float(c.credit_limit or 0),
+                "closing_day": c.closing_day,
+                "due_day": c.due_day,
+            }
+            for c in cards
+        ],
+        "recurring_rules": [
+            {
+                "id": str(r.id),
+                "description": r.description,
+                "type": r.type,
+                "amount": float(r.amount or 0),
+                "category_name": r.category_name,
+                "frequency": r.frequency,
+                "day_of_month": r.day_of_month,
+                "is_active": bool(r.is_active),
+            }
+            for r in recurring
+        ],
+        "category_rules": [
+            {
+                "id": str(r.id),
+                "pattern": r.pattern,
+                "action": r.action,
+                "category_name": r.category_name,
+                "is_active": bool(r.is_active),
+            }
+            for r in rules
+        ],
+        "debts": [
+            {
+                "id": str(d.id),
+                "name": d.name,
+                "principal_amount": float(d.principal_amount or 0),
+                "remaining_balance": float(d.remaining_balance or 0),
+                "interest_rate_monthly": float(d.interest_rate_monthly or 0),
+            }
+            for d in debts
+        ],
+        "investment_assets": [
+            {
+                "id": str(a.id),
+                "ticker": a.ticker,
+                "name": a.name,
+                "asset_class": a.asset_class,
+                "quantity": float(a.quantity or 0),
+                "average_price": float(a.average_price or 0),
+            }
+            for a in assets
+        ],
+    }

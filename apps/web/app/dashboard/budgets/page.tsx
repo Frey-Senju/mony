@@ -5,6 +5,7 @@ import { Plus, AlertTriangle, Sparkles, Check, RefreshCw, PieChart } from 'lucid
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { BudgetCard } from '@/components/budgets/BudgetCard'
 import { BudgetFormModal } from '@/components/budgets/BudgetFormModal'
+import { ZeroBasedPlanner } from '@/components/budgets/ZeroBasedPlanner'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { dispatchToast } from '@/components/ui/ToastProvider'
 import { useBudgets, type Budget } from '@/hooks/useBudgets'
@@ -235,6 +236,12 @@ function BudgetsContent() {
           </div>
         </section>
       )}
+
+      {/* EPIC-008: Zero-Based Monthly Planner & Live 60/30/10 Rule */}
+      <ZeroBasedPlanner
+        budgets={budgets}
+        avgMonthlyIncome={aiPlan?.avg_monthly_income || 0}
+      />
 
       {/* Proactive AI Recommendations Panel (Story 5.5) */}
       <section className="glass-panel p-5 border border-[var(--accent)]/35 bg-[var(--accent-soft)]/15 space-y-4">
