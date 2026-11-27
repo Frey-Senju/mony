@@ -322,6 +322,33 @@ function CardsContent() {
 
   const s = data?.summary
 
+  // EPIC-010: Smart "Qual Cartão Usar Hoje?" recommendation
+  const bestCardToday = React.useMemo(() => {
+    const cardsList = data?.cards || []
+    if (cardsList.length === 0) return null
+    const today = new Date()
+    const todayDay = today.getDate()
+    const ranked = cardsList
+      .filter((c) => c.available_limit > 0)
+      .map((c) => {
+        // Estimate days until payment if bought today
+        const closing = c.closing_day || 1
+        const due = c.due_day || 10
+        let monthsAhead = 0
+        if (todayDay >= closing) {
+          monthsAhead = due > closing ? 1 : 2
+        } else {
+          monthsAhead = due > closing ? 0 : 1
+        }
+        const payDate = new Date(today.getFullYear(), today.getMonth() + monthsAhead, due)
+        const graceDays = Math.max(1, Math.round((payDate.getTime() - today.getTime()) / 86400000))
+        const payLabel = payDate.toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })
+        return { card: c, graceDays, payLabel }
+      })
+      .sort((a, b) => b.graceDays - a.graceDays)
+    return ranked[0] || null
+  }, [data?.cards])
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Header */}
@@ -391,32 +418,62 @@ function CardsContent() {
         </section>
       )}
 
+      {/* EPIC-010: Best Card to Use Today Smart Banner */}
+      {bestCardToday && (
+        <section className="glass-panel p-4 border border-emerald-400/40 bg-gradient-to-r from-emerald-500/10 via-blue-500/5 to-transparent flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span
+              className="w-10 h-10 rounded-2xl flex items-center justify-center text-white shadow-sm shrink-0"
+              style={{ background: bestCardToday.card.color || 'var(--accent)' }}
+            >
+              <Sparkles className="w-5 h-5" />
+            </span>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-300">
+                Qual Cartão Usar Hoje? · Melhor Prazo
+              </p>
+              <p className="text-sm text-slate-800 dark:text-slate-100 mt-0.5">
+                Use o <strong>{bestCardToday.card.name}</strong> — fecha dia{' '}
+                <strong>{bestCardToday.card.closing_day}</strong> e você ganha cerca de{' '}
+                <strong className="text-emerald-700 dark:text-emerald-300">
+                  {bestCardToday.graceDays} dias
+                </strong>{' '}
+                para pagar (previsto para <strong>{bestCardToday.payLabel}</strong>).
+              </p>
+            </div>
+          </div>
+          <span className="px-3 py-1.5 rounded-full text-xs font-bold bg-white/70 dark:bg-white/10 text-slate-800 dark:text-white tabular-nums money-value shrink-0 self-start sm:self-center">
+            Disponível: {brl(bestCardToday.card.available_limit)}
+          </span>
+        </section>
+      )}
+
       {/* 4 Consolidated KPIs */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500">Limite Total</p>
-          <p className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">
+          <p className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1 money-value tabular-nums">
             {brl(s?.total_limit || 0)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">{s?.cards_count || 0} cartão(ões) ativo(s)</p>
         </div>
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500">Faturas Abertas (Mês Atual)</p>
-          <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 mt-1">
+          <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 mt-1 money-value tabular-nums">
             {brl(s?.total_open_invoices || 0)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">Soma dos ciclos abertos</p>
         </div>
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500">Total Comprometido (c/ Parcelas)</p>
-          <p className="text-2xl font-extrabold text-rose-600 dark:text-rose-400 mt-1">
+          <p className="text-2xl font-extrabold text-rose-600 dark:text-rose-400 mt-1 money-value tabular-nums">
             {brl(s?.total_committed || 0)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">{(s?.overall_usage_pct || 0).toFixed(1)}% do limite total</p>
         </div>
         <div className="glass-card p-4">
           <p className="text-xs text-slate-500">Limite Disponível</p>
-          <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-1">
+          <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 mt-1 money-value tabular-nums">
             {brl(s?.total_available || 0)}
           </p>
           <p className="text-[11px] text-slate-500 mt-1">Livre para novas compras</p>

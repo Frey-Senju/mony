@@ -904,3 +904,215 @@ async def export_workbook_xlsx(
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="mony-relatorio-{sel_year}.xlsx"'},
     )
+
+
+@router.get("/daily-forecast")
+async def get_daily_cashflow_forecast(
+    days: int = Query(default=60, ge=14, le=120),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-010 Daily Cashflow Forecast (30/60/90 days):
+    Projects daily liquid balance combining current checking/savings/cash balances,
+    active recurring rules, credit card due dates/bills, and already scheduled future transactions.
+    """
+    import calendar
+    from database.models import AccountType, CreditCard, RecurringRule
+    from utils.uuid_utils import parse_uuid
+
+    uid = parse_uuid(user_id, "user_id")
+    today = date.today()
+    end_day = today + timedelta(days=days)
+
+    accounts = (
+        db.query(Account)
+        .filter(Account.user_id == uid, Account.deleted_at.is_(None))
+        .all()
+    )
+    liquid_types = {AccountType.CHECKING, AccountType.SAVINGS, AccountType.CASH}
+    liquid_accounts = [a for a in accounts if a.type in liquid_types]
+    starting_balance = round(sum(float(a.balance or 0) for a in liquid_accounts), 2)
+
+    # Map date -> list of events {title, amount, type, source}
+    events_by_day: dict[date, list[dict]] = {}
+
+    def _add_event(d: date, title: str, amount: float, ev_type: str, source: str) -> None:
+        if d < today or d > end_day or amount <= 0:
+            return
+        events_by_day.setdefault(d, []).append(
+            {
+                "title": title,
+                "amount": round(amount, 2),
+                "type": ev_type,  # "income" | "expense"
+                "source": source,  # "recurring" | "card_bill" | "scheduled"
+            }
+        )
+
+    # 1. Active Recurring Rules
+    rules = (
+        db.query(RecurringRule)
+        .filter(
+            RecurringRule.user_id == uid,
+            RecurringRule.deleted_at.is_(None),
+            RecurringRule.is_active.is_(True),
+        )
+        .all()
+    )
+    # Enumerate every YYYY-MM overlapping [today, end_day]
+    months_in_window: list[tuple[int, int]] = []
+    cur_y, cur_m = today.year, today.month
+    while date(cur_y, cur_m, 1) <= end_day:
+        months_in_window.append((cur_y, cur_m))
+        if cur_m == 12:
+            cur_y, cur_m = cur_y + 1, 1
+        else:
+            cur_m += 1
+
+    for rule in rules:
+        amt = float(rule.amount or 0)
+        if amt <= 0:
+            continue
+        ev_type = "income" if rule.type == TransactionType.INCOME else "expense"
+        freq = (rule.frequency or "monthly").lower()
+        if freq == "weekly":
+            # Project weekly starting from next matching weekday or every 7 days
+            d = today + timedelta(days=1)
+            step_day = (rule.day_of_month or 1) % 7
+            while d <= end_day:
+                if d.weekday() == step_day:
+                    _add_event(d, rule.description, amt, ev_type, "recurring")
+                d += timedelta(days=1)
+        else:
+            for y, m in months_in_window:
+                ym = f"{y:04d}-{m:02d}"
+                last_day = calendar.monthrange(y, m)[1]
+                due = date(y, m, min(max(1, int(rule.day_of_month or 5)), last_day))
+                if due < today or due > end_day:
+                    continue
+                if rule.last_generated_month == ym and due <= today:
+                    continue
+                _add_event(due, rule.description, amt, ev_type, "recurring")
+
+    # 2. Credit Card Bills on each card's due_day
+    cards = (
+        db.query(CreditCard)
+        .filter(CreditCard.user_id == uid, CreditCard.deleted_at.is_(None))
+        .all()
+    )
+    card_account_ids = [c.account_id for c in cards if c.account_id]
+    card_txs: list[Transaction] = []
+    if card_account_ids:
+        ym_keys = {f"{y:04d}-{m:02d}" for y, m in months_in_window}
+        card_txs = (
+            db.query(Transaction)
+            .filter(
+                Transaction.user_id == uid,
+                Transaction.deleted_at.is_(None),
+                Transaction.account_id.in_(card_account_ids),
+                Transaction.type == TransactionType.EXPENSE,
+            )
+            .all()
+        )
+        # Keep only transactions matching window months
+        card_txs = [
+            t for t in card_txs
+            if (t.statement_month or (t.transaction_date.strftime("%Y-%m") if t.transaction_date else "")) in ym_keys
+        ]
+
+    for card in cards:
+        for idx, (y, m) in enumerate(months_in_window):
+            ym = f"{y:04d}-{m:02d}"
+            last_day = calendar.monthrange(y, m)[1]
+            due = date(y, m, min(max(1, int(card.due_day or 10)), last_day))
+            if due < today or due > end_day:
+                continue
+            bill_total = sum(
+                float(t.amount or 0)
+                for t in card_txs
+                if card.account_id and t.account_id == card.account_id
+                and (t.statement_month or t.transaction_date.strftime("%Y-%m")) == ym
+            )
+            if bill_total <= 0 and idx == 0 and float(card.pluggy_balance or 0) > 0:
+                bill_total = float(card.pluggy_balance or 0)
+            if bill_total > 0:
+                _add_event(due, f"Fatura {card.name}", bill_total, "expense", "card_bill")
+
+    # 3. Already-scheduled future non-card transactions (transaction_date > today)
+    card_acct_set = set(card_account_ids)
+    future_txs = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.transaction_date > today,
+            Transaction.transaction_date <= end_day,
+        )
+        .all()
+    )
+    for tx in future_txs:
+        if tx.account_id in card_acct_set:
+            continue
+        if tx.type == TransactionType.TRANSFER:
+            continue
+        amt = float(tx.amount or 0)
+        if amt <= 0:
+            continue
+        ev_type = "income" if tx.type in (TransactionType.INCOME, TransactionType.REFUND) else "expense"
+        _add_event(tx.transaction_date, tx.description, amt, ev_type, "scheduled")
+
+    # Build day-by-day running curve
+    running = starting_balance
+    daily_points: list[dict] = []
+    lowest_balance = starting_balance
+    lowest_balance_date = today.isoformat()
+    negative_days = 0
+    first_negative_date: Optional[str] = None
+    total_projected_income = 0.0
+    total_projected_expenses = 0.0
+
+    for offset in range(days + 1):
+        d = today + timedelta(days=offset)
+        evs = events_by_day.get(d, [])
+        day_inc = round(sum(e["amount"] for e in evs if e["type"] == "income"), 2)
+        day_exp = round(sum(e["amount"] for e in evs if e["type"] == "expense"), 2)
+        delta = round(day_inc - day_exp, 2)
+        running = round(running + delta, 2)
+        total_projected_income += day_inc
+        total_projected_expenses += day_exp
+
+        if running < lowest_balance:
+            lowest_balance = running
+            lowest_balance_date = d.isoformat()
+        if running < 0:
+            negative_days += 1
+            if first_negative_date is None:
+                first_negative_date = d.isoformat()
+
+        daily_points.append(
+            {
+                "date": d.isoformat(),
+                "label": d.strftime("%d/%m"),
+                "balance": running,
+                "delta": delta,
+                "income": day_inc,
+                "expense": day_exp,
+                "events": evs,
+            }
+        )
+
+    return {
+        "days": days,
+        "start_date": today.isoformat(),
+        "end_date": end_day.isoformat(),
+        "starting_balance": starting_balance,
+        "ending_balance": running,
+        "lowest_balance": round(lowest_balance, 2),
+        "lowest_balance_date": lowest_balance_date,
+        "negative_days_count": negative_days,
+        "first_negative_date": first_negative_date,
+        "total_projected_income": round(total_projected_income, 2),
+        "total_projected_expenses": round(total_projected_expenses, 2),
+        "liquid_accounts_count": len(liquid_accounts),
+        "daily_points": daily_points,
+    }

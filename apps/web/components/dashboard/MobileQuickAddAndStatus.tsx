@@ -1,14 +1,16 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { Plus, WifiOff, X, Sparkles } from 'lucide-react'
+import { Plus, WifiOff, X, Sparkles, EyeOff } from 'lucide-react'
 import { useAuth } from '@/stores/auth/useAuth'
+import { useAppearance } from '@/app/_theme/provider'
 import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
 export function MobileQuickAddAndStatus() {
   const { tokens } = useAuth()
+  const { settings, updateSettings } = useAppearance()
   const token = tokens?.access_token
   const [offline, setOffline] = useState(false)
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -101,6 +103,19 @@ export function MobileQuickAddAndStatus() {
           <WifiOff className="w-3.5 h-3.5" aria-hidden="true" />
           Você está offline — reconectando...
         </div>
+      )}
+
+      {/* EPIC-010: Discrete Floating Privacy Mode Active Pill */}
+      {settings.privacyMode && (
+        <button
+          type="button"
+          onClick={() => updateSettings({ privacyMode: false })}
+          title="Clique ou pressione Shift+P para revelar os valores"
+          className="fixed bottom-4 left-4 z-40 px-3 py-1.5 rounded-full glass-panel border border-violet-400/45 text-[11px] font-semibold text-violet-700 dark:text-violet-300 shadow-lg flex items-center gap-1.5 hover:scale-105 transition no-print"
+        >
+          <EyeOff className="w-3.5 h-3.5" aria-hidden="true" />
+          Privacidade ativa · Shift+P
+        </button>
       )}
 
       {/* Mobile Floating Quick-Add FAB (+) */}

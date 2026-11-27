@@ -1040,3 +1040,369 @@ async def bulk_update_transactions(
 
     db.commit()
     return {"updated": updated_count}
+
+
+# ============ EPIC-010: Direct Deterministic CSV / OFX Statement Importer ============
+
+
+class StatementPreviewRequest(BaseModel):
+    account_id: str
+    filename: str = Field(default="extrato.csv", max_length=255)
+    content: str = Field(..., min_length=1, max_length=3_000_000)
+
+
+class StatementCommitItem(BaseModel):
+    transaction_date: date
+    description: str = Field(min_length=1, max_length=255)
+    amount: Decimal = Field(gt=0, decimal_places=2)
+    type: TransactionType = TransactionType.EXPENSE
+    category_name: Optional[str] = None
+    external_id: Optional[str] = Field(default=None, max_length=120)
+    tags: Optional[list[str]] = None
+
+
+class StatementCommitRequest(BaseModel):
+    account_id: str
+    items: list[StatementCommitItem] = Field(..., min_length=1, max_length=1000)
+
+
+def _parse_br_amount(raw: str) -> Optional[float]:
+    s = (raw or "").strip()
+    if not s:
+        return None
+    s = s.replace("R$", "").replace("BRL", "").replace(" ", "").replace("\u00a0", "")
+    neg = False
+    if s.startswith("(") and s.endswith(")"):
+        neg = True
+        s = s[1:-1]
+    if s.startswith("-"):
+        neg = True
+        s = s[1:]
+    elif s.startswith("+"):
+        s = s[1:]
+    if not s:
+        return None
+    # Detect decimal separator: Brazilian "1.234,56" vs US "1,234.56"
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        parts = s.split(",")
+        if len(parts[-1]) <= 2:
+            s = s.replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    try:
+        val = float(s)
+        return -val if neg else val
+    except ValueError:
+        return None
+
+
+def _parse_any_date(raw: str) -> Optional[date]:
+    s = (raw or "").strip().strip('"').strip("'")
+    if not s:
+        return None
+    # OFX format YYYYMMDD...
+    m_ofx = re.match(r"^(\d{4})(\d{2})(\d{2})", s)
+    if m_ofx and len(s) >= 8 and "-" not in s[:8] and "/" not in s[:8]:
+        try:
+            return date(int(m_ofx.group(1)), int(m_ofx.group(2)), int(m_ofx.group(3)))
+        except ValueError:
+            pass
+    # ISO YYYY-MM-DD
+    m_iso = re.match(r"^(\d{4})[-/](\d{1,2})[-/](\d{1,2})", s)
+    if m_iso:
+        try:
+            return date(int(m_iso.group(1)), int(m_iso.group(2)), int(m_iso.group(3)))
+        except ValueError:
+            pass
+    # BR DD/MM/YYYY or DD-MM-YYYY
+    m_br = re.match(r"^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})", s)
+    if m_br:
+        d_i, m_i, y_i = int(m_br.group(1)), int(m_br.group(2)), int(m_br.group(3))
+        if y_i < 100:
+            y_i += 2000
+        try:
+            return date(y_i, m_i, d_i)
+        except ValueError:
+            pass
+    return None
+
+
+def _parse_ofx_statement(content: str) -> list[dict]:
+    blocks = re.findall(r"<STMTTRN>(.*?)</STMTTRN>", content, flags=re.IGNORECASE | re.DOTALL)
+    if not blocks:
+        # SGML OFX 1.x without closing </STMTTRN>
+        parts = re.split(r"<STMTTRN>", content, flags=re.IGNORECASE)[1:]
+        blocks = parts
+    parsed: list[dict] = []
+    for blk in blocks:
+        def _tag(name: str) -> str:
+            m = re.search(rf"<{name}>([^<\r\n]+)", blk, flags=re.IGNORECASE)
+            return m.group(1).strip() if m else ""
+
+        dt = _parse_any_date(_tag("DTPOSTED"))
+        amt = _parse_br_amount(_tag("TRNAMT"))
+        memo = _tag("MEMO") or _tag("NAME") or "Lançamento OFX"
+        fitid = _tag("FITID") or None
+        trntype = _tag("TRNTYPE").upper()
+        if dt is None or amt is None or amt == 0:
+            continue
+        tx_type = "income" if (amt > 0 or trntype in ("CREDIT", "DEP", "INT", "DIV")) and amt >= 0 else "expense"
+        parsed.append(
+            {
+                "transaction_date": dt.isoformat(),
+                "description": memo[:250],
+                "amount": round(abs(amt), 2),
+                "type": tx_type,
+                "external_id": f"ofx:{fitid}" if fitid else None,
+            }
+        )
+    return parsed
+
+
+def _parse_csv_statement(content: str) -> list[dict]:
+    import csv
+    import io
+
+    lines = [ln for ln in content.replace("\r\n", "\n").replace("\r", "\n").split("\n") if ln.strip()]
+    if len(lines) < 2:
+        return []
+
+    # Detect delimiter from first 5 non-empty lines
+    sample = "\n".join(lines[:5])
+    delim = ";" if sample.count(";") >= sample.count(",") else ","
+    if sample.count("\t") > max(sample.count(";"), sample.count(",")):
+        delim = "\t"
+
+    # Skip bank preamble lines until we find a header row with date/valor/descrição
+    header_idx = 0
+    date_keys = ("data", "date", "dt", "lancamento", "lançamento", "movimentacao", "movimentação")
+    desc_keys = ("descri", "hist", "estabelecimento", "title", "memo", "detalhe", "lancamento", "lançamento", "nome")
+    val_keys = ("valor", "amount", "quantia", "total", "price")
+
+    def _norm(s: str) -> str:
+        nf = unicodedata.normalize("NFD", s.strip().lower())
+        return "".join(ch for ch in nf if unicodedata.category(ch) != "Mn")
+
+    for i, ln in enumerate(lines[:10]):
+        cols = [_norm(c) for c in next(csv.reader([ln], delimiter=delim))]
+        if any(any(k in c for k in date_keys) for c in cols) and any(any(k in c for k in val_keys) for c in cols):
+            header_idx = i
+            break
+
+    reader = list(csv.reader(io.StringIO("\n".join(lines[header_idx:])), delimiter=delim))
+    if len(reader) < 2:
+        return []
+
+    headers = [_norm(h) for h in reader[0]]
+    date_col = next((i for i, h in enumerate(headers) if any(k in h for k in date_keys)), 0)
+    val_col = next((i for i, h in enumerate(headers) if any(k in h for k in val_keys)), len(headers) - 1)
+    desc_col = next((i for i, h in enumerate(headers) if i != date_col and i != val_col and any(k in h for k in desc_keys)), -1)
+    if desc_col < 0:
+        desc_col = next((i for i in range(len(headers)) if i not in (date_col, val_col)), 1 if len(headers) > 1 else 0)
+    type_col = next((i for i, h in enumerate(headers) if h in ("tipo", "type", "d/c", "dc", "natureza")), -1)
+
+    parsed: list[dict] = []
+    for row in reader[1:]:
+        if len(row) <= max(date_col, val_col, desc_col):
+            continue
+        dt = _parse_any_date(row[date_col])
+        amt = _parse_br_amount(row[val_col])
+        desc = (row[desc_col] or "").strip().strip('"')
+        if dt is None or amt is None or amt == 0 or not desc:
+            continue
+        if type_col >= 0 and type_col < len(row):
+            t_raw = _norm(row[type_col])
+            if t_raw in ("c", "credito", "receita", "entrada", "income"):
+                tx_type = "income"
+            elif t_raw in ("d", "debito", "despesa", "saida", "expense"):
+                tx_type = "expense"
+            else:
+                tx_type = "income" if amt > 0 else "expense"
+        else:
+            tx_type = "income" if amt > 0 else "expense"
+
+        parsed.append(
+            {
+                "transaction_date": dt.isoformat(),
+                "description": desc[:250],
+                "amount": round(abs(amt), 2),
+                "type": tx_type,
+                "external_id": None,
+            }
+        )
+    return parsed
+
+
+@router.post("/import-preview", status_code=200)
+async def preview_statement_import(
+    payload: StatementPreviewRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-010 Deterministic CSV/OFX Statement Preview:
+    Parses bank statements instantly without LLM latency, applies active CategoryRules,
+    and flags duplicates against existing user transactions.
+    """
+    from database.models import CategoryRule
+
+    uid = parse_uuid(user_id, "user_id")
+    aid = parse_uuid(payload.account_id, "account_id")
+    acct = (
+        db.query(Account)
+        .filter(Account.id == aid, Account.user_id == uid, Account.deleted_at.is_(None))
+        .first()
+    )
+    if not acct:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada.")
+
+    is_ofx = (
+        payload.filename.lower().endswith((".ofx", ".qfx"))
+        or "<OFX>" in payload.content.upper()
+        or "<STMTTRN>" in payload.content.upper()
+    )
+    rows = _parse_ofx_statement(payload.content) if is_ofx else _parse_csv_statement(payload.content)
+    if not rows:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Não encontramos lançamentos válidos no arquivo. Verifique se é um CSV ou OFX bancário.",
+        )
+
+    # Load user's active categorization rules
+    cat_rules = (
+        db.query(CategoryRule)
+        .filter(
+            CategoryRule.user_id == uid,
+            CategoryRule.deleted_at.is_(None),
+            CategoryRule.is_active.is_(True),
+        )
+        .order_by(CategoryRule.priority.desc())
+        .all()
+    )
+
+    # Fetch existing transactions in date span for duplicate detection
+    parsed_dates = [date.fromisoformat(r["transaction_date"]) for r in rows]
+    min_d, max_d = min(parsed_dates), max(parsed_dates)
+    existing = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.transaction_date >= min_d,
+            Transaction.transaction_date <= max_d,
+        )
+        .all()
+    )
+    existing_ext = {t.external_id for t in existing if t.external_id}
+    existing_keys = {
+        (
+            t.transaction_date.isoformat(),
+            round(float(t.amount or 0), 2),
+            (t.description or "").strip().lower()[:18],
+        )
+        for t in existing
+    }
+
+    preview_items: list[dict] = []
+    dup_count = 0
+    for idx, row in enumerate(rows[:500]):
+        desc_lower = row["description"].lower()
+        suggested_cat = "Outros"
+        for rule in cat_rules:
+            pat = (rule.pattern or "").strip().lower()
+            if pat and pat in desc_lower:
+                suggested_cat = rule.category_name or "Outros"
+                break
+
+        ext = row.get("external_id")
+        sig = (row["transaction_date"], row["amount"], desc_lower[:18])
+        is_dup = bool((ext and ext in existing_ext) or sig in existing_keys)
+        if is_dup:
+            dup_count += 1
+
+        preview_items.append(
+            {
+                "row_id": f"row-{idx}",
+                "transaction_date": row["transaction_date"],
+                "description": row["description"],
+                "amount": row["amount"],
+                "type": row["type"],
+                "category_name": suggested_cat,
+                "external_id": ext,
+                "is_duplicate": is_dup,
+            }
+        )
+
+    return {
+        "format": "OFX" if is_ofx else "CSV",
+        "account_name": acct.name,
+        "total_parsed": len(preview_items),
+        "duplicates_found": dup_count,
+        "items": preview_items,
+    }
+
+
+@router.post("/import-commit", status_code=201)
+async def commit_statement_import(
+    payload: StatementCommitRequest,
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """Commit reviewed CSV/OFX statement transactions atomically and sync account balance."""
+    uid = parse_uuid(user_id, "user_id")
+    aid = parse_uuid(payload.account_id, "account_id")
+    acct = (
+        db.query(Account)
+        .filter(Account.id == aid, Account.user_id == uid, Account.deleted_at.is_(None))
+        .first()
+    )
+    if not acct:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conta não encontrada.")
+
+    inserted = 0
+    total_delta = Decimal("0.00")
+    cat_cache: dict[str, Optional[Category]] = {}
+
+    for item in payload.items:
+        tx = Transaction(
+            user_id=uid,
+            account_id=acct.id,
+            type=item.type,
+            amount=item.amount,
+            currency=acct.currency or "BRL",
+            description=item.description.strip(),
+            transaction_date=item.transaction_date,
+            statement_month=item.transaction_date.strftime("%Y-%m"),
+            source="import",
+            external_id=item.external_id,
+            tags=item.tags or ["#extrato"],
+            is_reconciled=True,
+        )
+        db.add(tx)
+        db.flush()
+
+        cname = (item.category_name or "").strip()
+        if cname:
+            key = cname.lower()
+            if key not in cat_cache:
+                cat_cache[key] = _resolve_category(db, uid, None, cname)
+            if cat_cache[key] is not None:
+                _set_transaction_category(db, tx, cat_cache[key])
+
+        total_delta += _balance_delta(item.type, item.amount)
+        inserted += 1
+
+    acct.balance = (Decimal(str(acct.balance or 0)) + total_delta)
+    acct.updated_at = datetime.utcnow()
+    db.commit()
+
+    return {
+        "inserted": inserted,
+        "account_id": str(acct.id),
+        "new_balance": round(float(acct.balance), 2),
+    }

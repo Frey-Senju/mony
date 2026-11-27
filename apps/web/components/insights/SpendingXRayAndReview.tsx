@@ -14,6 +14,7 @@ import {
   TrendingUp,
   Printer,
   Share2,
+  Clock,
 } from 'lucide-react'
 import type { Category } from '@/hooks/useCategories'
 import { dispatchToast } from '@/components/ui/ToastProvider'
@@ -127,6 +128,29 @@ export function SpendingXRayAndReview({
   const [data, setData] = useState<XRayPayload | null>(null)
   const [loading, setLoading] = useState(false)
   const [expandedMerchant, setExpandedMerchant] = useState<string | null>(null)
+  const [showWorkHours, setShowWorkHours] = useState(false)
+  const [hourlyRate, setHourlyRate] = useState(35)
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('mony_cashflow_prefs_v1')
+      if (saved) {
+        const p = JSON.parse(saved)
+        if (p.baseSalary && p.workHours && Number(p.workHours) > 0) {
+          setHourlyRate(Math.max(1, Number(p.baseSalary) / Number(p.workHours)))
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  const fmtHours = (amount: number): string => {
+    if (!hourlyRate || hourlyRate <= 0) return ''
+    const h = Math.abs(amount) / hourlyRate
+    if (h < 1) return `${Math.round(h * 60)}min de trabalho`
+    return `${h.toFixed(1).replace('.', ',')}h de trabalho`
+  }
 
   const catMetaByName = useMemo(() => {
     const m: Record<string, { color: string; icon?: string }> = {}
@@ -199,6 +223,17 @@ export function SpendingXRayAndReview({
               className="input-base py-1 px-2 text-xs w-auto"
             />
           </label>
+          <button
+            type="button"
+            onClick={() => setShowWorkHours((v) => !v)}
+            className={`liquid-btn px-3 py-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 ${
+              showWorkHours ? 'liquid-btn-primary' : 'liquid-btn-glass'
+            }`}
+            title={`Converter valores em horas de trabalho (${brl(hourlyRate)}/h)`}
+          >
+            <Clock className="w-3.5 h-3.5" aria-hidden="true" />
+            {showWorkHours ? `Horas (${brl(hourlyRate)}/h)` : 'Custo em Horas'}
+          </button>
           <button
             type="button"
             disabled={!r}
@@ -288,8 +323,13 @@ export function SpendingXRayAndReview({
                         <span className="truncate font-semibold text-slate-800 dark:text-slate-100">
                           {['🥇', '🥈', '🥉'][i]} {m.name}
                         </span>
-                        <span className="font-bold tabular-nums money-value shrink-0 text-slate-900 dark:text-white">
+                        <span className="font-bold tabular-nums money-value shrink-0 text-slate-900 dark:text-white text-right">
                           {brl(m.total)}
+                          {showWorkHours && (
+                            <span className="block text-[10px] font-medium text-indigo-600 dark:text-indigo-300">
+                              ≈ {fmtHours(m.total)}
+                            </span>
+                          )}
                         </span>
                       </li>
                     ))}
@@ -307,6 +347,11 @@ export function SpendingXRayAndReview({
                   <>
                     <p className="text-lg font-extrabold text-rose-600 dark:text-rose-400 tabular-nums money-value">
                       {brl(r.biggest_expense.amount)}
+                      {showWorkHours && (
+                        <span className="ml-2 text-xs font-semibold text-indigo-600 dark:text-indigo-300">
+                          ≈ {fmtHours(r.biggest_expense.amount)}
+                        </span>
+                      )}
                     </p>
                     <p className="text-xs font-semibold text-slate-800 dark:text-slate-100 truncate">
                       {r.biggest_expense.description}

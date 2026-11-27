@@ -831,3 +831,127 @@ async def get_account_health(
         "two_factor_enabled": two_fa,
         "checks": checks,
     }
+
+
+@router.get("/net-worth-history")
+async def get_net_worth_history(
+    months: int = Query(default=12, ge=3, le=24),
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-010 12-Month Net Worth Evolution + 3-Month Trend Projection.
+    Reconstructs monthly Net Worth (Accounts + Investments - Active Debts) backwards
+    from today's verified snapshot using each month's net cashflow.
+    """
+    from database.models import AccountType, Debt, InvestmentAsset
+
+    uid = parse_uuid(user_id, "user_id")
+    today = date.today()
+
+    accounts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    investments = db.query(InvestmentAsset).filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None)).all()
+    debts = db.query(Debt).filter(Debt.user_id == uid, Debt.deleted_at.is_(None), Debt.is_active.is_(True)).all()
+
+    accounts_total = sum(
+        float(a.balance or 0)
+        for a in accounts
+        if a.type != AccountType.CREDIT_CARD
+    )
+    investments_total = sum(
+        float(h.quantity or 0) * float(h.average_price or 0)
+        for h in investments
+    )
+    total_assets = round(accounts_total + investments_total, 2)
+    total_debts = round(sum(float(d.current_balance or 0) for d in debts), 2)
+    current_net_worth = round(total_assets - total_debts, 2)
+
+    # Generate list of last `months` YYYY-MM keys (oldest -> current)
+    ym_list: list[tuple[int, int, str]] = []
+    y, m = today.year, today.month
+    for _ in range(months):
+        ym_list.append((y, m, f"{y:04d}-{m:02d}"))
+        if m == 1:
+            y, m = y - 1, 12
+        else:
+            m -= 1
+    ym_list.reverse()
+
+    start_y, start_m, _ = ym_list[0]
+    start_date_bound = date(start_y, start_m, 1)
+
+    txs = (
+        db.query(Transaction)
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.transaction_date >= start_date_bound,
+        )
+        .all()
+    )
+
+    net_by_ym: dict[str, float] = {ym: 0.0 for _, _, ym in ym_list}
+    for tx in txs:
+        ym = _tx_effective_ym(tx)
+        if ym not in net_by_ym:
+            continue
+        amt = float(tx.amount or 0)
+        if tx.type in (TransactionType.INCOME, TransactionType.REFUND):
+            net_by_ym[ym] += amt
+        elif tx.type == TransactionType.EXPENSE:
+            net_by_ym[ym] -= amt
+
+    # Walk backwards from current_net_worth so the latest point equals today's exact net worth
+    month_abbr = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"]
+    points_rev: list[dict] = []
+    running_nw = current_net_worth
+    for yr, mo, ym in reversed(ym_list):
+        delta = round(net_by_ym.get(ym, 0.0), 2)
+        points_rev.append(
+            {
+                "ym": ym,
+                "label": f"{month_abbr[mo - 1]}/{str(yr)[2:]}",
+                "net_worth": round(running_nw, 2),
+                "monthly_delta": delta,
+                "projected": False,
+            }
+        )
+        running_nw = round(running_nw - delta, 2)
+
+    points = list(reversed(points_rev))
+
+    # Compute 3-month linear trend projection using recent 6-month average delta
+    recent_deltas = [p["monthly_delta"] for p in points[-6:]]
+    avg_delta = round(sum(recent_deltas) / len(recent_deltas), 2) if recent_deltas else 0.0
+    proj_nw = current_net_worth
+    py, pm = today.year, today.month
+    projections: list[dict] = []
+    for _ in range(3):
+        if pm == 12:
+            py, pm = py + 1, 1
+        else:
+            pm += 1
+        proj_nw = round(proj_nw + avg_delta, 2)
+        projections.append(
+            {
+                "ym": f"{py:04d}-{pm:02d}",
+                "label": f"{month_abbr[pm - 1]}/{str(py)[2:]}*",
+                "net_worth": proj_nw,
+                "monthly_delta": avg_delta,
+                "projected": True,
+            }
+        )
+
+    first_nw = points[0]["net_worth"] if points else current_net_worth
+    change_abs = round(current_net_worth - first_nw, 2)
+    change_pct = round((change_abs / abs(first_nw)) * 100, 1) if abs(first_nw) >= 1 else (100.0 if change_abs > 0 else 0.0)
+
+    return {
+        "current_net_worth": current_net_worth,
+        "total_assets": total_assets,
+        "total_debts": total_debts,
+        "period_change": change_abs,
+        "period_change_pct": change_pct,
+        "avg_monthly_delta": avg_delta,
+        "points": points + projections,
+    }

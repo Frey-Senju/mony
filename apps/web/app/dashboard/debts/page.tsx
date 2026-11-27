@@ -28,6 +28,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useAppearance } from '@/app/_theme/provider'
 import { dispatchToast } from '@/components/ui/ToastProvider'
+import { NetWorthHistoryPanel } from '@/components/debts/NetWorthHistoryPanel'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -319,6 +320,9 @@ function DebtsContent() {
           Nova Dívida / Financiamento
         </button>
       </header>
+
+      {/* EPIC-010: 12-Month Net Worth Evolution + 3m Projection */}
+      <NetWorthHistoryPanel token={token} />
 
       {/* Net Worth Summary + 6m Trajectory */}
       {netWorth && (

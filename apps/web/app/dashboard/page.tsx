@@ -8,6 +8,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CreditCard,
+  FileSpreadsheet,
   Landmark,
   LayoutGrid,
   Plus,
@@ -22,6 +23,7 @@ import { EditableSpreadsheetTable } from '@/components/transactions/EditableSpre
 import { FilterBar, PAYMENT_METHOD_LABELS } from '@/components/dashboard/FilterBar'
 import { Charts, type AnnualMonthPoint } from '@/components/dashboard/Charts'
 import { TransactionModal } from '@/components/dashboard/TransactionModal'
+import { StatementImportModal } from '@/components/transactions/StatementImportModal'
 import { UniversalEditTransactionModal } from '@/components/transactions/UniversalEditTransactionModal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { dispatchToast } from '@/components/ui/ToastProvider'
@@ -29,6 +31,7 @@ import { BulkActions } from '@/components/dashboard/BulkActions'
 import { InstallmentForecast } from '@/components/dashboard/InstallmentForecast'
 import { Next7DaysWidget } from '@/components/dashboard/Next7DaysWidget'
 import { SetupChecklist } from '@/components/dashboard/SetupChecklist'
+import { OnboardingChecklist } from '@/components/dashboard/OnboardingChecklist'
 import { useTransactions, type FilterState, type Transaction } from '@/hooks/useTransactions'
 import { useFilter } from '@/hooks/useFilter'
 import { useCategories } from '@/hooks/useCategories'
@@ -140,6 +143,7 @@ function DashboardContent() {
   const [confirmState, setConfirmState] = useState<{ mode: 'single' | 'bulk'; id?: string } | null>(null)
   const [showScrollTop, setShowScrollTop] = useState(false)
   const [widgetMenuOpen, setWidgetMenuOpen] = useState(false)
+  const [importModalOpen, setImportModalOpen] = useState(false)
   const [visibleWidgets, setVisibleWidgets] = useState({
     summary: true,
     next7d: true,
@@ -588,6 +592,15 @@ function DashboardContent() {
               </Link>
               <button
                 type="button"
+                onClick={() => setImportModalOpen(true)}
+                title="Importar extrato bancário CSV ou OFX instantaneamente"
+                className="no-print liquid-btn liquid-btn-glass inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold text-blue-700 dark:text-blue-300"
+              >
+                <FileSpreadsheet className="w-4 h-4" aria-hidden="true" />
+                <span className="hidden xl:inline">CSV/OFX</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   const netMonth = totalIncome - totalSpent
                   const rate = totalIncome > 0 ? Math.round((netMonth / totalIncome) * 100) : 0
@@ -841,6 +854,7 @@ function DashboardContent() {
         )}
 
         <SetupChecklist token={accessToken} budgetsCount={budgets.length} />
+        {accounts.length > 0 && <OnboardingChecklist token={accessToken} />}
 
         {/* Summary Cards */}
         {visibleWidgets.summary && (
@@ -1198,6 +1212,17 @@ function DashboardContent() {
           </div>
         </div>
       )}
+      <StatementImportModal
+        open={importModalOpen}
+        token={accessToken}
+        accounts={accounts}
+        categoryNames={categories.map((c) => c.name)}
+        onClose={() => setImportModalOpen(false)}
+        onImported={() => {
+          fetchAccounts()
+          fetchMonthSummary()
+        }}
+      />
     </div>
   )
 }

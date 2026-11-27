@@ -2,13 +2,14 @@
 
 import React, { useCallback, useEffect, useState } from 'react'
 import Link from 'next/link'
-import { Plus, Pencil, Trash2, Star, Wallet, Tag, X, Link2, ShieldCheck, Sparkles, Copy, Search } from 'lucide-react'
+import { Plus, Pencil, Trash2, Star, Wallet, Tag, X, Link2, ShieldCheck, Sparkles, Copy, Search, ArrowLeftRight, Scale } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories, type Category } from '@/hooks/useCategories'
 import { AISuggestionsBanner } from '@/components/ai/AISuggestionsBanner'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { dispatchToast } from '@/components/ui/ToastProvider'
+import { AccountTransferModal, AccountReconcileModal } from '@/components/accounts/TransferAndReconcileModals'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -64,6 +65,9 @@ function AccountsContent() {
   const [editing, setEditing] = useState<Account | null>(null)
   const [deleteId, setDeleteId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [transferOpen, setTransferOpen] = useState(false)
+  const [transferInitialFrom, setTransferInitialFrom] = useState<string | null>(null)
+  const [reconcileTarget, setReconcileTarget] = useState<Account | null>(null)
 
   // Account form state
   const [name, setName] = useState('')
@@ -411,15 +415,30 @@ function AccountsContent() {
                   </button>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={openCreate}
-                className="liquid-btn liquid-btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
-                data-testid="new-account-btn"
-              >
-                <Plus className="w-4 h-4" aria-hidden="true" />
-                Nova Conta
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                {accounts.length >= 2 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTransferInitialFrom(null)
+                      setTransferOpen(true)
+                    }}
+                    className="liquid-btn liquid-btn-glass inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
+                  >
+                    <ArrowLeftRight className="w-4 h-4" aria-hidden="true" />
+                    Transferir
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={openCreate}
+                  className="liquid-btn liquid-btn-primary inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold"
+                  data-testid="new-account-btn"
+                >
+                  <Plus className="w-4 h-4" aria-hidden="true" />
+                  Nova Conta
+                </button>
+              </div>
             </div>
 
             {positiveAccounts.length > 1 && positiveTotal > 0 && (
@@ -549,11 +568,38 @@ function AccountsContent() {
                     </div>
                   </div>
 
-                  <div className="pt-2 border-t border-slate-200/60 dark:border-white/10 flex items-baseline justify-between">
-                    <span className="text-xs text-slate-500 dark:text-slate-400">Saldo atual</span>
-                    <span className="text-2xl font-bold text-slate-900 dark:text-white">
-                      R$ {Number(acct.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                    </span>
+                  <div className="pt-2 border-t border-slate-200/60 dark:border-white/10 flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400 block">Saldo atual</span>
+                      <span className="text-2xl font-bold text-slate-900 dark:text-white money-value tabular-nums">
+                        R$ {Number(acct.balance).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setReconcileTarget(acct)}
+                        className="liquid-btn liquid-btn-glass px-2.5 py-1.5 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1"
+                        title="Ajustar para bater com o saldo real do banco"
+                      >
+                        <Scale className="w-3.5 h-3.5" aria-hidden="true" />
+                        Conciliar
+                      </button>
+                      {accounts.length >= 2 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTransferInitialFrom(acct.id)
+                            setTransferOpen(true)
+                          }}
+                          className="liquid-btn liquid-btn-glass px-2.5 py-1.5 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1"
+                          title={`Transferir a partir de ${acct.name}`}
+                        >
+                          <ArrowLeftRight className="w-3.5 h-3.5" aria-hidden="true" />
+                          Transferir
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   {deleteId === acct.id && (
@@ -976,6 +1022,22 @@ function AccountsContent() {
           </div>
         </div>
       )}
+
+      <AccountTransferModal
+        open={transferOpen}
+        accounts={accounts}
+        initialFromId={transferInitialFrom}
+        token={token}
+        onClose={() => setTransferOpen(false)}
+        onSuccess={fetchAccounts}
+      />
+
+      <AccountReconcileModal
+        account={reconcileTarget}
+        token={token}
+        onClose={() => setReconcileTarget(null)}
+        onSuccess={fetchAccounts}
+      />
     </div>
   )
 }

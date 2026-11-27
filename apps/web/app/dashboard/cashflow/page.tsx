@@ -35,6 +35,7 @@ import {
 import { EditableSpreadsheetTable } from '@/components/transactions/EditableSpreadsheetTable'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { dispatchToast } from '@/components/ui/ToastProvider'
+import { DailyCashflowForecastPanel } from '@/components/cashflow/DailyCashflowForecastPanel'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const STORAGE_KEY = 'mony_cashflow_prefs_v1'
@@ -379,6 +380,9 @@ function CashflowContent() {
           </button>
         </div>
       </header>
+
+      {/* EPIC-010: Daily Cashflow Forecast (30/60/90d) + What-If Simulator */}
+      <DailyCashflowForecastPanel token={token} />
 
       {/* Strategic KPIs (Left column of Cashflow + Reserva de Emergência tab) */}
       <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -687,7 +687,7 @@ body {
   word-spacing: 0.06em;
 }
 
-/* Global Privacy Mode (Shift+P): blur monetary values cleanly across the workspace & charts */
+/* Global Privacy Mode 2.0 (Shift+P): blur monetary values cleanly across every dashboard page & chart */
 :root[data-privacy="true"] .money-value,
 :root[data-privacy="true"] [data-money="true"],
 :root[data-privacy="true"] [data-testid="accounts-total-balance"],
@@ -695,8 +695,12 @@ body {
 :root[data-privacy="true"] [data-testid="summary-expenses"],
 :root[data-privacy="true"] [data-testid="summary-balance"],
 :root[data-privacy="true"] main td.text-right,
+:root[data-privacy="true"] main .text-xl.font-bold,
+:root[data-privacy="true"] main .text-xl.font-extrabold,
 :root[data-privacy="true"] main .text-2xl.font-bold,
+:root[data-privacy="true"] main .text-2xl.font-extrabold,
 :root[data-privacy="true"] main .text-3xl.font-bold,
+:root[data-privacy="true"] main .text-3xl.font-extrabold,
 :root[data-privacy="true"] .recharts-tooltip-wrapper,
 :root[data-privacy="true"] .recharts-yAxis .recharts-cartesian-axis-tick-value,
 :root[data-privacy="true"] .recharts-pie-label-text {
