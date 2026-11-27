@@ -180,6 +180,41 @@ def _sync_smart_alerts(db: Session, uid: UUID) -> None:
                 existing_keys.add(key)
                 created_any = True
 
+    # 4. EPIC-012 Valuer Watchlist Ceiling Price Hit Alerts
+    try:
+        from database.models import MarketQuoteCache, ValuerWatchlistItem
+        from routes.valuer import UNIVERSE_BY_TICKER
+
+        watch_items = db.query(ValuerWatchlistItem).filter(ValuerWatchlistItem.user_id == uid).all()
+        if watch_items:
+            tks = [w.ticker.upper() for w in watch_items]
+            q_map = {
+                q.ticker: float(q.price)
+                for q in db.query(MarketQuoteCache).filter(MarketQuoteCache.ticker.in_(tks)).all()
+                if q.price and float(q.price) > 0
+            }
+            for w in watch_items:
+                tk = w.ticker.upper()
+                cur_px = q_map.get(tk) or float((UNIVERSE_BY_TICKER.get(tk) or {}).get("ref_price") or 0)
+                tgt = float(w.target_price or 0)
+                if cur_px > 0 and tgt > 0 and cur_px <= tgt:
+                    key = ("valuer_watchlist", str(w.id), NotificationType.LIMIT_ALERT.value)
+                    if key not in existing_keys:
+                        db.add(
+                            Notification(
+                                user_id=uid,
+                                type=NotificationType.LIMIT_ALERT,
+                                title=f"🎯 Ponto de Compra: {tk} abaixo do Preço Teto!",
+                                message=f"{tk} está em {_brl(cur_px)} — abaixo do seu alvo de {_brl(tgt)}. Confira o Dossiê no Mony Valuer.",
+                                related_entity_type="valuer_watchlist",
+                                related_entity_id=w.id,
+                            )
+                        )
+                        existing_keys.add(key)
+                        created_any = True
+    except Exception:  # noqa: BLE001
+        pass
+
     if created_any:
         db.commit()
 

@@ -1099,3 +1099,26 @@ class OFPendingTransaction(Base):
 
     user = relationship("User")
     mony_account = relationship("Account")
+
+
+class ValuerWatchlistItem(Base):
+    """User-monitored B3/BDR/ETF tickers with target ceiling price alerts (EPIC-012)."""
+
+    __tablename__ = "valuer_watchlist"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(24), nullable=False)
+    name = Column(String(200), nullable=True)
+    target_price = Column(Numeric(15, 4), nullable=False)
+    notes = Column(Text, nullable=True)
+    last_alerted_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "ticker", name="uq_valuer_watchlist_user_ticker"),
+        Index("idx_valuer_watchlist_user", "user_id"),
+    )
+
+    user = relationship("User")

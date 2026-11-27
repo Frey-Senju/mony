@@ -15,6 +15,10 @@ import {
   Building2,
   Coins,
   Plus,
+  Snowflake,
+  PiggyBank,
+  LineChart as LineChartIcon,
+  LayoutGrid,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -30,12 +34,23 @@ import { AssetDossierModal } from '@/components/valuer/AssetDossierModal'
 import { MataMataPanel } from '@/components/valuer/MataMataPanel'
 import { MarketsBriefingPanel, WatchlistPanel } from '@/components/valuer/MarketsAndWatchlistPanels'
 import { MonyAcademyPanel } from '@/components/valuer/MonyAcademyPanel'
+import { MagicNumberPanel, IncomeBuilderPanel } from '@/components/valuer/MagicNumberAndIncomePanels'
+import { BacktestPanel, SectorHeatmapPanel } from '@/components/valuer/BacktestAndHeatmapPanels'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const WATCHLIST_KEY = 'mony_valuer_watchlist_v1'
 
-type ValuerTab = 'radar' | 'matamata' | 'markets' | 'watchlist' | 'academy'
-type RadarPreset = 'all' | 'barganha' | 'dividendos' | 'previdenciario' | 'fiis'
+type ValuerTab =
+  | 'radar'
+  | 'matamata'
+  | 'magic'
+  | 'income'
+  | 'backtest'
+  | 'heatmap'
+  | 'markets'
+  | 'watchlist'
+  | 'academy'
+type RadarPreset = 'all' | 'barganha' | 'dividendos' | 'previdenciario' | 'fiis' | 'internacional'
 
 interface RadarPayload {
   preset: RadarPreset
@@ -48,11 +63,12 @@ interface RadarPayload {
 }
 
 const RADAR_PRESETS: Array<{ id: RadarPreset; label: string; desc: string; icon: React.ComponentType<{ className?: string }> }> = [
-  { id: 'all', label: 'Todos (Ranking Geral)', desc: 'Top Score Fundamentalista', icon: Sparkles },
-  { id: 'barganha', label: 'Radar de Barganha', desc: 'Desconto Graham & P/L baixo', icon: TrendingUp },
-  { id: 'dividendos', label: 'Radar de Dividendos', desc: 'DY alto & Preço Teto Bazin', icon: Coins },
-  { id: 'previdenciario', label: 'Previdenciário B.E.S.T.', desc: 'Bancos, Energia, Saneamento, Seguros', icon: ShieldCheck },
+  { id: 'all', label: 'Ranking Geral', desc: 'Top Score Fundamentalista', icon: Sparkles },
+  { id: 'barganha', label: 'Barganha', desc: 'Desconto Graham & P/L baixo', icon: TrendingUp },
+  { id: 'dividendos', label: 'Dividendos', desc: 'DY alto & Preço Teto Bazin', icon: Coins },
+  { id: 'previdenciario', label: 'Previdenciário B.E.S.T.', desc: 'Setores perenes', icon: ShieldCheck },
   { id: 'fiis', label: 'FIIs Descontados', desc: 'P/VP atrativo & renda mensal', icon: Building2 },
+  { id: 'internacional', label: 'Global (BDRs/ETFs)', desc: 'S&P 500, Big Tech & Ouro', icon: Globe2 },
 ]
 
 export default function MonyValuerPage() {
@@ -85,27 +101,44 @@ function MonyValuerContent() {
   const [compareTickers, setCompareTickers] = useState<string[]>(['BBAS3', 'ITUB4', 'TAEE11', 'BBSE3'])
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([])
 
-  // Load persisted watchlist
-  useEffect(() => {
+  // Load DB-backed Watchlist (with graceful migration from localStorage if any)
+  const loadWatchlist = useCallback(async () => {
+    if (!token) return
+    try {
+      const res = await fetch(`${API_URL}/valuer/watchlist`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const d = await res.json()
+        const serverItems: WatchlistEntry[] = (d.items || []).map(
+          (i: { ticker: string; name: string; target_price: number; notes?: string; created_at?: string }) => ({
+            ticker: i.ticker,
+            name: i.name,
+            target_price: i.target_price,
+            notes: i.notes,
+            added_at: i.created_at || new Date().toISOString(),
+          })
+        )
+        setWatchlist(serverItems)
+        return
+      }
+    } catch {
+      // fallback to localStorage
+    }
     try {
       const raw = localStorage.getItem(WATCHLIST_KEY)
       if (raw) setWatchlist(JSON.parse(raw))
     } catch {
       // ignore
     }
-  }, [])
-
-  const saveWatchlist = useCallback((next: WatchlistEntry[]) => {
-    setWatchlist(next)
-    try {
-      localStorage.setItem(WATCHLIST_KEY, JSON.stringify(next))
-    } catch {
-      // ignore
-    }
-  }, [])
+  }, [token])
 
   useEffect(() => {
-    document.title = 'Mony Valuer · Preço Teto, Radar B3 & Mata-Mata'
+    loadWatchlist()
+  }, [loadWatchlist])
+
+  useEffect(() => {
+    document.title = 'Mony Valuer · Preço Teto, Radar B3, Bola de Neve & Backtest'
   }, [])
 
   const loadRadar = useCallback(async () => {
@@ -157,27 +190,55 @@ function MonyValuerContent() {
     }).length
   }, [watchlist, universeByTicker])
 
-  const addToWatchlist = (ticker: string, targetPrice: number, name?: string) => {
+  const upsertWatchlist = async (ticker: string, targetPrice: number, name?: string) => {
     const tk = ticker.toUpperCase()
-    if (watchlist.some((w) => w.ticker === tk)) {
-      dispatchToast(`${tk} já está na sua Watchlist.`, 'info')
-      return
+    const cleanTarget = Number(targetPrice.toFixed(2))
+    const optimistic: WatchlistEntry = {
+      ticker: tk,
+      name: name || tk,
+      target_price: cleanTarget,
+      added_at: new Date().toISOString(),
     }
-    saveWatchlist([
-      {
-        ticker: tk,
-        name: name || tk,
-        target_price: Number(targetPrice.toFixed(2)),
-        added_at: new Date().toISOString(),
-      },
-      ...watchlist,
-    ])
-    dispatchToast(`⭐ ${tk} adicionado à Watchlist (alvo ${fmtBrl(targetPrice)})!`, 'success')
+    setWatchlist((prev) => [optimistic, ...prev.filter((w) => w.ticker !== tk)])
+    if (token) {
+      try {
+        const res = await fetch(`${API_URL}/valuer/watchlist`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ticker: tk, target_price: cleanTarget, name }),
+        })
+        if (res.ok) {
+          const saved = await res.json()
+          dispatchToast(
+            saved.hit
+              ? `🎯 ${tk} já está abaixo do Preço Teto (${fmtBrl(cleanTarget)}) — alerta enviado no sininho!`
+              : `⭐ ${tk} salvo na Watchlist (alvo ${fmtBrl(cleanTarget)})!`,
+            'success'
+          )
+          return
+        }
+      } catch {
+        // fallback below
+      }
+    }
+    dispatchToast(`⭐ ${tk} salvo na Watchlist (alvo ${fmtBrl(cleanTarget)})!`, 'success')
+  }
+
+  const removeWatchlist = async (ticker: string) => {
+    const tk = ticker.toUpperCase()
+    setWatchlist((prev) => prev.filter((w) => w.ticker !== tk))
+    if (token) {
+      await fetch(`${API_URL}/valuer/watchlist/${encodeURIComponent(tk)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => undefined)
+    }
+    dispatchToast(`${tk} removido da Watchlist.`, 'info')
   }
 
   const addAssetToWatchlist = (asset: ValuerAsset) => {
     const suggested = asset.consensus_price || asset.bazin_price || asset.price * 0.95
-    addToWatchlist(asset.ticker, suggested, asset.name)
+    upsertWatchlist(asset.ticker, suggested, asset.name)
   }
 
   const addToCompare = (ticker: string) => {
@@ -210,14 +271,14 @@ function MonyValuerContent() {
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">
-                  Mony Valuer · B3
+                  Mony Valuer · B3 &amp; Global
                 </h1>
                 <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-400/30">
-                  Bazin · Graham · Gordon · Análise Técnica
+                  Bazin · Graham · Gordon · Backtest · Bola de Neve
                 </span>
               </div>
               <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-0.5">
-                Preço Teto automático, 4 Radares de Oportunidades B3, Mata-Mata até 12 ativos, Markets &amp; Mony Academy
+                5 Radares B3 &amp; BDRs, Mata-Mata 12 ativos, Número Mágico, Carteira Previdenciária, Backtest 12m, Mapa Setorial &amp; Academy
               </p>
             </div>
           </div>
@@ -243,15 +304,19 @@ function MonyValuerContent() {
           </form>
         </div>
 
-        {/* Navigation Tabs */}
+        {/* Navigation Tabs (9 tabs) */}
         <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-white/40 dark:border-white/10" role="tablist">
           {(
             [
-              { id: 'radar', label: 'Radar B3 & Preço Teto', icon: Radar },
+              { id: 'radar', label: 'Radar & Preço Teto', icon: Radar },
               { id: 'matamata', label: `Mata-Mata (${compareTickers.length})`, icon: Swords },
+              { id: 'magic', label: 'Bola de Neve', icon: Snowflake },
+              { id: 'income', label: 'Renda Mensal', icon: PiggyBank },
+              { id: 'backtest', label: 'Backtest 12m', icon: LineChartIcon },
+              { id: 'heatmap', label: 'Mapa Setorial', icon: LayoutGrid },
               { id: 'markets', label: 'Markets & Briefing', icon: Globe2 },
-              { id: 'watchlist', label: 'Watchlist & Alertas', icon: Star, badge: watchlistHits },
-              { id: 'academy', label: 'Mony Academy', icon: GraduationCap },
+              { id: 'watchlist', label: 'Watchlist', icon: Star, badge: watchlistHits },
+              { id: 'academy', label: 'Academy', icon: GraduationCap },
             ] as const
           ).map((t) => {
             const Icon = t.icon
@@ -263,14 +328,14 @@ function MonyValuerContent() {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setActiveTab(t.id)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition ${
+                className={`px-3 py-2 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition ${
                   active ? 'liquid-nav-active shadow-sm' : 'text-slate-600 dark:text-slate-300 hover:bg-white/50 dark:hover:bg-white/10'
                 }`}
               >
                 <Icon className="w-3.5 h-3.5" />
                 {t.label}
                 {'badge' in t && t.badge > 0 && (
-                  <span className="ml-1 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white">
+                  <span className="ml-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500 text-white">
                     {t.badge}
                   </span>
                 )}
@@ -280,11 +345,11 @@ function MonyValuerContent() {
         </div>
       </header>
 
-      {/* TAB 1: B3 RADAR & VALUATION */}
+      {/* TAB 1: B3 & GLOBAL RADAR */}
       {activeTab === 'radar' && (
         <div className="space-y-5">
-          {/* 5 Preset Strategy Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {/* 6 Preset Strategy Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
             {RADAR_PRESETS.map((p) => {
               const Icon = p.icon
               const active = preset === p.id
@@ -293,15 +358,15 @@ function MonyValuerContent() {
                   key={p.id}
                   type="button"
                   onClick={() => setPreset(p.id)}
-                  className={`glass-card p-3.5 text-left transition hover:scale-[1.01] ${
+                  className={`glass-card p-3 text-left transition hover:scale-[1.01] ${
                     active ? 'ring-2 ring-blue-500 bg-blue-500/10' : ''
                   }`}
                 >
-                  <div className="flex items-center gap-2 text-xs font-extrabold text-slate-900 dark:text-white">
-                    <Icon className={`w-4 h-4 shrink-0 ${active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500'}`} />
+                  <div className="flex items-center gap-1.5 text-xs font-extrabold text-slate-900 dark:text-white">
+                    <Icon className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-blue-600 dark:text-blue-400' : 'text-slate-500'}`} />
                     <span className="truncate">{p.label}</span>
                   </div>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">{p.desc}</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-1">{p.desc}</p>
                 </button>
               )
             })}
@@ -426,7 +491,7 @@ function MonyValuerContent() {
                                 </span>
                               )}
                             </div>
-                            <p className="text-[11px] text-slate-500 truncate max-w-[170px]">
+                            <p className="text-[11px] text-slate-500 truncate max-w-[175px]">
                               {a.name} · {a.sector}
                             </p>
                           </button>
@@ -475,7 +540,7 @@ function MonyValuerContent() {
                             <button
                               type="button"
                               onClick={() => addAssetToWatchlist(a)}
-                              title="Monitorar na Watchlist"
+                              title="Monitorar na Watchlist (com alerta no sininho)"
                               aria-label={`Watchlist ${a.ticker}`}
                               className={`p-1.5 rounded-lg transition ${
                                 inWatch
@@ -513,7 +578,6 @@ function MonyValuerContent() {
         </div>
       )}
 
-      {/* TAB 2: MATA-MATA */}
       {activeTab === 'matamata' && (
         <MataMataPanel
           token={token}
@@ -524,26 +588,38 @@ function MonyValuerContent() {
         />
       )}
 
-      {/* TAB 3: MARKETS & BRIEFING */}
+      {activeTab === 'magic' && (
+        <MagicNumberPanel token={token} onOpenDossier={(tk) => setDossierTicker(tk)} />
+      )}
+
+      {activeTab === 'income' && (
+        <IncomeBuilderPanel token={token} onOpenDossier={(tk) => setDossierTicker(tk)} />
+      )}
+
+      {activeTab === 'backtest' && <BacktestPanel token={token} />}
+
+      {activeTab === 'heatmap' && (
+        <SectorHeatmapPanel token={token} onOpenDossier={(tk) => setDossierTicker(tk)} />
+      )}
+
       {activeTab === 'markets' && (
         <MarketsBriefingPanel token={token} onOpenDossier={(tk) => setDossierTicker(tk)} />
       )}
 
-      {/* TAB 4: WATCHLIST */}
       {activeTab === 'watchlist' && (
         <WatchlistPanel
           watchlist={watchlist}
           universeByTicker={universeByTicker}
-          onAdd={addToWatchlist}
-          onUpdateTarget={(tk, nextTarget) =>
-            saveWatchlist(watchlist.map((w) => (w.ticker === tk ? { ...w, target_price: nextTarget } : w)))
-          }
-          onRemove={(tk) => saveWatchlist(watchlist.filter((w) => w.ticker !== tk))}
+          onAdd={upsertWatchlist}
+          onUpdateTarget={(tk, nextTarget) => {
+            const existing = watchlist.find((w) => w.ticker === tk)
+            upsertWatchlist(tk, nextTarget, existing?.name)
+          }}
+          onRemove={removeWatchlist}
           onOpenDossier={(tk) => setDossierTicker(tk)}
         />
       )}
 
-      {/* TAB 5: MONY ACADEMY */}
       {activeTab === 'academy' && (
         <MonyAcademyPanel
           onJumpTab={(tab, nextPreset) => {
