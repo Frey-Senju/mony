@@ -21,8 +21,10 @@ import {
   Landmark,
   Flame,
   Snowflake,
+  CheckCircle2,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useAppearance } from '@/app/_theme/provider'
 import { dispatchToast } from '@/components/ui/ToastProvider'
@@ -111,6 +113,11 @@ function DebtsContent() {
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<DebtItem | null>(null)
+  const [deletingDebt, setDeletingDebt] = useState(false)
+  const [amortizeDebt, setAmortizeDebt] = useState<DebtItem | null>(null)
+  const [amortizeAmount, setAmortizeAmount] = useState('')
+  const [amortizing, setAmortizing] = useState(false)
   const [form, setForm] = useState({
     name: '',
     debt_type: 'personal_loan',
@@ -223,15 +230,62 @@ function DebtsContent() {
     }
   }
 
-  const handleDeleteDebt = async (id: string) => {
-    if (!token) return
-    const res = await fetch(`${API_URL}/debts/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (res.ok) {
-      dispatchToast('Registro removido.', 'info')
+  const executeDeleteDebt = async () => {
+    if (!token || !deleteTarget) return
+    setDeletingDebt(true)
+    try {
+      const res = await fetch(`${API_URL}/debts/${deleteTarget.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        dispatchToast(`Dívida "${deleteTarget.name}" removida.`, 'info')
+        setDeleteTarget(null)
+        await loadAll()
+      }
+    } finally {
+      setDeletingDebt(false)
+    }
+  }
+
+  const handleAmortizeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!token || !amortizeDebt) return
+    const payVal = parseFloat(amortizeAmount.replace(',', '.'))
+    if (!Number.isFinite(payVal) || payVal <= 0) return
+    setAmortizing(true)
+    try {
+      const nextBalance = Math.max(0, Number(amortizeDebt.current_balance) - payVal)
+      const nextInstallments =
+        typeof amortizeDebt.remaining_installments === 'number'
+          ? Math.max(0, amortizeDebt.remaining_installments - 1)
+          : undefined
+      const res = await fetch(`${API_URL}/debts/${amortizeDebt.id}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          current_balance: Number(nextBalance.toFixed(2)),
+          ...(nextInstallments !== undefined ? { remaining_installments: nextInstallments } : {}),
+          is_active: nextBalance > 0,
+        }),
+      })
+      if (!res.ok) throw new Error('Erro ao registrar amortização')
+      dispatchToast(
+        nextBalance <= 0
+          ? `🎉 "${amortizeDebt.name}" quitada!`
+          : `Amortização de ${brl(payVal)} registrada em "${amortizeDebt.name}"!`,
+        'success'
+      )
+      setAmortizeDebt(null)
+      setAmortizeAmount('')
       await loadAll()
+    } catch (err) {
+      dispatchToast(err instanceof Error ? err.message : 'Erro ao amortizar', 'error')
+    } finally {
+      setAmortizing(false)
     }
   }
 
@@ -298,11 +352,34 @@ function DebtsContent() {
                   <p className="text-base font-bold text-rose-600 dark:text-rose-400 money-value">
                     {brl(netWorth.liabilities_total)}
                   </p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">
+                  <p className="text-[11px] text-slate-400 mt-0.5 money-value">
                     Dívidas {brl(netWorth.breakdown.debts)} · Cartões {brl(netWorth.breakdown.credit_cards)}
                   </p>
                 </div>
               </div>
+              {/* Assets vs Liabilities Visual Balance Bar */}
+              {(() => {
+                const totalBoth = Math.max(1, netWorth.assets_total + netWorth.liabilities_total)
+                const assetsPct = Math.round((netWorth.assets_total / totalBoth) * 100)
+                return (
+                  <div className="mt-4 pt-3 border-t border-slate-200/60 dark:border-white/10 space-y-1">
+                    <div className="flex justify-between text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                      <span className="text-emerald-600 dark:text-emerald-400">Ativos ({assetsPct}%)</span>
+                      <span className="text-rose-600 dark:text-rose-400">Passivos ({100 - assetsPct}%)</span>
+                    </div>
+                    <div className="h-2.5 w-full rounded-full overflow-hidden flex bg-rose-500/20">
+                      <div
+                        className="h-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500"
+                        style={{ width: `${assetsPct}%` }}
+                      />
+                      <div
+                        className="h-full bg-gradient-to-r from-rose-500 to-red-500 transition-all duration-500"
+                        style={{ width: `${100 - assetsPct}%` }}
+                      />
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
           </div>
 
@@ -366,14 +443,32 @@ function DebtsContent() {
                       {d.interest_rate_monthly}% a.m. · {d.amortization_system.toUpperCase()} · Dia {d.due_day}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteDebt(d.id)}
-                    aria-label={`Remover ${d.name}`}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {d.current_balance > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAmortizeDebt(d)
+                          setAmortizeAmount(
+                            String(d.monthly_payment > 0 ? d.monthly_payment : Math.min(500, d.current_balance))
+                          )
+                        }}
+                        className="liquid-btn liquid-btn-glass px-2.5 py-1 rounded-xl text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1"
+                        title="Registrar pagamento de parcela ou amortização extra"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+                        Amortizar
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setDeleteTarget(d)}
+                      aria-label={`Remover ${d.name}`}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="flex items-baseline justify-between text-xs">
@@ -569,6 +664,65 @@ function DebtsContent() {
           </form>
         </div>
       )}
+      {/* Amortize / Pay Installment Modal */}
+      {amortizeDebt && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-950/45 backdrop-blur-sm flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setAmortizeDebt(null)}
+        >
+          <form
+            onSubmit={handleAmortizeSubmit}
+            onClick={(e) => e.stopPropagation()}
+            className="glass-modal max-w-sm w-full p-6 space-y-4"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Amortizar &ldquo;{amortizeDebt.name}&rdquo;
+              </h3>
+              <button type="button" onClick={() => setAmortizeDebt(null)} aria-label="Fechar">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300">
+              Saldo devedor atual: <strong className="money-value">{brl(amortizeDebt.current_balance)}</strong>
+            </p>
+            <div>
+              <label className="block text-xs font-semibold mb-1">Valor pago / amortizado (R$)</label>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                required
+                autoFocus
+                value={amortizeAmount}
+                onChange={(e) => setAmortizeAmount(e.target.value)}
+                className="input-base text-sm font-bold"
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setAmortizeDebt(null)} className="liquid-btn liquid-btn-glass px-4 py-2 rounded-xl text-xs font-semibold">
+                Cancelar
+              </button>
+              <button type="submit" disabled={amortizing} className="liquid-btn liquid-btn-primary px-5 py-2 rounded-xl text-xs font-semibold disabled:opacity-50">
+                {amortizing ? 'Registrando...' : 'Confirmar Amortização'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Remover "${deleteTarget?.name || ''}"?`}
+        description="A dívida será removida do seu cálculo de patrimônio líquido."
+        confirmLabel="Remover"
+        variant="danger"
+        loading={deletingDebt}
+        onConfirm={executeDeleteDebt}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

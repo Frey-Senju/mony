@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
+import Link from 'next/link'
 import {
   UserCircle,
   ShieldCheck,
@@ -11,6 +12,8 @@ import {
   AlertCircle,
   Download,
   Database,
+  Activity,
+  ArrowUpRight,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { TwoFASetup } from '@/components/auth/TwoFASetup'
@@ -71,6 +74,29 @@ function ProfileContent() {
   const [twoFaMsg, setTwoFaMsg] = useState<string | null>(null)
   const [twoFaErr, setTwoFaErr] = useState<string | null>(null)
   const [exportingBackup, setExportingBackup] = useState(false)
+  const [accountHealth, setAccountHealth] = useState<{
+    transactions_total: number
+    categorized_pct: number
+    outros_count: number
+    accounts_count: number
+    open_finance_accounts_count: number
+    categories_count: number
+    oldest_date?: string | null
+    newest_date?: string | null
+    checks: Array<{ id: string; label: string; ok: boolean; detail: string; href?: string | null }>
+  } | null>(null)
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API_URL}/insights/account-health`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setAccountHealth(d)
+      })
+      .catch(() => undefined)
+  }, [token])
 
   const handleDownloadFullBackup = async () => {
     if (!token) return
@@ -553,6 +579,59 @@ function ProfileContent() {
               </div>
             )}
           </div>
+
+          {/* EPIC-009: Account Health & Security X-Ray */}
+          {accountHealth && (
+            <div className="glass-panel space-y-4">
+              <div className="flex items-start gap-3">
+                <span className="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/25 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                  <Activity className="w-5 h-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                    Raio-X de Saúde da Conta
+                  </h2>
+                  <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                    {accountHealth.transactions_total} lançamento(s) · {accountHealth.accounts_count} conta(s) ({accountHealth.open_finance_accounts_count} Open Finance) · {accountHealth.categories_count} categoria(s)
+                    {accountHealth.oldest_date && accountHealth.newest_date
+                      ? ` · Período: ${accountHealth.oldest_date.slice(0, 7)} a ${accountHealth.newest_date.slice(0, 7)}`
+                      : ''}
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {accountHealth.checks.map((chk) => (
+                  <div
+                    key={chk.id}
+                    className={`glass-card p-3 flex items-center justify-between gap-2 text-xs border ${
+                      chk.ok ? 'border-emerald-500/25' : 'border-amber-500/35'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      {chk.ok ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" aria-hidden="true" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-amber-500 shrink-0" aria-hidden="true" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="font-bold text-slate-900 dark:text-white truncate">{chk.label}</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{chk.detail}</p>
+                      </div>
+                    </div>
+                    {!chk.ok && chk.href && (
+                      <Link
+                        href={chk.href}
+                        className="text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline inline-flex items-center gap-0.5 shrink-0"
+                      >
+                        Abrir
+                        <ArrowUpRight className="w-3 h-3" />
+                      </Link>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* EPIC-008: Full Account Backup & Portability */}
           <div className="glass-panel space-y-4">

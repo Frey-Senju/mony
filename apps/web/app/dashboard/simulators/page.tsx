@@ -24,9 +24,12 @@ import {
   ChevronUp,
   Send,
   Sparkles,
+  Flame,
+  CreditCard,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { WhatIfAISimulator } from '@/components/simulators/WhatIfAISimulator'
+import { FireSimulatorPanel, CashVsInstallmentPanel } from '@/components/simulators/FireAndInstallmentSimulators'
 import { useAuth } from '@/stores/auth/useAuth'
 import {
   DEFAULT_DSR_CALENDAR,
@@ -66,7 +69,7 @@ export default function SimulatorsPage() {
 function SimulatorsContent() {
   const { tokens } = useAuth()
   const token = tokens?.access_token
-  const [activeTab, setActiveTab] = useState<'salary' | 'invest' | 'whatif'>('salary')
+  const [activeTab, setActiveTab] = useState<'salary' | 'invest' | 'whatif' | 'fire' | 'cash_vs_inst'>('salary')
 
   // ==================== Salary with Goal State (spreadsheet defaults) ====================
   const [role, setRole] = useState('Vendedor Interno')
@@ -353,18 +356,18 @@ function SimulatorsContent() {
         <div
           role="tablist"
           aria-label="Escolha o simulador"
-          className="grid grid-cols-3 p-1 rounded-2xl bg-white/55 dark:bg-white/10 border border-white/70 dark:border-white/15"
+          className="flex flex-wrap p-1 rounded-2xl bg-white/55 dark:bg-white/10 border border-white/70 dark:border-white/15 gap-0.5"
         >
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === 'salary'}
             onClick={() => setActiveTab('salary')}
-            className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
               activeTab === 'salary' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
             }`}
           >
-            <Briefcase className="w-4 h-4" />
+            <Briefcase className="w-3.5 h-3.5" />
             Salário
           </button>
           <button
@@ -372,30 +375,58 @@ function SimulatorsContent() {
             role="tab"
             aria-selected={activeTab === 'invest'}
             onClick={() => setActiveTab('invest')}
-            className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
               activeTab === 'invest' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
             }`}
           >
-            <TrendingUp className="w-4 h-4" />
+            <TrendingUp className="w-3.5 h-3.5" />
             Investimentos
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'fire'}
+            onClick={() => setActiveTab('fire')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'fire' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <Flame className="w-3.5 h-3.5 text-orange-500" />
+            FIRE
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'cash_vs_inst'}
+            onClick={() => setActiveTab('cash_vs_inst')}
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
+              activeTab === 'cash_vs_inst' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
+            }`}
+          >
+            <CreditCard className="w-3.5 h-3.5 text-blue-500" />
+            À Vista × Parcelado
           </button>
           <button
             type="button"
             role="tab"
             aria-selected={activeTab === 'whatif'}
             onClick={() => setActiveTab('whatif')}
-            className={`flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold transition ${
+            className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold transition ${
               activeTab === 'whatif' ? 'liquid-nav-active' : 'text-slate-600 dark:text-slate-300'
             }`}
           >
-            <Sparkles className="w-4 h-4" />
+            <Sparkles className="w-3.5 h-3.5" />
             E se...? (IA)
           </button>
         </div>
       </header>
 
-      {/* ==================== TAB 3: SIMULADOR E SE...? COM DADOS REAIS ==================== */}
-      {activeTab === 'whatif' ? (
+      {/* ==================== TABS ==================== */}
+      {activeTab === 'fire' ? (
+        <FireSimulatorPanel />
+      ) : activeTab === 'cash_vs_inst' ? (
+        <CashVsInstallmentPanel />
+      ) : activeTab === 'whatif' ? (
         <WhatIfAISimulator />
       ) : activeTab === 'salary' ? (
         <div className="space-y-6">

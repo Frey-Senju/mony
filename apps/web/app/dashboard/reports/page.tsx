@@ -7,6 +7,7 @@ import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { MonthlySummaryCard } from '@/components/reports/MonthlySummaryCard'
 import { CategoryBreakdownChart } from '@/components/reports/CategoryBreakdownChart'
 import { ReportsAnalyticsPro } from '@/components/reports/ReportsAnalyticsPro'
+import { TagsProjectsCenter } from '@/components/reports/TagsProjectsCenter'
 import { shiftMonth, useReports } from '@/hooks/useReports'
 import { useCategories } from '@/hooks/useCategories'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -438,6 +439,9 @@ function ReportsContent() {
 
         {/* Reports 2.0 — Accessible Deep Analytics & AI Executive Summary */}
         <ReportsAnalyticsPro token={token} year={year} month={month} />
+
+        {/* EPIC-009: Central de #Tags & Projetos */}
+        <TagsProjectsCenter token={token} />
       </div>
     </div>
   )

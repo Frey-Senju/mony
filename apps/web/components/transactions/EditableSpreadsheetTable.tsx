@@ -346,6 +346,21 @@ export function EditableSpreadsheetTable({
       })
   }, [mergedTransactions, catByName])
 
+  // Present #tags in current dataset for 1-click tag chip filtering
+  const presentTags = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const t of mergedTransactions) {
+      if (!Array.isArray(t.tags)) continue
+      for (const raw of t.tags) {
+        const clean = String(raw).trim()
+        if (!clean) continue
+        const norm = clean.startsWith('#') ? clean : `#${clean}`
+        counts.set(norm, (counts.get(norm) || 0) + 1)
+      }
+    }
+    return Array.from(counts.entries()).sort((a, b) => b[1] - a[1])
+  }, [mergedTransactions])
+
   // Reconciliation / paid progress across the month
   const progressStats = useMemo(() => {
     const total = mergedTransactions.length
@@ -1765,6 +1780,30 @@ export function EditableSpreadsheetTable({
                   <span aria-hidden="true">{cat.icon}</span>
                   <span className="max-w-[130px] truncate">{cat.name}</span>
                   <span className="opacity-75">({cat.count})</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Clickable #Tag Quick-Filter Chips (EPIC-009) */}
+        {presentTags.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap pt-1" role="group" aria-label="Filtrar por tag">
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">Tags:</span>
+            {presentTags.map(([tag, count]) => {
+              const active = searchText.trim().toLowerCase() === tag.toLowerCase()
+              return (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setSearchText(active ? '' : tag)}
+                  className={`px-2 py-0.5 rounded-full text-[11px] font-semibold transition border ${
+                    active
+                      ? 'bg-indigo-600 text-white border-indigo-600'
+                      : 'bg-indigo-500/12 text-indigo-700 dark:text-indigo-300 border-indigo-500/25 hover:bg-indigo-500/20'
+                  }`}
+                >
+                  {tag} ({count})
                 </button>
               )
             })}

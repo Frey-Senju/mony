@@ -13,8 +13,10 @@ import {
   TrendingDown,
   TrendingUp,
   Printer,
+  Share2,
 } from 'lucide-react'
 import type { Category } from '@/hooks/useCategories'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -197,6 +199,33 @@ export function SpendingXRayAndReview({
               className="input-base py-1 px-2 text-xs w-auto"
             />
           </label>
+          <button
+            type="button"
+            disabled={!r}
+            onClick={() => {
+              if (!r || !data) return
+              const topLines = r.top_merchants
+                .map((m, i) => `${['🥇', '🥈', '🥉'][i]} ${m.name}: ${brl(m.total)} (${m.count}x)`)
+                .join('\n')
+              const summaryText = [
+                `📊 *Mony Review · ${data.month}*`,
+                `💰 Entradas: ${brl(r.total_income)}`,
+                `💸 Saídas: ${brl(r.total_expenses)}`,
+                `✨ Saldo: ${brl(r.net)} (${r.savings_rate_pct.toFixed(1).replace('.', ',')}% economia)`,
+                topLines ? `\n🏪 *Top Estabelecimentos:*\n${topLines}` : '',
+              ]
+                .filter(Boolean)
+                .join('\n')
+              navigator.clipboard?.writeText(summaryText).then(() => {
+                dispatchToast('Resumo formatado copiado para WhatsApp!', 'success')
+              }).catch(() => undefined)
+            }}
+            className="liquid-btn liquid-btn-glass px-3 py-1.5 rounded-xl text-xs font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5 disabled:opacity-40"
+            title="Copiar resumo formatado com emojis para colar no WhatsApp"
+          >
+            <Share2 className="w-3.5 h-3.5" aria-hidden="true" />
+            WhatsApp
+          </button>
           <button
             type="button"
             onClick={() => window.print()}

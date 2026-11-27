@@ -661,3 +661,173 @@ async def global_search(
             for c in cards
         ],
     }
+
+
+@router.get("/tags-summary")
+async def get_tags_summary(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-009 Central de #Tags & Projetos: aggregates all user transactions that
+    carry #tags (e.g. #viagem, #obra, #reembolso) with totals, period & items.
+    """
+    uid = parse_uuid(user_id, "user_id")
+    rows = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(
+            Transaction.user_id == uid,
+            Transaction.deleted_at.is_(None),
+            Transaction.tags.isnot(None),
+        )
+        .order_by(Transaction.transaction_date.desc())
+        .all()
+    )
+
+    buckets: dict[str, dict] = {}
+    for tx in rows:
+        raw_tags = tx.tags or []
+        if not isinstance(raw_tags, list) or not raw_tags:
+            continue
+        amt = float(tx.amount or 0)
+        tx_date = tx.transaction_date.isoformat() if tx.transaction_date else ""
+        cname = _tx_cat_name(tx)
+        ym = _tx_effective_ym(tx)
+        for raw_tag in raw_tags:
+            cleaned = str(raw_tag).strip()
+            if not cleaned:
+                continue
+            display = cleaned if cleaned.startswith("#") else f"#{cleaned}"
+            key = display.lower()
+            if key not in buckets:
+                buckets[key] = {
+                    "tag": display,
+                    "count": 0,
+                    "total_expenses": 0.0,
+                    "total_income": 0.0,
+                    "first_date": tx_date,
+                    "last_date": tx_date,
+                    "items": [],
+                }
+            b = buckets[key]
+            b["count"] += 1
+            if tx.type == TransactionType.EXPENSE:
+                b["total_expenses"] += amt
+            elif tx.type == TransactionType.INCOME:
+                b["total_income"] += amt
+            if tx_date:
+                if not b["first_date"] or tx_date < b["first_date"]:
+                    b["first_date"] = tx_date
+                if not b["last_date"] or tx_date > b["last_date"]:
+                    b["last_date"] = tx_date
+            if len(b["items"]) < 25:
+                b["items"].append(
+                    {
+                        "id": str(tx.id),
+                        "description": tx.description,
+                        "amount": round(amt, 2),
+                        "type": tx.type.value if hasattr(tx.type, "value") else str(tx.type),
+                        "date": tx_date,
+                        "statement_month": ym,
+                        "category_name": cname,
+                    }
+                )
+
+    tags_list = sorted(
+        buckets.values(),
+        key=lambda x: x["total_expenses"] + x["total_income"],
+        reverse=True,
+    )
+    for item in tags_list:
+        item["total_expenses"] = round(item["total_expenses"], 2)
+        item["total_income"] = round(item["total_income"], 2)
+        item["net"] = round(item["total_income"] - item["total_expenses"], 2)
+
+    return {
+        "total_tags": len(tags_list),
+        "tagged_transactions": sum(1 for r in rows if r.tags),
+        "tags": tags_list,
+    }
+
+
+@router.get("/account-health")
+async def get_account_health(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-009 Account Health & Security X-Ray for Profile Settings.
+    """
+    from database.models import Budget, RecurringRule, User
+
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
+
+    txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.categories).joinedload(TransactionCategory.category))
+        .filter(Transaction.user_id == uid, Transaction.deleted_at.is_(None))
+        .all()
+    )
+    tx_total = len(txs)
+    outros_count = sum(1 for t in txs if _tx_cat_name(t).lower() in ("outros", "sem categoria"))
+    categorized_pct = round(((tx_total - outros_count) / tx_total) * 100, 1) if tx_total > 0 else 100.0
+    dates = [t.transaction_date for t in txs if t.transaction_date]
+    oldest = min(dates).isoformat() if dates else None
+    newest = max(dates).isoformat() if dates else None
+
+    accounts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    of_accounts = sum(1 for a in accounts if (a.origin_metadata or {}).get("provider") == "pluggy")
+    categories_count = db.query(Category).filter(Category.user_id == uid, Category.deleted_at.is_(None)).count()
+    budgets_count = db.query(Budget).filter(Budget.user_id == uid, Budget.deleted_at.is_(None)).count()
+    goals_count = db.query(Goal).filter(Goal.user_id == uid, Goal.deleted_at.is_(None)).count()
+    recurring_count = db.query(RecurringRule).filter(RecurringRule.user_id == uid).count()
+    two_fa = bool(user and user.two_factor_enabled)
+
+    checks = [
+        {
+            "id": "2fa",
+            "label": "Autenticação em 2 Fatores (2FA)",
+            "ok": two_fa,
+            "detail": "Ativo e protegendo seu acesso" if two_fa else "Recomendado ativar abaixo",
+            "href": None,
+        },
+        {
+            "id": "categorization",
+            "label": "Qualidade da Categorização",
+            "ok": categorized_pct >= 85,
+            "detail": f"{categorized_pct:.1f}% categorizado ({outros_count} em 'Outros')",
+            "href": "/dashboard/ai-review",
+        },
+        {
+            "id": "budgets",
+            "label": "Orçamentos (Budgets) Ativos",
+            "ok": budgets_count > 0,
+            "detail": f"{budgets_count} limite(s) monitorando seus gastos" if budgets_count > 0 else "Crie budgets para alertas automáticos",
+            "href": "/dashboard/budgets",
+        },
+        {
+            "id": "goals",
+            "label": "Metas Financeiras Definidas",
+            "ok": goals_count > 0,
+            "detail": f"{goals_count} meta(s) em acompanhamento" if goals_count > 0 else "Defina sua reserva de emergência ou objetivo",
+            "href": "/dashboard/goals",
+        },
+    ]
+
+    return {
+        "transactions_total": tx_total,
+        "categorized_pct": categorized_pct,
+        "outros_count": outros_count,
+        "accounts_count": len(accounts),
+        "open_finance_accounts_count": of_accounts,
+        "categories_count": categories_count,
+        "budgets_count": budgets_count,
+        "goals_count": goals_count,
+        "recurring_count": recurring_count,
+        "oldest_date": oldest,
+        "newest_date": newest,
+        "two_factor_enabled": two_fa,
+        "checks": checks,
+    }

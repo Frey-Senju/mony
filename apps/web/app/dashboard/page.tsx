@@ -11,6 +11,7 @@ import {
   Landmark,
   LayoutGrid,
   Plus,
+  Share2,
   SlidersHorizontal,
   Wallet,
   X,
@@ -585,6 +586,42 @@ function DashboardContent() {
                 <Wallet className="w-4 h-4" aria-hidden="true" />
                 Gerenciar Contas
               </Link>
+              <button
+                type="button"
+                onClick={() => {
+                  const netMonth = totalIncome - totalSpent
+                  const rate = totalIncome > 0 ? Math.round((netMonth / totalIncome) * 100) : 0
+                  const catTotals = new Map<string, number>()
+                  transactions
+                    .filter((t) => t.type === 'expense')
+                    .forEach((t) => {
+                      const k = t.category_name || 'Outros'
+                      catTotals.set(k, (catTotals.get(k) || 0) + (Number(t.amount) || 0))
+                    })
+                  const top3 = Array.from(catTotals.entries())
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 3)
+                    .map(([k, v], i) => `${['1️⃣', '2️⃣', '3️⃣'][i]} ${k}: ${formatBRL(v)}`)
+                    .join('\n')
+                  const text = [
+                    `📊 *Mony · ${formatYearMonthLabel(selectedMonth)}*`,
+                    `💰 Receitas: ${formatBRL(totalIncome)}`,
+                    `💸 Despesas: ${formatBRL(totalSpent)}`,
+                    `✨ Saldo: ${formatBRL(netMonth)}${totalIncome > 0 ? ` (${rate}% economia)` : ''}`,
+                    top3 ? `\n🏷️ *Top Categorias:*\n${top3}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join('\n')
+                  navigator.clipboard?.writeText(text).then(() => {
+                    dispatchToast('Resumo do mês copiado para WhatsApp!', 'success')
+                  }).catch(() => undefined)
+                }}
+                title="Copiar resumo formatado do mês para WhatsApp"
+                className="no-print liquid-btn liquid-btn-glass inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-semibold text-emerald-700 dark:text-emerald-300"
+              >
+                <Share2 className="w-4 h-4" aria-hidden="true" />
+                <span className="hidden xl:inline">WhatsApp</span>
+              </button>
               <div className="relative no-print">
                 <button
                   type="button"

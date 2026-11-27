@@ -42,6 +42,7 @@ import { MonyAIDrawer } from '@/components/ai/MonyAIDrawer'
 import { NotificationBell } from '@/components/dashboard/NotificationBell'
 import { PwaInstallPrompt } from '@/components/pwa/PwaInstallPrompt'
 import { CommandPalette, ShortcutsHelpModal } from '@/components/dashboard/CommandPalette'
+import { MobileQuickAddAndStatus } from '@/components/dashboard/MobileQuickAddAndStatus'
 import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -650,7 +651,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </div>
       )}
 
-      {/* Global Command Palette, Keyboard Shortcuts & Mony IA Drawer */}
+      {/* Global Command Palette, Keyboard Shortcuts, Mobile Quick-Add & Mony IA Drawer */}
+      <MobileQuickAddAndStatus />
       <CommandPalette open={cmdOpen} onClose={() => setCmdOpen(false)} onOpenAI={openAI} />
       <ShortcutsHelpModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <MonyAIDrawer open={aiOpen} initialTab={aiTab} onClose={() => setAiOpen(false)} />
