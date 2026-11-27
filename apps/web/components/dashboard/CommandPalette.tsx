@@ -245,6 +245,14 @@ export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps)
         run: go('/dashboard/debts'),
       },
       {
+        id: 'nav-workspaces',
+        label: 'Modo Casal/Família, PJ/MEI (DRE) & Reembolsos KM',
+        group: 'Navegação',
+        keywords: 'casal familia compartilhado dividir contas pj mei dre reembolso quilometragem km expensify',
+        icon: <UserCircle className="w-4 h-4" aria-hidden="true" />,
+        run: go('/dashboard/workspaces'),
+      },
+      {
         id: 'nav-cards',
         label: 'Cartões de Crédito',
         group: 'Navegação',

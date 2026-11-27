@@ -22,6 +22,7 @@ import {
   Flame,
   Snowflake,
   CheckCircle2,
+  CalendarCheck,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -98,6 +99,13 @@ function DebtsContent() {
   const [debts, setDebts] = useState<DebtItem[]>([])
   const [summary, setSummary] = useState({ total_balance: 0, total_monthly_payment: 0, weighted_monthly_rate: 0, active_count: 0 })
   const [netWorth, setNetWorth] = useState<NetWorthData | null>(null)
+  const [debtFreeInfo, setDebtFreeInfo] = useState<{
+    is_debt_free: boolean
+    total_debt_balance: number
+    monthly_payment: number
+    months_remaining: number
+    debt_free_ym: string | null
+  } | null>(null)
   const [loading, setLoading] = useState(true)
 
   // Strategy simulator
@@ -136,9 +144,10 @@ function DebtsContent() {
     setLoading(true)
     try {
       const headers = { Authorization: `Bearer ${token}` }
-      const [dRes, nwRes] = await Promise.all([
+      const [dRes, nwRes, gamRes] = await Promise.all([
         fetch(`${API_URL}/debts`, { headers }),
         fetch(`${API_URL}/reports/net-worth`, { headers }),
+        fetch(`${API_URL}/insights/gamification`, { headers }).catch(() => null),
       ])
       if (dRes.ok) {
         const d = await dRes.json()
@@ -147,6 +156,10 @@ function DebtsContent() {
       }
       if (nwRes.ok) {
         setNetWorth(await nwRes.json())
+      }
+      if (gamRes?.ok) {
+        const g = await gamRes.json()
+        if (g?.debt_free) setDebtFreeInfo(g.debt_free)
       }
     } finally {
       setLoading(false)
@@ -320,6 +333,73 @@ function DebtsContent() {
           Nova Dívida / Financiamento
         </button>
       </header>
+
+      {/* EPIC-015 Wave 3: Debt-Free Date Countdown Card (Debt Payoff Planner) */}
+      {debtFreeInfo && (
+        <section
+          className={`glass-panel p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+            debtFreeInfo.is_debt_free
+              ? 'border-emerald-400/50 bg-emerald-500/5'
+              : 'border-violet-400/40 bg-violet-500/5'
+          }`}
+          aria-label="Data estimada livre de dívidas"
+        >
+          <div className="flex items-center gap-3">
+            <span
+              className={`w-11 h-11 rounded-2xl flex items-center justify-center text-white shadow-sm shrink-0 ${
+                debtFreeInfo.is_debt_free
+                  ? 'bg-gradient-to-br from-emerald-500 to-teal-500'
+                  : 'bg-gradient-to-br from-violet-500 to-indigo-600'
+              }`}
+              aria-hidden="true"
+            >
+              <CalendarCheck className="w-5 h-5" />
+            </span>
+            <div>
+              <p className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                Contagem Regressiva · Debt-Free Date
+              </p>
+              {debtFreeInfo.is_debt_free ? (
+                <h2 className="text-lg font-extrabold text-emerald-700 dark:text-emerald-300">
+                  🕊️ Parabéns! Você está Livre de Dívidas
+                </h2>
+              ) : debtFreeInfo.debt_free_ym ? (
+                <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                  Livre de dívidas em{' '}
+                  <span className="text-violet-600 dark:text-violet-400">
+                    {new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(
+                      new Date(
+                        Number(debtFreeInfo.debt_free_ym.split('-')[0]),
+                        Number(debtFreeInfo.debt_free_ym.split('-')[1]) - 1,
+                        1
+                      )
+                    )}
+                  </span>
+                </h2>
+              ) : (
+                <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                  Informe a parcela mensal para calcular sua data de quitação
+                </h2>
+              )}
+              <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                {debtFreeInfo.is_debt_free
+                  ? 'Saldo devedor zerado — direcione seus aportes para patrimônio e renda passiva no Valuer.'
+                  : debtFreeInfo.months_remaining > 0
+                  ? `Faltam ${debtFreeInfo.months_remaining} mês(es) no ritmo atual de ${brl(debtFreeInfo.monthly_payment)}/mês.`
+                  : `Saldo atual de ${brl(debtFreeInfo.total_debt_balance)} em dívidas ativas.`}
+              </p>
+            </div>
+          </div>
+          {!debtFreeInfo.is_debt_free && debtFreeInfo.months_remaining > 0 && (
+            <div className="glass-card px-4 py-2.5 text-center shrink-0">
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Faltam</p>
+              <p className="text-2xl font-black text-violet-600 dark:text-violet-400">
+                {debtFreeInfo.months_remaining}m
+              </p>
+            </div>
+          )}
+        </section>
+      )}
 
       {/* EPIC-010: 12-Month Net Worth Evolution + 3m Projection */}
       <NetWorthHistoryPanel token={token} />

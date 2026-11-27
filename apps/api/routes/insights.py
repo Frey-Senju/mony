@@ -13,7 +13,7 @@ Endpoints:
 """
 
 from calendar import monthrange
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import re
 from typing import List, Optional
@@ -954,4 +954,100 @@ async def get_net_worth_history(
         "period_change_pct": change_pct,
         "avg_monthly_delta": avg_delta,
         "points": points + projections,
+    }
+
+
+@router.get("/gamification")
+async def get_gamification_and_debt_free(
+    user_id: str = Depends(get_current_user_from_header),
+    db: Session = Depends(get_db),
+):
+    """
+    EPIC-015 Wave 3 — Mobills 'Meu Desempenho' + Debt Payoff Planner 'Debt-Free Date':
+    Computes user level, XP, active control streak, 10 unlockable badges, and exact Debt-Free Date.
+    """
+    from database.models import (
+        ApiKey,
+        Budget,
+        Debt,
+        InvestmentAsset,
+        User,
+        ValuerWatchlistItem,
+    )
+
+    uid = parse_uuid(user_id, "user_id")
+    user = db.query(User).filter(User.id == uid).first()
+    today = date.today()
+
+    txs = db.query(Transaction).filter(Transaction.user_id == uid, Transaction.deleted_at.is_(None)).all()
+    accounts = db.query(Account).filter(Account.user_id == uid, Account.deleted_at.is_(None)).all()
+    budgets_cnt = db.query(Budget).filter(Budget.user_id == uid, Budget.is_active.is_(True)).count()
+    goals_cnt = db.query(Goal).filter(Goal.user_id == uid, Goal.is_active.is_(True)).count()
+    inv_cnt = db.query(InvestmentAsset).filter(InvestmentAsset.user_id == uid, InvestmentAsset.deleted_at.is_(None), InvestmentAsset.quantity > 0).count()
+    debts = db.query(Debt).filter(Debt.user_id == uid, Debt.deleted_at.is_(None), Debt.is_active.is_(True)).all()
+    watch_cnt = db.query(ValuerWatchlistItem).filter(ValuerWatchlistItem.user_id == uid).count()
+    keys_cnt = db.query(ApiKey).filter(ApiKey.user_id == uid, ApiKey.is_active.is_(True)).count()
+
+    # Active distinct days in last 30d
+    cutoff_30 = today - timedelta(days=30)
+    active_days_30 = len({t.transaction_date for t in txs if t.transaction_date and t.transaction_date >= cutoff_30})
+    of_connected = any((a.origin_metadata or {}).get("provider") == "pluggy" for a in accounts)
+    total_debt_bal = sum(float(d.current_balance or 0) for d in debts)
+    total_debt_pmt = sum(float(d.monthly_payment or 0) for d in debts)
+
+    # Exact Debt-Free Date calculation
+    debt_free_months = 0
+    debt_free_date: Optional[str] = None
+    if total_debt_bal > 0:
+        if total_debt_pmt > 0:
+            weighted_rate = sum(float(d.current_balance or 0) * (float(d.interest_rate_monthly or 0) / 100.0) for d in debts) / total_debt_bal
+            bal = total_debt_bal
+            m = 0
+            while bal > 0.01 and m < 360:
+                m += 1
+                interest = bal * weighted_rate
+                if total_debt_pmt <= interest:
+                    m = 360
+                    break
+                bal = max(0.0, bal + interest - total_debt_pmt)
+            debt_free_months = m
+            tgt_m = today.year * 12 + (today.month - 1) + m
+            debt_free_date = f"{tgt_m // 12:04d}-{(tgt_m % 12) + 1:02d}"
+        else:
+            debt_free_months = 0
+
+    badges = [
+        {"id": "first_tx", "icon": "🚀", "title": "Primeiro Passo", "desc": "Registrou seu primeiro lançamento no Mony", "xp": 100, "unlocked": len(txs) >= 1},
+        {"id": "power_tracker", "icon": "📊", "title": "Controle Impecável", "desc": "Mais de 30 lançamentos organizados", "xp": 150, "unlocked": len(txs) >= 30},
+        {"id": "budget_master", "icon": "🎯", "title": "Mestre do Orçamento", "desc": "Definiu limites ativos em Budgets", "xp": 150, "unlocked": budgets_cnt >= 1},
+        {"id": "dreamer", "icon": "✨", "title": "Gerenciador de Sonhos", "desc": "Criou uma Meta Financeira", "xp": 150, "unlocked": goals_cnt >= 1},
+        {"id": "investor", "icon": "📈", "title": "Investidor B3", "desc": "Ativos cadastrados na Carteira B3", "xp": 200, "unlocked": inv_cnt >= 1},
+        {"id": "valuer_hunter", "icon": "💎", "title": "Caçador de Barganhas", "desc": "Monitorando ativos na Watchlist Valuer", "xp": 150, "unlocked": watch_cnt >= 1},
+        {"id": "debt_free", "icon": "🕊️", "title": "Livre de Dívidas", "desc": "Saldo devedor zerado no painel de Dívidas", "xp": 250, "unlocked": total_debt_bal <= 0},
+        {"id": "security_2fa", "icon": "🛡️", "title": "Guardião 2FA", "desc": "Ativou Autenticação em 2 Fatores", "xp": 200, "unlocked": bool(user and user.two_factor_enabled)},
+        {"id": "open_finance", "icon": "🏦", "title": "Open Finance Pro", "desc": "Conectou instituição bancária via Open Finance", "xp": 200, "unlocked": of_connected},
+        {"id": "mcp_builder", "icon": "⚡", "title": "Automação & MCP", "desc": "Gerou API Key pessoal para MCP / Google Agenda", "xp": 150, "unlocked": keys_cnt >= 1},
+    ]
+
+    xp = sum(b["xp"] for b in badges if b["unlocked"]) + min(300, active_days_30 * 15)
+    level = max(1, (xp // 250) + 1)
+    level_titles = ["Iniciante", "Organizado", "Estrategista", "Investidor", "Mestre das Finanças", "Wealth Pro", "Family Office"]
+    level_label = level_titles[min(len(level_titles) - 1, level - 1)]
+
+    return {
+        "level": level,
+        "level_label": level_label,
+        "xp": xp,
+        "next_level_xp": level * 250,
+        "active_days_30d": active_days_30,
+        "unlocked_count": sum(1 for b in badges if b["unlocked"]),
+        "total_badges": len(badges),
+        "badges": badges,
+        "debt_free": {
+            "is_debt_free": total_debt_bal <= 0,
+            "total_debt_balance": round(total_debt_bal, 2),
+            "monthly_payment": round(total_debt_pmt, 2),
+            "months_remaining": debt_free_months,
+            "debt_free_ym": debt_free_date,
+        },
     }

@@ -31,6 +31,7 @@ from routes.rules import router as rules_router
 from routes.transactions import router as transactions_router
 from routes.valuer import router as valuer_router
 from routes.integrations import router as integrations_router
+from routes.workspaces import router as workspaces_router
 
 app = FastAPI(
     title="Mony API",
@@ -115,6 +116,7 @@ app.include_router(push_router)
 app.include_router(credit_cards_router)
 app.include_router(valuer_router)
 app.include_router(integrations_router)
+app.include_router(workspaces_router)
 
 
 @app.get("/")

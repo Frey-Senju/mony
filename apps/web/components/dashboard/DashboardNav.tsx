@@ -77,6 +77,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/dashboard/cards', label: 'Cartões', testId: 'nav-cards', icon: <CreditCard className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
       { href: '/dashboard/recurring', label: 'Recorrentes', testId: 'nav-recurring', badgeKey: 'recurring', icon: <Repeat className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
       { href: '/dashboard/budgets', label: 'Budgets', testId: 'nav-budgets', icon: <PieChart className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/workspaces', label: 'Casal, PJ & KM', testId: 'nav-workspaces', icon: <UserCircle className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
     ],
   },
   {

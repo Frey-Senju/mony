@@ -2,7 +2,7 @@
 SQLAlchemy ORM models for Mony financial dashboard application.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
 from uuid import uuid4
@@ -1182,3 +1182,91 @@ class IntegrationChannel(Base):
         Index("idx_integration_channels_user", "user_id"),
     )
     user = relationship("User")
+
+
+class SharedWorkspace(Base):
+    """Couple / Family shared financial workspace (EPIC-014 — Optio / Despezzas / GranaZen style)."""
+
+    __tablename__ = "shared_workspaces"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    owner_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(120), nullable=False)
+    split_mode = Column(String(24), nullable=False, default="equal")  # equal | proportional
+    invite_code = Column(String(32), nullable=False, unique=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    members = relationship("SharedMember", back_populates="workspace", cascade="all, delete-orphan")
+    expenses = relationship("SharedExpense", back_populates="workspace", cascade="all, delete-orphan")
+
+
+class SharedMember(Base):
+    """Member of a Couple/Family workspace with role (owner/editor/viewer) and monthly income."""
+
+    __tablename__ = "shared_members"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id = Column(PG_UUID(as_uuid=True), ForeignKey("shared_workspaces.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(PG_UUID(as_uuid=True), nullable=True)
+    member_name = Column(String(120), nullable=False)
+    member_email = Column(String(200), nullable=True)
+    role = Column(String(24), nullable=False, default="editor")  # owner | editor | viewer
+    monthly_income = Column(Numeric(15, 2), nullable=False, default=Decimal("0"))
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    workspace = relationship("SharedWorkspace", back_populates="members")
+
+
+class SharedExpense(Base):
+    """Shared household/couple expense with payer tracking and settlement flag."""
+
+    __tablename__ = "shared_expenses"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id = Column(PG_UUID(as_uuid=True), ForeignKey("shared_workspaces.id", ondelete="CASCADE"), nullable=False)
+    paid_by_member_id = Column(PG_UUID(as_uuid=True), ForeignKey("shared_members.id", ondelete="CASCADE"), nullable=False)
+    description = Column(String(255), nullable=False)
+    category = Column(String(100), nullable=False, default="Casa")
+    amount = Column(Numeric(15, 2), nullable=False)
+    expense_date = Column(Date, nullable=False, default=date.today)
+    is_settled = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    workspace = relationship("SharedWorkspace", back_populates="expenses")
+
+
+class ExpenseReport(Base):
+    """Expensify-style expense reimbursement & mileage report (EPIC-014)."""
+
+    __tablename__ = "expense_reports"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(180), nullable=False)
+    client_or_company = Column(String(180), nullable=True)
+    status = Column(String(24), nullable=False, default="draft")  # draft | submitted | reimbursed
+    km_rate = Column(Numeric(8, 2), nullable=False, default=Decimal("1.50"))
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    items = relationship("ExpenseReportItem", back_populates="report", cascade="all, delete-orphan")
+
+
+class ExpenseReportItem(Base):
+    """Line item inside a reimbursement report (standard expense or mileage KM)."""
+
+    __tablename__ = "expense_report_items"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    report_id = Column(PG_UUID(as_uuid=True), ForeignKey("expense_reports.id", ondelete="CASCADE"), nullable=False)
+    description = Column(String(255), nullable=False)
+    category = Column(String(100), nullable=False, default="Viagem")
+    amount = Column(Numeric(15, 2), nullable=False)
+    item_date = Column(Date, nullable=False, default=date.today)
+    is_mileage = Column(Boolean, nullable=False, default=False)
+    km_distance = Column(Numeric(10, 2), nullable=False, default=Decimal("0"))
+    receipt_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    report = relationship("ExpenseReport", back_populates="items")

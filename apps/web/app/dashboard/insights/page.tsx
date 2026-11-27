@@ -19,6 +19,7 @@ import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { TrendChart, formatMonthLabel, type MonthDataPoint } from '@/components/insights/TrendChart'
 import { AnomalyAlert } from '@/components/insights/AnomalyAlert'
 import { SpendingXRayAndReview } from '@/components/insights/SpendingXRayAndReview'
+import { GamificationAndAchievements } from '@/components/insights/GamificationAndAchievements'
 import { useInsights } from '@/hooks/useInsights'
 import { useCategories } from '@/hooks/useCategories'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -166,6 +167,9 @@ function InsightsContent() {
           {error}
         </div>
       )}
+
+      {/* EPIC-015 Wave 3: Meu Desempenho, Nível, XP & 10 Conquistas */}
+      <GamificationAndAchievements token={token} />
 
       {/* Score de Saúde Financeira (0-100) + Mony Review */}
       {health && (

@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
-import { Plus, AlertTriangle, Sparkles, Check, RefreshCw, PieChart } from 'lucide-react'
+import { Plus, AlertTriangle, Sparkles, Check, RefreshCw, PieChart, CalendarRange, Layers } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { BudgetCard } from '@/components/budgets/BudgetCard'
 import { BudgetFormModal } from '@/components/budgets/BudgetFormModal'
@@ -60,6 +60,27 @@ function BudgetsContent() {
   const [aiPlan, setAiPlan] = useState<BudgetAISuggestionsPayload | null>(null)
   const [loadingAI, setLoadingAI] = useState(false)
   const [applyingCat, setApplyingCat] = useState<string | null>(null)
+  const [budgetCycle, setBudgetCycle] = useState<'weekly' | 'biweekly' | 'monthly' | 'annual'>('monthly')
+
+  const cycleMeta = React.useMemo(() => {
+    const map = {
+      weekly: { label: 'Semanal', short: '/sem', factor: 1 / 4.33 },
+      biweekly: { label: 'Quinzenal', short: '/quinz', factor: 0.5 },
+      monthly: { label: 'Mensal', short: '/mês', factor: 1 },
+      annual: { label: 'Anual', short: '/ano', factor: 12 },
+    } as const
+    return map[budgetCycle]
+  }, [budgetCycle])
+
+  const cycleTotals = React.useMemo(() => {
+    const totalLimit = budgets.reduce((s, b) => s + Number(b.limit_amount || 0), 0)
+    const totalSpent = budgets.reduce((s, b) => s + Number(b.spent_amount || 0), 0)
+    return {
+      limit: totalLimit * cycleMeta.factor,
+      spent: totalSpent * cycleMeta.factor,
+      remaining: (totalLimit - totalSpent) * cycleMeta.factor,
+    }
+  }, [budgets, cycleMeta.factor])
 
   const catMetaByName = React.useMemo(() => {
     const map: Record<string, { color: string; icon?: string }> = {}
@@ -193,15 +214,72 @@ function BudgetsContent() {
             </p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={handleOpenCreate}
-          className="liquid-btn liquid-btn-primary inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-semibold shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          Novo Budget
-        </button>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <div
+            className="inline-flex items-center p-1 rounded-2xl bg-slate-200/60 dark:bg-white/10 text-xs font-semibold"
+            role="group"
+            aria-label="Ciclo do orçamento"
+          >
+            {(
+              [
+                ['weekly', 'Semanal'],
+                ['biweekly', 'Quinzenal'],
+                ['monthly', 'Mensal'],
+                ['annual', 'Anual'],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setBudgetCycle(key)}
+                className={`px-2.5 py-1.5 rounded-xl transition ${
+                  budgetCycle === key
+                    ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
+                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={handleOpenCreate}
+            className="liquid-btn liquid-btn-primary inline-flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-semibold shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            Novo Budget
+          </button>
+        </div>
       </header>
+
+      {/* EPIC-015 Wave 3: Flexible Budget Cycle Summary & Subcategories Tip */}
+      <section className="glass-card p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <CalendarRange className="w-5 h-5 text-[var(--accent)] shrink-0" />
+          <div className="text-xs">
+            <p className="font-bold text-slate-900 dark:text-white">
+              Visão {cycleMeta.label} dos seus Orçamentos ({budgets.length} categoria{budgets.length === 1 ? '' : 's'})
+            </p>
+            <p className="text-slate-600 dark:text-slate-300">
+              Limite {cycleMeta.label.toLowerCase()}:{' '}
+              <strong className="money-value text-slate-900 dark:text-white">{brl(cycleTotals.limit)}</strong>{cycleMeta.short} ·{' '}
+              Ritmo gasto:{' '}
+              <strong className="money-value text-rose-600 dark:text-rose-400">{brl(cycleTotals.spent)}</strong> ·{' '}
+              Disponível:{' '}
+              <strong className={`money-value ${cycleTotals.remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'}`}>
+                {brl(cycleTotals.remaining)}
+              </strong>
+            </p>
+          </div>
+        </div>
+        <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[var(--accent-soft)]/50 text-[11px] font-medium text-slate-700 dark:text-slate-200">
+          <Layers className="w-3.5 h-3.5 text-[var(--accent)] shrink-0" />
+          <span>
+            Dica: crie subcategorias usando <strong>Categoria › Subcategoria</strong> (ex.: <em>Alimentação › Delivery</em>)
+          </span>
+        </div>
+      </section>
 
       {/* Income vs Budgeted Summary KPIs */}
       {aiPlan && (
