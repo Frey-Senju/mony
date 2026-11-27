@@ -687,7 +687,7 @@ body {
   word-spacing: 0.06em;
 }
 
-/* Global Privacy Mode (Shift+P): blur monetary values cleanly across the workspace */
+/* Global Privacy Mode (Shift+P): blur monetary values cleanly across the workspace & charts */
 :root[data-privacy="true"] .money-value,
 :root[data-privacy="true"] [data-money="true"],
 :root[data-privacy="true"] [data-testid="accounts-total-balance"],
@@ -696,7 +696,10 @@ body {
 :root[data-privacy="true"] [data-testid="summary-balance"],
 :root[data-privacy="true"] main td.text-right,
 :root[data-privacy="true"] main .text-2xl.font-bold,
-:root[data-privacy="true"] main .text-3xl.font-bold {
+:root[data-privacy="true"] main .text-3xl.font-bold,
+:root[data-privacy="true"] .recharts-tooltip-wrapper,
+:root[data-privacy="true"] .recharts-yAxis .recharts-cartesian-axis-tick-value,
+:root[data-privacy="true"] .recharts-pie-label-text {
   filter: blur(8px);
   user-select: none;
   transition: filter 200ms ease;
@@ -742,18 +745,63 @@ main > * {
   animation: monyFadeInUp 220ms var(--ease-spring) both;
 }
 
-:root[data-motion="off"] main > * {
+@keyframes monyCheckPop {
+  0% { transform: scale(0.8); }
+  55% { transform: scale(1.22); }
+  100% { transform: scale(1); }
+}
+
+@keyframes monySavedFlash {
+  0% { opacity: 0; transform: translateY(-2px); }
+  18% { opacity: 1; transform: translateY(0); }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.mony-check-pop {
+  animation: monyCheckPop 260ms var(--ease-spring-snappy) both;
+}
+
+.mony-saved-flash {
+  animation: monySavedFlash 1700ms ease-out both;
+}
+
+:root[data-motion="off"] main > *,
+:root[data-motion="off"] .mony-check-pop,
+:root[data-motion="off"] .mony-saved-flash {
   animation: none !important;
 }
 
 @media print {
   [data-testid="dashboard-nav"],
   .apple-ambient-canvas,
-  .no-print {
+  .no-print,
+  button.no-print {
     display: none !important;
   }
   body {
     background: white !important;
-    color: black !important;
+    color: #0f172a !important;
+  }
+  .glass-card,
+  .glass-panel {
+    background: white !important;
+    box-shadow: none !important;
+    border: 1px solid #cbd5e1 !important;
+    backdrop-filter: none !important;
+    break-inside: avoid;
+  }
+  table {
+    page-break-inside: auto;
+  }
+  tr {
+    page-break-inside: avoid;
+    page-break-after: auto;
+  }
+  thead {
+    display: table-header-group;
+  }
+  main {
+    padding-left: 0 !important;
   }
 }

@@ -426,9 +426,12 @@ export function ShortcutsHelpModal({ open, onClose }: { open: boolean; onClose: 
   if (!open) return null
   const shortcuts = [
     { keys: 'Ctrl + K / ⌘ + K', desc: 'Abrir busca rápida e comandos (Command Palette)' },
-    { keys: 'Shift + P', desc: 'Alternar Modo Privacidade (ocultar valores R$)' },
+    { keys: 'N', desc: 'Criar novo lançamento no Dashboard' },
+    { keys: 'Shift + P', desc: 'Alternar Modo Privacidade (ocultar todos os valores R$)' },
+    { keys: 'Alt + ← / →', desc: 'Navegar para o mês anterior ou próximo mês' },
+    { keys: 'Tab / Enter / Esc', desc: 'Avançar, salvar ou cancelar célula na planilha' },
+    { keys: 'Ctrl + P', desc: 'Imprimir ou salvar relatório mensal em PDF limpo' },
     { keys: 'Shift + ?', desc: 'Abrir / fechar este guia de atalhos de teclado' },
-    { keys: 'Esc', desc: 'Fechar modal, drawer ou busca ativa' },
   ]
   return (
     <div

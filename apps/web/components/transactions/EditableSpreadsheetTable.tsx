@@ -1,12 +1,18 @@
 'use client'
 
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   ArrowDownUp,
   ArrowUpRight,
   ArrowDownRight,
+  ArrowUp,
+  ArrowDown,
   Check,
+  CheckCheck,
+  Copy,
+  Download,
   Palette,
+  Plus,
   SlidersHorizontal,
   Trash2,
   ShieldCheck,
@@ -50,6 +56,10 @@ export interface EditableSpreadsheetTableProps {
   categories: Category[]
   loading?: boolean
   emptyLabel?: string
+  defaultMonth?: string
+  exportFilename?: string
+  externalCategoryFilter?: string | null
+  onClearExternalCategory?: () => void
   onRefresh: () => void | Promise<void>
   onUpdateCategory?: (id: string, patch: Partial<Category>) => Promise<void>
   onOpenFullModal?: (tx: SpreadsheetTx) => void
@@ -58,8 +68,29 @@ export interface EditableSpreadsheetTableProps {
   onSelectionChange?: (ids: Set<string>) => void
 }
 
-type SortKey = 'date_desc' | 'date_asc' | 'amount_desc' | 'amount_asc' | 'alpha_asc' | 'alpha_desc' | 'checked_first' | 'unchecked_first'
+type SortKey =
+  | 'date_desc'
+  | 'date_asc'
+  | 'amount_desc'
+  | 'amount_asc'
+  | 'alpha_asc'
+  | 'alpha_desc'
+  | 'checked_first'
+  | 'unchecked_first'
 type CheckFilter = 'all' | 'checked' | 'unchecked'
+
+const EDITABLE_FIELD_ORDER = [
+  'transaction_date',
+  'description',
+  'category',
+  'account_id',
+  'payment_method',
+  'statement_month',
+  'type',
+  'amount',
+] as const
+
+type EditableField = (typeof EDITABLE_FIELD_ORDER)[number]
 
 const PAYMENT_OPTIONS = [
   { value: 'credit_card', label: 'Cartão' },
@@ -73,6 +104,7 @@ const PAYMENT_OPTIONS = [
 
 const QUICK_EMOJIS = ['🍔', '🚗', '🏠', '⚕️', '🎮', '📚', '👕', '✈️', '💼', '🛒', '💰', '📈', '💳', '🐾', '🎁', '💡', '📱', '🏋️', '☕', '🏷️']
 const QUICK_COLORS = ['#0071E3', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#EA580C', '#6366F1', '#14B8A6']
+const SHORT_MONTHS = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
 
 function brl(v: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v || 0)
@@ -91,6 +123,26 @@ function hashColor(name: string): string {
   return QUICK_COLORS[h % QUICK_COLORS.length]
 }
 
+function getInstallmentTooltip(num: number, total: number, stmtYm: string): string {
+  const remaining = Math.max(0, total - num)
+  if (remaining === 0) return `Última parcela (${num}/${total}) · quita neste mês!`
+  const [y, m] = (stmtYm || '').split('-').map(Number)
+  if (!y || !m) return `Faltam ${remaining} parcela(s)`
+  const endTotal = y * 12 + (m - 1) + remaining
+  const endYear = Math.floor(endTotal / 12)
+  const endMonthIdx = endTotal % 12
+  return `Faltam ${remaining} parcela${remaining > 1 ? 's' : ''} · termina em ${SHORT_MONTHS[endMonthIdx]}/${endYear}`
+}
+
+function getDefaultDateForMonth(ym?: string): string {
+  const today = new Date()
+  const todayYm = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+  if (!ym || ym === todayYm) {
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+  }
+  return `${ym}-10`
+}
+
 export function EditableSpreadsheetTable({
   token,
   transactions,
@@ -98,6 +150,10 @@ export function EditableSpreadsheetTable({
   categories,
   loading = false,
   emptyLabel = 'Nenhum lançamento encontrado neste mês.',
+  defaultMonth,
+  exportFilename,
+  externalCategoryFilter,
+  onClearExternalCategory,
   onRefresh,
   onUpdateCategory,
   onOpenFullModal,
@@ -107,6 +163,7 @@ export function EditableSpreadsheetTable({
 }: EditableSpreadsheetTableProps) {
   const [sortBy, setSortBy] = useState<SortKey>('date_desc')
   const [checkFilter, setCheckFilter] = useState<CheckFilter>('all')
+  const [categoryChip, setCategoryChip] = useState<string | null>(null)
   const [searchText, setSearchText] = useState('')
   const [localOverrides, setLocalOverrides] = useState<Record<string, Partial<SpreadsheetTx>>>({})
 
@@ -114,6 +171,19 @@ export function EditableSpreadsheetTable({
   const [editingCell, setEditingCell] = useState<string | null>(null)
   const [draftValue, setDraftValue] = useState<string>('')
   const [savingId, setSavingId] = useState<string | null>(null)
+  const [savedFlashId, setSavedFlashId] = useState<string | null>(null)
+  const [justCheckedId, setJustCheckedId] = useState<string | null>(null)
+  const [bulkChecking, setBulkChecking] = useState(false)
+
+  // Quick-add inline row state per section ('income' | 'expense' | null)
+  const [quickAddType, setQuickAddType] = useState<'income' | 'expense' | null>(null)
+  const [qaDate, setQaDate] = useState(() => getDefaultDateForMonth(defaultMonth))
+  const [qaDesc, setQaDesc] = useState('')
+  const [qaCategory, setQaCategory] = useState('')
+  const [qaAccount, setQaAccount] = useState('')
+  const [qaPayment, setQaPayment] = useState('credit_card')
+  const [qaAmount, setQaAmount] = useState('')
+  const [qaSubmitting, setQaSubmitting] = useState(false)
 
   // Quick category color & emoji customizer modal
   const [customizingCat, setCustomizingCat] = useState<Category | null>(null)
@@ -121,6 +191,16 @@ export function EditableSpreadsheetTable({
   const [catColor, setCatColor] = useState('#0071E3')
   const [catNameDraft, setCatNameDraft] = useState('')
   const [savingCat, setSavingCat] = useState(false)
+
+  useEffect(() => {
+    setQaDate(getDefaultDateForMonth(defaultMonth))
+  }, [defaultMonth])
+
+  useEffect(() => {
+    if (externalCategoryFilter !== undefined) {
+      setCategoryChip(externalCategoryFilter)
+    }
+  }, [externalCategoryFilter])
 
   const acctMap = useMemo(() => Object.fromEntries(accounts.map((a) => [a.id, a.name])), [accounts])
   const catByName = useMemo(() => {
@@ -135,11 +215,45 @@ export function EditableSpreadsheetTable({
     [transactions, localOverrides]
   )
 
+  // Category chips present in the current dataset (sorted by count desc)
+  const presentCategories = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const t of mergedTransactions) {
+      const name = t.category_name || 'Outros'
+      counts.set(name, (counts.get(name) || 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, count]) => {
+        const catObj = catByName[name.toLowerCase()]
+        return {
+          name,
+          count,
+          color: catObj?.color || hashColor(name),
+          icon: catObj?.icon || '🏷️',
+        }
+      })
+  }, [mergedTransactions, catByName])
+
+  // Reconciliation / paid progress across the month
+  const progressStats = useMemo(() => {
+    const total = mergedTransactions.length
+    const checked = mergedTransactions.filter((t) => t.is_reconciled).length
+    const pendingExpenses = mergedTransactions
+      .filter((t) => t.type === 'expense' && !t.is_reconciled)
+      .reduce((s, t) => s + (Number(t.amount) || 0), 0)
+    const pct = total > 0 ? Math.round((checked / total) * 100) : 0
+    return { total, checked, pending: total - checked, pendingExpenses, pct }
+  }, [mergedTransactions])
+
   const filteredSorted = useMemo(() => {
     const q = searchText.trim().toLowerCase()
     const list = mergedTransactions.filter((t) => {
       if (checkFilter === 'checked' && !t.is_reconciled) return false
       if (checkFilter === 'unchecked' && t.is_reconciled) return false
+      if (categoryChip && (t.category_name || 'Outros').toLowerCase() !== categoryChip.toLowerCase()) {
+        return false
+      }
       if (q) {
         const hay = `${t.description} ${t.merchant_name || ''} ${t.category_name || ''} ${acctMap[t.account_id] || ''} ${(t.tags || []).join(' ')}`.toLowerCase()
         if (!hay.includes(q)) return false
@@ -163,15 +277,21 @@ export function EditableSpreadsheetTable({
         case 'alpha_desc':
           return (b.description || '').localeCompare(a.description || '', 'pt-BR', { sensitivity: 'base' })
         case 'checked_first':
-          return Number(Boolean(b.is_reconciled)) - Number(Boolean(a.is_reconciled)) || (b.transaction_date || '').localeCompare(a.transaction_date || '')
+          return (
+            Number(Boolean(b.is_reconciled)) - Number(Boolean(a.is_reconciled)) ||
+            (b.transaction_date || '').localeCompare(a.transaction_date || '')
+          )
         case 'unchecked_first':
-          return Number(Boolean(a.is_reconciled)) - Number(Boolean(b.is_reconciled)) || (b.transaction_date || '').localeCompare(a.transaction_date || '')
+          return (
+            Number(Boolean(a.is_reconciled)) - Number(Boolean(b.is_reconciled)) ||
+            (b.transaction_date || '').localeCompare(a.transaction_date || '')
+          )
         default:
           return 0
       }
     })
     return copy
-  }, [mergedTransactions, checkFilter, searchText, sortBy, acctMap])
+  }, [mergedTransactions, checkFilter, categoryChip, searchText, sortBy, acctMap])
 
   const incomes = useMemo(() => filteredSorted.filter((t) => t.type === 'income'), [filteredSorted])
   const expenses = useMemo(() => filteredSorted.filter((t) => t.type === 'expense'), [filteredSorted])
@@ -182,6 +302,13 @@ export function EditableSpreadsheetTable({
 
   const totalIncome = useMemo(() => incomes.reduce((s, t) => s + Number(t.amount || 0), 0), [incomes])
   const totalExpense = useMemo(() => expenses.reduce((s, t) => s + Number(t.amount || 0), 0), [expenses])
+
+  const flashSaved = (txId: string) => {
+    setSavedFlashId(txId)
+    window.setTimeout(() => {
+      setSavedFlashId((curr) => (curr === txId ? null : curr))
+    }, 1700)
+  }
 
   const patchTx = async (tx: SpreadsheetTx, patch: Record<string, unknown>, optimistic?: Partial<SpreadsheetTx>) => {
     if (optimistic) {
@@ -206,6 +333,7 @@ export function EditableSpreadsheetTable({
         delete next[tx.id]
         return next
       })
+      flashSaved(tx.id)
       window.dispatchEvent(new Event('mony:transactions-updated'))
       await onRefresh()
     } catch (err) {
@@ -220,16 +348,53 @@ export function EditableSpreadsheetTable({
     }
   }
 
-  const startInline = (txId: string, field: string, currentValue: string) => {
+  const getFieldDraftValue = (tx: SpreadsheetTx, field: EditableField): string => {
+    switch (field) {
+      case 'transaction_date':
+        return (tx.transaction_date || '').slice(0, 10)
+      case 'description':
+        return tx.description || ''
+      case 'category':
+        return tx.category_name || 'Outros'
+      case 'account_id':
+        return tx.account_id
+      case 'payment_method':
+        return tx.payment_method || 'other'
+      case 'statement_month':
+        return tx.statement_month || (tx.transaction_date || '').slice(0, 7)
+      case 'type':
+        return tx.type
+      case 'amount':
+        return String(Number(tx.amount))
+    }
+  }
+
+  const startInline = (txId: string, field: EditableField, currentValue: string) => {
     setEditingCell(`${txId}:${field}`)
     setDraftValue(currentValue)
   }
 
-  const commitInline = async (tx: SpreadsheetTx, field: string) => {
+  const moveFocusTab = (tx: SpreadsheetTx, currentField: EditableField, backwards: boolean) => {
+    const idx = EDITABLE_FIELD_ORDER.indexOf(currentField)
+    const nextIdx = backwards ? idx - 1 : idx + 1
+    if (nextIdx >= 0 && nextIdx < EDITABLE_FIELD_ORDER.length) {
+      const nextField = EDITABLE_FIELD_ORDER[nextIdx]
+      startInline(tx.id, nextField, getFieldDraftValue(tx, nextField))
+    } else {
+      setEditingCell(null)
+    }
+  }
+
+  const commitInline = async (tx: SpreadsheetTx, field: EditableField, moveTab?: 'next' | 'prev') => {
     const key = `${tx.id}:${field}`
     if (editingCell !== key) return
-    setEditingCell(null)
     const val = draftValue.trim()
+
+    if (moveTab) {
+      moveFocusTab(tx, field, moveTab === 'prev')
+    } else {
+      setEditingCell(null)
+    }
 
     if (field === 'description') {
       if (!val || val === tx.description) return
@@ -245,6 +410,177 @@ export function EditableSpreadsheetTable({
       if (!val || val === (tx.statement_month || (tx.transaction_date || '').slice(0, 7))) return
       await patchTx(tx, { statement_month: val }, { statement_month: val, user_edited: true })
     }
+  }
+
+  const handleDuplicate = async (tx: SpreadsheetTx) => {
+    if (!token) return
+    setSavingId(tx.id)
+    try {
+      const res = await fetch(`${API_URL}/transactions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          account_id: tx.account_id,
+          type: tx.type,
+          amount: Number(tx.amount) || 0.01,
+          currency: tx.currency || 'BRL',
+          description: tx.description,
+          merchant_name: tx.merchant_name || tx.description,
+          notes: tx.notes || undefined,
+          transaction_date: (tx.transaction_date || '').slice(0, 10),
+          statement_month: tx.statement_month || (tx.transaction_date || '').slice(0, 7),
+          payment_method: tx.payment_method || 'other',
+          category_name: tx.category_name || 'Outros',
+          is_reconciled: false,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || 'Erro ao duplicar lançamento')
+      }
+      dispatchToast(`"${tx.description}" duplicado!`, 'success')
+      window.dispatchEvent(new Event('mony:transactions-updated'))
+      await onRefresh()
+    } catch (err) {
+      dispatchToast(err instanceof Error ? err.message : 'Erro ao duplicar', 'error')
+    } finally {
+      setSavingId(null)
+    }
+  }
+
+  const openQuickAdd = (type: 'income' | 'expense') => {
+    setQuickAddType(type)
+    setQaDate(getDefaultDateForMonth(defaultMonth))
+    setQaDesc('')
+    setQaAmount('')
+    setQaAccount(accounts[0]?.id || '')
+    setQaPayment(type === 'income' ? 'bank_transfer' : 'credit_card')
+    const defaultCat =
+      type === 'income'
+        ? categories.find((c) => /entrada|trabalho|sal[aá]rio|receita/i.test(c.name))?.name || categories[0]?.name || 'Trabalho'
+        : categories.find((c) => /mercado|alimenta|casa|outros/i.test(c.name))?.name || categories[0]?.name || 'Outros'
+    setQaCategory(defaultCat)
+  }
+
+  const handleQuickAddSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!token || !quickAddType) return
+    const desc = qaDesc.trim()
+    const amount = parseFloat(qaAmount.replace(',', '.'))
+    const accountId = qaAccount || accounts[0]?.id
+    if (!desc) {
+      dispatchToast('Digite uma descrição para o lançamento.', 'error')
+      return
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      dispatchToast('Informe um valor válido maior que zero.', 'error')
+      return
+    }
+    if (!accountId) {
+      dispatchToast('Crie uma conta em Contas & Categorias antes de lançar.', 'error')
+      return
+    }
+    setQaSubmitting(true)
+    try {
+      const stmtYm = defaultMonth || qaDate.slice(0, 7)
+      const res = await fetch(`${API_URL}/transactions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          account_id: accountId,
+          type: quickAddType,
+          amount,
+          currency: 'BRL',
+          description: desc,
+          merchant_name: desc,
+          transaction_date: qaDate,
+          statement_month: stmtYm,
+          payment_method: qaPayment,
+          category_name: qaCategory || 'Outros',
+          is_reconciled: false,
+        }),
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.detail || 'Erro ao adicionar lançamento')
+      }
+      dispatchToast(`${quickAddType === 'income' ? 'Entrada' : 'Saída'} "${desc}" adicionada!`, 'success')
+      setQaDesc('')
+      setQaAmount('')
+      window.dispatchEvent(new Event('mony:transactions-updated'))
+      await onRefresh()
+    } catch (err) {
+      dispatchToast(err instanceof Error ? err.message : 'Erro ao adicionar', 'error')
+    } finally {
+      setQaSubmitting(false)
+    }
+  }
+
+  const handleMarkVisibleReconciled = async (targetState: boolean) => {
+    const targets = filteredSorted.filter((t) => Boolean(t.is_reconciled) !== targetState)
+    if (targets.length === 0 || !token) return
+    setBulkChecking(true)
+    try {
+      await Promise.all(
+        targets.map((tx) =>
+          fetch(`${API_URL}/transactions/${tx.id}`, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ is_reconciled: targetState }),
+          })
+        )
+      )
+      dispatchToast(
+        `${targets.length} lançamento(s) ${targetState ? 'marcados como pagos ✅' : 'desmarcados'}.`,
+        'success'
+      )
+      window.dispatchEvent(new Event('mony:transactions-updated'))
+      await onRefresh()
+    } catch {
+      dispatchToast('Não foi possível atualizar todos os lançamentos.', 'error')
+    } finally {
+      setBulkChecking(false)
+    }
+  }
+
+  const handleExportVisibleCSV = () => {
+    if (filteredSorted.length === 0) return
+    const headers = ['Status', 'Data', 'Competência', 'Tipo', 'Descrição', 'Categoria', 'Conta / Cartão', 'Forma Pgto', 'Valor (R$)']
+    const rows = filteredSorted.map((t) => [
+      t.is_reconciled ? 'Pago' : 'Pendente',
+      formatBRDate(t.transaction_date),
+      t.statement_month || (t.transaction_date || '').slice(0, 7),
+      t.type === 'income' ? 'Receita' : t.type === 'expense' ? 'Despesa' : t.type,
+      t.description,
+      t.category_name || 'Outros',
+      acctMap[t.account_id] || 'Conta',
+      PAYMENT_OPTIONS.find((p) => p.value === t.payment_method)?.label || t.payment_method || 'Outro',
+      (Number(t.amount) || 0).toFixed(2).replace('.', ','),
+    ])
+    const csv =
+      '\uFEFF' +
+      [headers, ...rows]
+        .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(';'))
+        .join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = exportFilename || `mony-planilha-${defaultMonth || new Date().toISOString().slice(0, 7)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    dispatchToast(`Planilha exportada (${filteredSorted.length} lançamentos)!`, 'success')
   }
 
   const openCategoryCustomizer = (catName: string) => {
@@ -293,11 +629,18 @@ export function EditableSpreadsheetTable({
     onSelectionChange(next)
   }
 
+  const renderSortArrow = (ascKey: SortKey, descKey: SortKey) => {
+    if (sortBy === ascKey) return <ArrowUp className="w-3 h-3 text-blue-500" aria-hidden="true" />
+    if (sortBy === descKey) return <ArrowDown className="w-3 h-3 text-blue-500" aria-hidden="true" />
+    return null
+  }
+
   const renderSectionTable = (
     title: string,
     sectionItems: SpreadsheetTx[],
     accent: 'emerald' | 'rose' | 'sky',
-    sectionTotal: number
+    sectionTotal: number,
+    quickAddKind?: 'income' | 'expense'
   ) => {
     const headerColors =
       accent === 'emerald'
@@ -305,6 +648,8 @@ export function EditableSpreadsheetTable({
         : accent === 'rose'
           ? 'bg-rose-500/12 text-rose-800 dark:text-rose-300 border-rose-500/25'
           : 'bg-sky-500/12 text-sky-800 dark:text-sky-300 border-sky-500/25'
+
+    const isQuickAddingHere = quickAddKind && quickAddType === quickAddKind
 
     return (
       <div className="glass-card overflow-hidden">
@@ -320,29 +665,44 @@ export function EditableSpreadsheetTable({
               {sectionItems.length}
             </span>
           </div>
-          <span className="text-sm font-extrabold tabular-nums money-value">
-            Subtotal: {accent === 'emerald' ? '+' : accent === 'rose' ? '-' : ''} {brl(sectionTotal)}
-          </span>
+          <div className="flex items-center gap-3">
+            {quickAddKind && accounts.length > 0 && (
+              <button
+                type="button"
+                onClick={() => (isQuickAddingHere ? setQuickAddType(null) : openQuickAdd(quickAddKind))}
+                className="no-print inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-white/70 dark:bg-black/25 hover:bg-white dark:hover:bg-black/40 transition"
+              >
+                <Plus className="w-3 h-3" aria-hidden="true" />
+                {isQuickAddingHere ? 'Fechar linha' : `Adicionar ${quickAddKind === 'income' ? 'entrada' : 'saída'}`}
+              </button>
+            )}
+            <span className="text-sm font-extrabold tabular-nums money-value">
+              Subtotal: {accent === 'emerald' ? '+' : accent === 'rose' ? '-' : ''} {brl(sectionTotal)}
+            </span>
+          </div>
         </div>
 
-        {sectionItems.length === 0 ? (
+        {sectionItems.length === 0 && !isQuickAddingHere ? (
           <div className="px-4 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
             Nenhum lançamento nesta seção com os filtros atuais.
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[72vh] overflow-y-auto">
             <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-white/45 dark:bg-white/5 border-b border-white/40 dark:border-white/10 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  {selectedIds && onSelectionChange && <th className="px-2.5 py-2.5 w-8" aria-label="Seleção em lote" />}
+              <thead className="sticky top-0 z-10 backdrop-blur-md bg-white/85 dark:bg-slate-900/90 shadow-sm">
+                <tr className="border-b border-white/50 dark:border-white/10 text-[11px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                  {selectedIds && onSelectionChange && (
+                    <th className="px-2.5 py-2.5 w-8 no-print" aria-label="Seleção em lote" />
+                  )}
                   <th className="px-2.5 py-2.5 text-center w-10">
                     <button
                       type="button"
                       onClick={() => setSortBy((s) => (s === 'checked_first' ? 'unchecked_first' : 'checked_first'))}
                       title="Ordenar por Pago / Pendente"
-                      className="font-bold hover:text-slate-900 dark:hover:text-white"
+                      className="inline-flex items-center gap-0.5 font-bold hover:text-slate-900 dark:hover:text-white"
                     >
                       ✅
+                      {renderSortArrow('unchecked_first', 'checked_first')}
                     </button>
                   </th>
                   <th className="px-2.5 py-2.5 text-left">
@@ -352,6 +712,7 @@ export function EditableSpreadsheetTable({
                       className="inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white uppercase"
                     >
                       Data
+                      {renderSortArrow('date_asc', 'date_desc')}
                     </button>
                   </th>
                   <th className="px-2.5 py-2.5 text-left">
@@ -361,6 +722,7 @@ export function EditableSpreadsheetTable({
                       className="inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white uppercase"
                     >
                       Descrição
+                      {renderSortArrow('alpha_asc', 'alpha_desc')}
                     </button>
                   </th>
                   <th className="px-2.5 py-2.5 text-left">Categoria</th>
@@ -371,12 +733,13 @@ export function EditableSpreadsheetTable({
                     <button
                       type="button"
                       onClick={() => setSortBy((s) => (s === 'amount_desc' ? 'amount_asc' : 'amount_desc'))}
-                      className="inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white uppercase"
+                      className="inline-flex items-center gap-1 hover:text-slate-900 dark:hover:text-white uppercase ml-auto"
                     >
                       Valor
+                      {renderSortArrow('amount_asc', 'amount_desc')}
                     </button>
                   </th>
-                  <th className="px-2.5 py-2.5 text-right w-16">Ações</th>
+                  <th className="px-2.5 py-2.5 text-right w-20 no-print">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/25 dark:divide-white/5">
@@ -387,16 +750,17 @@ export function EditableSpreadsheetTable({
                   const catIcon = tx.category_icon || catObj?.icon || '🏷️'
                   const stmtYm = tx.statement_month || (tx.transaction_date || '').slice(0, 7)
                   const isBusy = savingId === tx.id
+                  const showSaved = savedFlashId === tx.id
 
                   return (
                     <tr
                       key={tx.id}
                       className={`hover:bg-white/45 dark:hover:bg-white/5 transition-colors ${
                         isBusy ? 'opacity-65' : ''
-                      }`}
+                      } ${showSaved ? 'bg-emerald-500/8' : ''}`}
                     >
                       {selectedIds && onSelectionChange && (
-                        <td className="px-2.5 py-2">
+                        <td className="px-2.5 py-2 no-print">
                           <input
                             type="checkbox"
                             checked={selectedIds.has(tx.id)}
@@ -406,17 +770,24 @@ export function EditableSpreadsheetTable({
                         </td>
                       )}
 
-                      {/* Status Checkbox (Pago / OK) — 1-click toggle! */}
+                      {/* Status Checkbox (Pago / OK) — 1-click toggle with tactile pop! */}
                       <td className="px-2.5 py-2 text-center">
                         <button
                           type="button"
-                          onClick={() =>
-                            patchTx(tx, { is_reconciled: !tx.is_reconciled }, { is_reconciled: !tx.is_reconciled })
-                          }
-                          aria-pressed={tx.is_reconciled}
+                          onClick={() => {
+                            const nextVal = !tx.is_reconciled
+                            if (nextVal) {
+                              setJustCheckedId(tx.id)
+                              window.setTimeout(() => setJustCheckedId((c) => (c === tx.id ? null : c)), 350)
+                            }
+                            patchTx(tx, { is_reconciled: nextVal }, { is_reconciled: nextVal })
+                          }}
+                          aria-pressed={Boolean(tx.is_reconciled)}
                           aria-label={tx.is_reconciled ? `Desmarcar ${tx.description}` : `Marcar ${tx.description} como pago`}
                           title={tx.is_reconciled ? 'Marcado (OK) — clique para desmarcar' : 'Não marcado — clique para marcar como OK'}
                           className={`w-6 h-6 rounded-lg border inline-flex items-center justify-center transition ${
+                            justCheckedId === tx.id ? 'mony-check-pop' : ''
+                          } ${
                             tx.is_reconciled
                               ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm'
                               : 'border-slate-300 dark:border-white/25 bg-white/50 dark:bg-white/5 hover:border-emerald-400'
@@ -438,6 +809,10 @@ export function EditableSpreadsheetTable({
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') commitInline(tx, 'transaction_date')
                               if (e.key === 'Escape') setEditingCell(null)
+                              if (e.key === 'Tab') {
+                                e.preventDefault()
+                                commitInline(tx, 'transaction_date', e.shiftKey ? 'prev' : 'next')
+                              }
                             }}
                             className="px-1.5 py-1 rounded-lg border border-blue-400 bg-white dark:bg-slate-900 text-xs"
                           />
@@ -465,19 +840,30 @@ export function EditableSpreadsheetTable({
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') commitInline(tx, 'description')
                               if (e.key === 'Escape') setEditingCell(null)
+                              if (e.key === 'Tab') {
+                                e.preventDefault()
+                                commitInline(tx, 'description', e.shiftKey ? 'prev' : 'next')
+                              }
                             }}
                             className="w-full px-2 py-1 rounded-lg border border-blue-400 bg-white dark:bg-slate-900 text-xs font-semibold"
                           />
                         ) : (
                           <div>
-                            <button
-                              type="button"
-                              onClick={() => startInline(tx.id, 'description', tx.description)}
-                              title="Clique no texto para editar a descrição"
-                              className="text-left font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline decoration-dotted underline-offset-2 transition block max-w-[260px] truncate"
-                            >
-                              {tx.description}
-                            </button>
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => startInline(tx.id, 'description', tx.description)}
+                                title="Clique no texto para editar a descrição"
+                                className="text-left font-semibold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline decoration-dotted underline-offset-2 transition block max-w-[240px] truncate"
+                              >
+                                {tx.description}
+                              </button>
+                              {showSaved && (
+                                <span className="mony-saved-flash inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 shrink-0">
+                                  Salvo ✓
+                                </span>
+                              )}
+                            </div>
                             <div className="flex items-center flex-wrap gap-1 mt-0.5 text-[10px] text-slate-500">
                               {tx.source === 'open_finance' && (
                                 <span className="inline-flex items-center gap-0.5 text-blue-600 dark:text-blue-400 font-semibold">
@@ -488,7 +874,10 @@ export function EditableSpreadsheetTable({
                                 <span className="text-emerald-700 dark:text-emerald-400 font-semibold">Planilha</span>
                               )}
                               {tx.installment_number && tx.installment_total && (
-                                <span className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-700 dark:text-purple-300 font-semibold">
+                                <span
+                                  title={getInstallmentTooltip(tx.installment_number, tx.installment_total, stmtYm)}
+                                  className="px-1.5 py-0.2 rounded-full bg-purple-500/15 text-purple-700 dark:text-purple-300 font-semibold cursor-help"
+                                >
                                   Parc. {tx.installment_number}/{tx.installment_total}
                                 </span>
                               )}
@@ -526,6 +915,13 @@ export function EditableSpreadsheetTable({
                                   }
                                 )
                               }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') setEditingCell(null)
+                                if (e.key === 'Tab') {
+                                  e.preventDefault()
+                                  moveFocusTab(tx, 'category', e.shiftKey)
+                                }
+                              }}
                               onBlur={() => setEditingCell(null)}
                               className="px-2 py-1 rounded-lg border border-blue-400 bg-white dark:bg-slate-900 text-xs max-w-[180px]"
                             >
@@ -559,7 +955,7 @@ export function EditableSpreadsheetTable({
                                 onClick={() => openCategoryCustomizer(catName)}
                                 title={`Personalizar cor e emoji de "${catName}"`}
                                 aria-label={`Personalizar cor e emoji de ${catName}`}
-                                className="p-1 rounded-lg text-slate-400 opacity-50 group-hover:opacity-100 hover:text-violet-600 transition"
+                                className="no-print p-1 rounded-lg text-slate-400 opacity-50 group-hover:opacity-100 hover:text-violet-600 transition"
                               >
                                 <Palette className="w-3.5 h-3.5" />
                               </button>
@@ -580,6 +976,13 @@ export function EditableSpreadsheetTable({
                                 setEditingCell(null)
                                 if (nextAid === tx.account_id) return
                                 await patchTx(tx, { account_id: nextAid }, { account_id: nextAid, user_edited: true })
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') setEditingCell(null)
+                                if (e.key === 'Tab') {
+                                  e.preventDefault()
+                                  moveFocusTab(tx, 'account_id', e.shiftKey)
+                                }
                               }}
                               onBlur={() => setEditingCell(null)}
                               className="px-1.5 py-0.5 rounded border border-blue-400 bg-white dark:bg-slate-900 text-xs"
@@ -609,6 +1012,13 @@ export function EditableSpreadsheetTable({
                                 const nextPm = e.target.value
                                 setEditingCell(null)
                                 await patchTx(tx, { payment_method: nextPm }, { payment_method: nextPm, user_edited: true })
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Escape') setEditingCell(null)
+                                if (e.key === 'Tab') {
+                                  e.preventDefault()
+                                  moveFocusTab(tx, 'payment_method', e.shiftKey)
+                                }
                               }}
                               onBlur={() => setEditingCell(null)}
                               className="px-1.5 py-0.5 rounded border border-blue-400 bg-white dark:bg-slate-900 text-[11px]"
@@ -644,6 +1054,10 @@ export function EditableSpreadsheetTable({
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') commitInline(tx, 'statement_month')
                               if (e.key === 'Escape') setEditingCell(null)
+                              if (e.key === 'Tab') {
+                                e.preventDefault()
+                                commitInline(tx, 'statement_month', e.shiftKey ? 'prev' : 'next')
+                              }
                             }}
                             className="px-1.5 py-0.5 rounded border border-blue-400 bg-white dark:bg-slate-900 text-[11px]"
                           />
@@ -670,6 +1084,13 @@ export function EditableSpreadsheetTable({
                               setEditingCell(null)
                               if (nextType === tx.type) return
                               await patchTx(tx, { type: nextType }, { type: nextType, user_edited: true })
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Escape') setEditingCell(null)
+                              if (e.key === 'Tab') {
+                                e.preventDefault()
+                                moveFocusTab(tx, 'type', e.shiftKey)
+                              }
                             }}
                             onBlur={() => setEditingCell(null)}
                             className="px-1.5 py-0.5 rounded border border-blue-400 bg-white dark:bg-slate-900 text-[11px]"
@@ -720,6 +1141,10 @@ export function EditableSpreadsheetTable({
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') commitInline(tx, 'amount')
                               if (e.key === 'Escape') setEditingCell(null)
+                              if (e.key === 'Tab') {
+                                e.preventDefault()
+                                commitInline(tx, 'amount', e.shiftKey ? 'prev' : 'next')
+                              }
                             }}
                             className="w-24 px-2 py-1 rounded-lg border border-blue-400 bg-white dark:bg-slate-900 text-xs font-bold text-right"
                           />
@@ -741,16 +1166,25 @@ export function EditableSpreadsheetTable({
                         )}
                       </td>
 
-                      {/* Discreet Extra Actions (Split/Tags/Origin modal & Delete) */}
-                      <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                      {/* Discreet Extra Actions (Duplicate, Split/Tags/Origin modal & Delete) */}
+                      <td className="px-2.5 py-2 text-right whitespace-nowrap no-print">
                         <div className="inline-flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            onClick={() => handleDuplicate(tx)}
+                            title="Duplicar lançamento (1 clique)"
+                            aria-label={`Duplicar ${tx.description}`}
+                            className="p-1.5 rounded-lg text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                          </button>
                           {onOpenFullModal && (
                             <button
                               type="button"
                               onClick={() => onOpenFullModal(tx)}
                               title="Mais opções (Tags, Split, Parcelas, Origem)"
                               aria-label={`Mais opções para ${tx.description}`}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition"
                             >
                               <SlidersHorizontal className="w-3.5 h-3.5" />
                             </button>
@@ -761,7 +1195,7 @@ export function EditableSpreadsheetTable({
                               onClick={() => onDelete(tx.id)}
                               title="Excluir lançamento"
                               aria-label={`Excluir ${tx.description}`}
-                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                              className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -774,6 +1208,85 @@ export function EditableSpreadsheetTable({
               </tbody>
             </table>
           </div>
+        )}
+
+        {/* Quick-add inline form directly in section footer (Excel/Notion style) */}
+        {isQuickAddingHere && (
+          <form
+            onSubmit={handleQuickAddSubmit}
+            className="no-print px-4 py-3 border-t border-white/40 dark:border-white/10 bg-white/55 dark:bg-white/5 grid grid-cols-2 md:grid-cols-12 gap-2 items-center"
+          >
+            <input
+              type="date"
+              value={qaDate}
+              onChange={(e) => setQaDate(e.target.value)}
+              aria-label="Data do novo lançamento"
+              className="md:col-span-2 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-white/15 bg-white dark:bg-slate-900 text-xs"
+              required
+            />
+            <input
+              type="text"
+              autoFocus
+              value={qaDesc}
+              onChange={(e) => setQaDesc(e.target.value)}
+              placeholder={quickAddKind === 'income' ? 'Ex.: Freelance, Salário...' : 'Ex.: Mercado, Posto, Farmácia...'}
+              aria-label="Descrição do novo lançamento"
+              className="col-span-2 md:col-span-3 px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-white/15 bg-white dark:bg-slate-900 text-xs font-medium"
+              required
+            />
+            <select
+              value={qaCategory}
+              onChange={(e) => setQaCategory(e.target.value)}
+              aria-label="Categoria do novo lançamento"
+              className="md:col-span-2 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-white/15 bg-white dark:bg-slate-900 text-xs"
+            >
+              {categories.map((c) => (
+                <option key={c.id} value={c.name}>
+                  {c.icon || '🏷️'} {c.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={qaAccount}
+              onChange={(e) => setQaAccount(e.target.value)}
+              aria-label="Conta do novo lançamento"
+              className="md:col-span-2 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-white/15 bg-white dark:bg-slate-900 text-xs"
+            >
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={qaAmount}
+              onChange={(e) => setQaAmount(e.target.value)}
+              placeholder="0,00"
+              aria-label="Valor do novo lançamento"
+              className="md:col-span-1 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-white/15 bg-white dark:bg-slate-900 text-xs font-bold text-right"
+              required
+            />
+            <div className="col-span-2 md:col-span-2 flex items-center justify-end gap-1.5">
+              <button
+                type="submit"
+                disabled={qaSubmitting}
+                className="liquid-btn liquid-btn-primary px-3 py-1.5 rounded-lg text-xs font-semibold disabled:opacity-50"
+              >
+                {qaSubmitting ? 'Salvando...' : 'Adicionar'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setQuickAddType(null)}
+                aria-label="Cancelar adição rápida"
+                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </form>
         )}
       </div>
     )
@@ -791,84 +1304,197 @@ export function EditableSpreadsheetTable({
 
   return (
     <div className="space-y-4">
-      {/* Sort, Checkbox Filter & Instant Search Toolbar */}
-      <div className="glass-card p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
-            <ArrowDownUp className="w-3.5 h-3.5 text-blue-500" aria-hidden="true" />
-            Ordenar:
-          </span>
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as SortKey)}
-            aria-label="Ordenar lançamentos"
-            className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-white/70 dark:bg-white/10 border border-slate-200/80 dark:border-white/15 text-slate-800 dark:text-slate-100"
-          >
-            <option value="date_desc">Data (Mais recente)</option>
-            <option value="date_asc">Data (Mais antiga)</option>
-            <option value="amount_desc">Valor (Maior primeiro)</option>
-            <option value="amount_asc">Valor (Menor primeiro)</option>
-            <option value="alpha_asc">Alfabética (A → Z)</option>
-            <option value="alpha_desc">Alfabética (Z → A)</option>
-            <option value="checked_first">Checkbox (Marcadas ✅ primeiro)</option>
-            <option value="unchecked_first">Checkbox (Não marcadas primeiro)</option>
-          </select>
+      {/* Sort, Checkbox Filter, Progress & Export Toolbar */}
+      <div className="glass-card p-3.5 space-y-3 no-print">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600 dark:text-slate-300">
+              <ArrowDownUp className="w-3.5 h-3.5 text-blue-500" aria-hidden="true" />
+              Ordenar:
+            </span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value as SortKey)}
+              aria-label="Ordenar lançamentos"
+              className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-white/70 dark:bg-white/10 border border-slate-200/80 dark:border-white/15 text-slate-800 dark:text-slate-100"
+            >
+              <option value="date_desc">Data (Mais recente)</option>
+              <option value="date_asc">Data (Mais antiga)</option>
+              <option value="amount_desc">Valor (Maior primeiro)</option>
+              <option value="amount_asc">Valor (Menor primeiro)</option>
+              <option value="alpha_asc">Alfabética (A → Z)</option>
+              <option value="alpha_desc">Alfabética (Z → A)</option>
+              <option value="checked_first">Checkbox (Marcadas ✅ primeiro)</option>
+              <option value="unchecked_first">Checkbox (Não marcadas primeiro)</option>
+            </select>
 
-          <div
-            className="inline-flex p-0.5 rounded-xl bg-white/55 dark:bg-white/10 border border-slate-200/70 dark:border-white/15 text-xs"
-            role="group"
-            aria-label="Filtrar por checkbox marcada"
-          >
-            {(
-              [
-                ['all', `Todos (${mergedTransactions.length})`],
-                ['checked', `✅ Marcados (${mergedTransactions.filter((t) => t.is_reconciled).length})`],
-                ['unchecked', `Pendentes (${mergedTransactions.filter((t) => !t.is_reconciled).length})`],
-              ] as const
-            ).map(([val, lbl]) => (
+            <div
+              className="inline-flex p-0.5 rounded-xl bg-white/55 dark:bg-white/10 border border-slate-200/70 dark:border-white/15 text-xs"
+              role="group"
+              aria-label="Filtrar por checkbox marcada"
+            >
+              {(
+                [
+                  ['all', `Todos (${mergedTransactions.length})`],
+                  ['checked', `✅ Marcados (${progressStats.checked})`],
+                  ['unchecked', `Pendentes (${progressStats.pending})`],
+                ] as const
+              ).map(([val, lbl]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setCheckFilter(val)}
+                  className={`px-2.5 py-1 rounded-lg font-semibold transition ${
+                    checkFilter === val
+                      ? 'liquid-nav-active shadow-sm'
+                      : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
+                  }`}
+                >
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              type="search"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              placeholder="Filtrar descrição, categoria, cartão ou #tag..."
+              aria-label="Filtrar lançamentos na planilha"
+              className="input-base text-xs py-1.5 flex-1 min-w-[190px] lg:w-60"
+            />
+            {filteredSorted.some((t) => !t.is_reconciled) && (
               <button
-                key={val}
                 type="button"
-                onClick={() => setCheckFilter(val)}
-                className={`px-2.5 py-1 rounded-lg font-semibold transition ${
-                  checkFilter === val
-                    ? 'liquid-nav-active shadow-sm'
-                    : 'text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white'
-                }`}
+                disabled={bulkChecking}
+                onClick={() => handleMarkVisibleReconciled(true)}
+                title="Marcar todos os lançamentos visíveis como pagos (OK)"
+                className="liquid-btn liquid-btn-glass inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-emerald-700 dark:text-emerald-300 disabled:opacity-50"
               >
-                {lbl}
+                <CheckCheck className="w-3.5 h-3.5" aria-hidden="true" />
+                <span className="hidden sm:inline">Marcar visíveis</span>
               </button>
-            ))}
+            )}
+            <button
+              type="button"
+              onClick={handleExportVisibleCSV}
+              disabled={filteredSorted.length === 0}
+              title="Exportar lançamentos exibidos para Excel / CSV"
+              className="liquid-btn liquid-btn-glass inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold disabled:opacity-40"
+            >
+              <Download className="w-3.5 h-3.5" aria-hidden="true" />
+              <span className="hidden sm:inline">CSV</span>
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <input
-            type="search"
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            placeholder="Filtrar descrição, categoria, cartão ou #tag..."
-            aria-label="Filtrar lançamentos na planilha"
-            className="input-base text-xs py-1.5 w-full lg:w-64"
-          />
-        </div>
+        {/* Reconciliation Progress Bar */}
+        {progressStats.total > 0 && (
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 pt-2 border-t border-white/40 dark:border-white/10 text-[11px]">
+            <div className="flex items-center gap-2 shrink-0">
+              <span className="font-semibold text-slate-700 dark:text-slate-200">
+                ✅ {progressStats.checked}/{progressStats.total} conferidos ({progressStats.pct}%)
+              </span>
+              {progressStats.pendingExpenses > 0 && (
+                <span className="text-rose-600 dark:text-rose-400 font-semibold money-value">
+                  · Faltam pagar: {brl(progressStats.pendingExpenses)}
+                </span>
+              )}
+            </div>
+            <div className="flex-1 h-1.5 rounded-full bg-slate-200/75 dark:bg-white/10 overflow-hidden">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400 transition-all duration-500 ease-out"
+                style={{ width: `${progressStats.pct}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Clickable Colored Category Quick-Filter Chips */}
+        {presentCategories.length > 1 && (
+          <div className="flex items-center gap-1.5 flex-wrap pt-1" role="group" aria-label="Filtrar por categoria">
+            <button
+              type="button"
+              onClick={() => {
+                setCategoryChip(null)
+                onClearExternalCategory?.()
+              }}
+              className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition border ${
+                !categoryChip
+                  ? 'liquid-nav-active border-transparent'
+                  : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-600 dark:text-slate-300 hover:bg-white/75'
+              }`}
+            >
+              Todas ({mergedTransactions.length})
+            </button>
+            {presentCategories.map((cat) => {
+              const active = categoryChip?.toLowerCase() === cat.name.toLowerCase()
+              return (
+                <button
+                  key={cat.name}
+                  type="button"
+                  onClick={() => {
+                    if (active) {
+                      setCategoryChip(null)
+                      onClearExternalCategory?.()
+                    } else {
+                      setCategoryChip(cat.name)
+                    }
+                  }}
+                  className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition ${
+                    active ? 'ring-2 ring-offset-1 ring-slate-900 dark:ring-white scale-[1.03]' : 'opacity-85 hover:opacity-100'
+                  }`}
+                  style={{
+                    backgroundColor: active ? `${cat.color}36` : `${cat.color}1C`,
+                    color: cat.color,
+                    border: `1px solid ${cat.color}55`,
+                  }}
+                >
+                  <span aria-hidden="true">{cat.icon}</span>
+                  <span className="max-w-[130px] truncate">{cat.name}</span>
+                  <span className="opacity-75">({cat.count})</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
 
-      <p className="text-[11px] text-slate-500 dark:text-slate-400 px-1">
-        Dica: <strong>clique diretamente em cima de qualquer texto, valor, data, categoria, conta ou checkbox</strong> para editar na hora — sem precisar abrir modal. Clique no ícone de paleta ao lado da categoria para personalizar cor e emoji.
+      <p className="text-[11px] text-slate-500 dark:text-slate-400 px-1 no-print">
+        Dica: <strong>clique direto em qualquer célula</strong> para editar · use <kbd className="px-1 py-0.5 rounded bg-white/60 dark:bg-white/10 font-mono text-[10px]">Tab</kbd> para avançar, <kbd className="px-1 py-0.5 rounded bg-white/60 dark:bg-white/10 font-mono text-[10px]">Enter</kbd> para salvar e <kbd className="px-1 py-0.5 rounded bg-white/60 dark:bg-white/10 font-mono text-[10px]">Esc</kbd> para cancelar.
       </p>
 
-      {mergedTransactions.length === 0 ? (
-        <div className="glass-card p-10 text-center text-sm text-slate-500 dark:text-slate-400">
-          {emptyLabel}
+      {mergedTransactions.length === 0 && !quickAddType ? (
+        <div className="glass-card p-10 text-center space-y-3">
+          <p className="text-sm text-slate-500 dark:text-slate-400">{emptyLabel}</p>
+          {accounts.length > 0 && (
+            <div className="flex items-center justify-center gap-2 no-print">
+              <button
+                type="button"
+                onClick={() => openQuickAdd('income')}
+                className="liquid-btn liquid-btn-glass px-3.5 py-2 rounded-xl text-xs font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" /> Nova Entrada
+              </button>
+              <button
+                type="button"
+                onClick={() => openQuickAdd('expense')}
+                className="liquid-btn liquid-btn-glass px-3.5 py-2 rounded-xl text-xs font-semibold text-rose-700 dark:text-rose-300 inline-flex items-center gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" /> Nova Saída
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <div className="space-y-5">
           {/* Separated Block 1: Entradas / Receitas */}
-          {renderSectionTable('Entradas / Receitas', incomes, 'emerald', totalIncome)}
+          {renderSectionTable('Entradas / Receitas', incomes, 'emerald', totalIncome, 'income')}
 
           {/* Separated Block 2: Saídas / Despesas */}
-          {renderSectionTable('Saídas / Despesas', expenses, 'rose', totalExpense)}
+          {renderSectionTable('Saídas / Despesas', expenses, 'rose', totalExpense, 'expense')}
 
           {/* Optional Block 3: Transfers / Refunds / Investments (never mixed with Income/Expense) */}
           {others.length > 0 &&
@@ -908,7 +1534,7 @@ export function EditableSpreadsheetTable({
       {/* Quick Category Color & Emoji Customizer Modal */}
       {customizingCat && (
         <div
-          className="fixed inset-0 z-[70] bg-slate-950/50 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[70] bg-slate-950/50 backdrop-blur-sm flex items-center justify-center p-4 no-print"
           role="dialog"
           aria-modal="true"
           onClick={() => setCustomizingCat(null)}

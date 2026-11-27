@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import {
   ArrowUp,
@@ -10,6 +10,7 @@ import {
   CreditCard,
   Landmark,
   Plus,
+  SlidersHorizontal,
   Wallet,
   X,
 } from 'lucide-react'
@@ -17,7 +18,7 @@ import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { SummaryCards } from '@/components/dashboard/SummaryCards'
 import { EditableSpreadsheetTable } from '@/components/transactions/EditableSpreadsheetTable'
 import { FilterBar, PAYMENT_METHOD_LABELS } from '@/components/dashboard/FilterBar'
-import { Charts } from '@/components/dashboard/Charts'
+import { Charts, type AnnualMonthPoint } from '@/components/dashboard/Charts'
 import { TransactionModal } from '@/components/dashboard/TransactionModal'
 import { UniversalEditTransactionModal } from '@/components/transactions/UniversalEditTransactionModal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
@@ -118,7 +119,11 @@ function DashboardContent() {
   const [selectedMonth, setSelectedMonth] = useState<string>(() => getCurrentYearMonth())
   const [allMonthsMode, setAllMonthsMode] = useState(false)
   const [monthSummary, setMonthSummary] = useState<MonthSummaryData | null>(null)
+  const [annualMonths, setAnnualMonths] = useState<AnnualMonthPoint[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
+  const [chartCategoryFilter, setChartCategoryFilter] = useState<string | null>(null)
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false)
+  const spreadsheetRef = useRef<HTMLElement | null>(null)
 
   const [accounts, setAccounts] = useState<Account[]>([])
   const [accountsLoading, setAccountsLoading] = useState(false)
@@ -138,11 +143,28 @@ function DashboardContent() {
     return 'Boa noite'
   })()
 
-  // Keyboard shortcut 'N' -> New Transaction + Scroll-to-top visibility
+  // Dynamic browser tab title
+  useEffect(() => {
+    document.title = `Mony · ${allMonthsMode ? 'Todos os meses' : formatYearMonthLabel(selectedMonth)}`
+  }, [selectedMonth, allMonthsMode])
+
+  // Keyboard shortcuts: 'N' -> New Transaction, Alt+ArrowLeft/Right -> Prev/Next Month
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+        return
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key === 'ArrowLeft') {
+        e.preventDefault()
+        setAllMonthsMode(false)
+        setSelectedMonth((curr) => shiftYearMonth(curr, -1))
+        return
+      }
+      if (e.altKey && !e.ctrlKey && !e.metaKey && e.key === 'ArrowRight') {
+        e.preventDefault()
+        setAllMonthsMode(false)
+        setSelectedMonth((curr) => shiftYearMonth(curr, 1))
         return
       }
       if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.toLowerCase() === 'n') {
@@ -195,6 +217,32 @@ function DashboardContent() {
     }
   }, [accessToken, selectedMonth, filters.accountId])
 
+  const activeYearForApi = Number(selectedMonth.split('-')[0]) || new Date().getFullYear()
+
+  const fetchAnnualSeries = useCallback(async () => {
+    if (!accessToken) return
+    try {
+      const res = await fetch(`${API_URL}/reports/cashflow?year=${activeYearForApi}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+      if (res.ok) {
+        const body = await res.json()
+        if (Array.isArray(body?.months)) {
+          setAnnualMonths(
+            body.months.map((m: { ym: string; short_label: string; income: number; expenses: number }) => ({
+              ym: m.ym,
+              short_label: m.short_label,
+              income: Number(m.income) || 0,
+              expenses: Number(m.expenses) || 0,
+            }))
+          )
+        }
+      }
+    } catch {
+      // silent fallback to client-side transactions
+    }
+  }, [accessToken, activeYearForApi])
+
   useEffect(() => {
     fetchAccounts()
   }, [fetchAccounts])
@@ -202,6 +250,10 @@ function DashboardContent() {
   useEffect(() => {
     fetchMonthSummary()
   }, [fetchMonthSummary, refreshKey])
+
+  useEffect(() => {
+    fetchAnnualSeries()
+  }, [fetchAnnualSeries, refreshKey])
 
   const buildApiFilters = useCallback((): FilterState => {
     const useMonth = !allMonthsMode && !filters.startDate && !filters.endDate
@@ -294,8 +346,43 @@ function DashboardContent() {
         setSelectedIds(new Set())
         dispatchToast(`${count} transação(ões) excluída(s).`, 'info')
       } else if (confirmState.id) {
+        const deletedTx = transactions.find((t) => t.id === confirmState.id)
         await deleteTransaction(confirmState.id)
-        dispatchToast('Transação excluída.', 'info')
+        if (deletedTx) {
+          dispatchToast(`"${deletedTx.description}" excluído.`, 'info', {
+            action: {
+              label: 'Desfazer',
+              onClick: async () => {
+                try {
+                  await createTransaction({
+                    user_id: deletedTx.user_id,
+                    account_id: deletedTx.account_id,
+                    type: deletedTx.type,
+                    amount: Number(deletedTx.amount) || 0.01,
+                    currency: deletedTx.currency || 'BRL',
+                    description: deletedTx.description,
+                    merchant_name: deletedTx.merchant_name,
+                    notes: deletedTx.notes,
+                    transaction_date: (deletedTx.transaction_date || '').slice(0, 10),
+                    statement_month: deletedTx.statement_month,
+                    payment_method: deletedTx.payment_method,
+                    category_id: deletedTx.category_id,
+                    category_name: deletedTx.category_name,
+                    is_recurring: deletedTx.is_recurring,
+                    is_reconciled: deletedTx.is_reconciled,
+                  })
+                  setRefreshKey((k) => k + 1)
+                  await Promise.all([fetchTransactions(buildApiFilters(), 0, 1000), fetchAccounts()])
+                  dispatchToast(`"${deletedTx.description}" restaurado!`, 'success')
+                } catch {
+                  dispatchToast('Não foi possível desfazer a exclusão.', 'error')
+                }
+              },
+            },
+          })
+        } else {
+          dispatchToast('Transação excluída.', 'info')
+        }
       }
       setRefreshKey((k) => k + 1)
       await fetchAccounts()
@@ -520,18 +607,37 @@ function DashboardContent() {
                   {PT_MONTHS_SHORT.map((label, idx) => {
                     const ym = `${activeYear}-${String(idx + 1).padStart(2, '0')}`
                     const isActive = !allMonthsMode && selectedMonth === ym
+                    const monthPoint = annualMonths.find((m) => m.ym === ym)
+                    const hasData = Boolean(monthPoint && (monthPoint.income > 0 || monthPoint.expenses > 0))
+                    const isPositive = Boolean(monthPoint && monthPoint.income >= monthPoint.expenses)
+                    const monthTooltip = hasData && monthPoint
+                      ? `${PT_MONTHS[idx]} ${activeYear} · Entradas: ${formatBRL(monthPoint.income)} · Saídas: ${formatBRL(monthPoint.expenses)} · Saldo: ${formatBRL(monthPoint.income - monthPoint.expenses)}`
+                      : `${PT_MONTHS[idx]} ${activeYear}`
                     return (
                       <button
                         key={ym}
                         type="button"
+                        title={monthTooltip}
                         onClick={() => handleSelectMonth(ym)}
-                        className={`px-2.5 py-1 rounded-full text-xs font-semibold transition border ${
+                        className={`relative px-2.5 py-1 rounded-full text-xs font-semibold transition border inline-flex items-center gap-1 ${
                           isActive
                             ? 'liquid-btn-primary border-transparent shadow-sm'
                             : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300 hover:bg-white/75 dark:hover:bg-white/15'
                         }`}
                       >
-                        {label}
+                        <span>{label}</span>
+                        {hasData && (
+                          <span
+                            aria-hidden="true"
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              isActive
+                                ? 'bg-white/90'
+                                : isPositive
+                                  ? 'bg-emerald-500'
+                                  : 'bg-rose-500'
+                            }`}
+                          />
+                        )}
                       </button>
                     )
                   })}
@@ -610,46 +716,90 @@ function DashboardContent() {
           />
         </section>
 
-        {/* Charts */}
+        {/* Charts (100% Liquid Glass + real 12-month annual series + interactive Donut) */}
         <section aria-labelledby="charts-heading">
           <h2 id="charts-heading" className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
             Análise Financeira
           </h2>
-          <Charts transactions={transactions} loading={loading} />
-        </section>
-
-        {/* Filters */}
-        <section aria-labelledby="filters-heading">
-          <h2 id="filters-heading" className="text-lg font-semibold text-slate-900 dark:text-white mb-4">
-            Filtros
-          </h2>
-          <FilterBar
-            onFilterChange={updateMultipleFilters}
-            accounts={accounts}
-            loading={accountsLoading}
-            externalPaymentMethod={filters.paymentMethod}
+          <Charts
+            transactions={transactions}
+            loading={loading}
+            annualMonths={annualMonths}
+            categories={categories}
+            selectedMonth={selectedMonth}
+            activeCategory={chartCategoryFilter}
+            onSelectCategory={(cat) => {
+              setChartCategoryFilter(cat)
+              if (cat) {
+                spreadsheetRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+              }
+            }}
           />
         </section>
 
         {/* Transaction Spreadsheet (All rows on 1 page · Separated Income/Expenses · Click-anywhere inline edit) */}
-        <section aria-labelledby="transactions-heading">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-            <h2 id="transactions-heading" className="text-lg font-semibold text-slate-900 dark:text-white flex items-center gap-2">
-              Planilha de Transações {!allMonthsMode ? `· ${formatYearMonthLabel(selectedMonth)}` : '(Todos os meses)'}
-              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-white/60 dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-white/60 dark:border-white/15">
-                {transactions.length} lançamento(s)
-              </span>
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Clique direto em qualquer texto, valor, data ou categoria para editar na hora
-            </p>
-          </div>
+        <section ref={spreadsheetRef} aria-labelledby="transactions-heading" className="space-y-4">
+          {(() => {
+            const activeAdvancedCount = [
+              filters.accountId,
+              filters.type && filters.type !== 'all' ? filters.type : '',
+              filters.paymentMethod && filters.paymentMethod !== 'all' ? filters.paymentMethod : '',
+              filters.startDate,
+              filters.endDate,
+              filters.search,
+              filters.isReconciled && filters.isReconciled !== 'all' ? filters.isReconciled : '',
+            ].filter(Boolean).length
+
+            return (
+              <>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 id="transactions-heading" className="text-lg font-semibold text-slate-900 dark:text-white flex items-center flex-wrap gap-2">
+                    Planilha de Transações {!allMonthsMode ? `· ${formatYearMonthLabel(selectedMonth)}` : '(Todos os meses)'}
+                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-white/60 dark:bg-white/10 text-slate-700 dark:text-slate-200 border border-white/60 dark:border-white/15">
+                      {transactions.length} lançamento(s)
+                    </span>
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedFiltersOpen((v) => !v)}
+                    className={`no-print liquid-btn liquid-btn-glass inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold ${
+                      activeAdvancedCount > 0 ? 'ring-1 ring-blue-500/60 text-blue-600 dark:text-blue-400' : ''
+                    }`}
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
+                    Filtros avançados
+                    {activeAdvancedCount > 0 && (
+                      <span className="px-1.5 py-0.2 rounded-full bg-blue-600 text-white text-[10px] font-bold">
+                        {activeAdvancedCount}
+                      </span>
+                    )}
+                  </button>
+                </div>
+
+                {advancedFiltersOpen && (
+                  <div className="no-print glass-card p-4">
+                    <FilterBar
+                      onFilterChange={updateMultipleFilters}
+                      accounts={accounts}
+                      loading={accountsLoading}
+                      externalPaymentMethod={filters.paymentMethod}
+                    />
+                  </div>
+                )}
+              </>
+            )
+          })()}
+
           <EditableSpreadsheetTable
             token={accessToken || ''}
             transactions={transactions}
             accounts={accounts}
             categories={categories}
             loading={loading}
+            defaultMonth={selectedMonth}
+            exportFilename={`mony-${selectedMonth}.csv`}
+            externalCategoryFilter={chartCategoryFilter}
+            onClearExternalCategory={() => setChartCategoryFilter(null)}
             onRefresh={async () => {
               setRefreshKey((k) => k + 1)
               await Promise.all([

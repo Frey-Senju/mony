@@ -33,6 +33,8 @@ import {
   type EditableTransaction,
 } from '@/components/transactions/UniversalEditTransactionModal'
 import { EditableSpreadsheetTable } from '@/components/transactions/EditableSpreadsheetTable'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const STORAGE_KEY = 'mony_cashflow_prefs_v1'
@@ -111,6 +113,16 @@ function CashflowContent() {
   const [loadingMonthTxs, setLoadingMonthTxs] = useState(false)
   const [accounts, setAccounts] = useState<Array<{ id: string; name: string }>>([])
   const [editingTx, setEditingTx] = useState<EditableTransaction | null>(null)
+  const [deletingTxId, setDeletingTxId] = useState<string | null>(null)
+  const [isDeleting, setIsDeleting] = useState(false)
+
+  const catMetaByName = React.useMemo(() => {
+    const map: Record<string, { color: string; icon?: string }> = {}
+    for (const c of userCategories) {
+      map[c.name.toLowerCase()] = { color: c.color, icon: c.icon }
+    }
+    return map
+  }, [userCategories])
 
   // Editable spreadsheet KPIs persisted locally
   const [workHours, setWorkHours] = useState(220)
@@ -214,6 +226,87 @@ function CashflowContent() {
     window.addEventListener('mony:transactions-updated', onRefresh)
     return () => window.removeEventListener('mony:transactions-updated', onRefresh)
   }, [loadCashflow, loadMonthTransactions])
+
+  // Dynamic browser tab title + Alt+Left/Right month navigation
+  useEffect(() => {
+    document.title = `Mony · Fluxo de Caixa ${year} (${selectedYm})`
+  }, [year, selectedYm])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+        return
+      }
+      if (!e.altKey || e.ctrlKey || e.metaKey) return
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault()
+        const delta = e.key === 'ArrowRight' ? 1 : -1
+        const [y, m] = selectedYm.split('-').map(Number)
+        const total = (y || year) * 12 + ((m || 1) - 1) + delta
+        const ny = Math.floor(total / 12)
+        const nm = (total % 12) + 1
+        setYear(ny)
+        setSelectedYm(`${ny}-${String(nm).padStart(2, '0')}`)
+        setSelectedCategory(null)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [selectedYm, year])
+
+  const executeDeleteTx = async () => {
+    if (!deletingTxId || !token) return
+    setIsDeleting(true)
+    const deleted = monthTxs.find((t) => t.id === deletingTxId)
+    try {
+      const res = await fetch(`${API_URL}/transactions/${deletingTxId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error('Erro ao excluir lançamento')
+      setDeletingTxId(null)
+      await Promise.all([loadCashflow(), loadMonthTransactions()])
+      if (deleted) {
+        dispatchToast(`"${deleted.description}" excluído.`, 'info', {
+          action: {
+            label: 'Desfazer',
+            onClick: async () => {
+              const r = await fetch(`${API_URL}/transactions`, {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  account_id: deleted.account_id,
+                  type: deleted.type,
+                  amount: Number(deleted.amount) || 0.01,
+                  currency: 'BRL',
+                  description: deleted.description,
+                  merchant_name: deleted.merchant_name || deleted.description,
+                  notes: deleted.notes || undefined,
+                  transaction_date: (deleted.transaction_date || '').slice(0, 10),
+                  statement_month: deleted.statement_month,
+                  payment_method: deleted.payment_method || 'other',
+                  category_name: deleted.category_name || 'Outros',
+                  is_reconciled: Boolean(deleted.is_reconciled),
+                }),
+              })
+              if (r.ok) {
+                await Promise.all([loadCashflow(), loadMonthTransactions()])
+                dispatchToast(`"${deleted.description}" restaurado!`, 'success')
+              }
+            },
+          },
+        })
+      }
+    } catch {
+      dispatchToast('Não foi possível excluir o lançamento.', 'error')
+    } finally {
+      setIsDeleting(false)
+    }
+  }
 
   const stats = data?.stats
   const realHourValue =
@@ -621,11 +714,24 @@ function CashflowContent() {
                   <th className="px-3 py-3 text-left sticky left-0 bg-white/80 dark:bg-slate-900/80 backdrop-blur">
                     Mês
                   </th>
-                  {data.categories.map((cat) => (
-                    <th key={cat} className="px-3 py-3 text-right whitespace-nowrap">
-                      {cat}
-                    </th>
-                  ))}
+                  {data.categories.map((cat) => {
+                    const meta = catMetaByName[cat.toLowerCase()]
+                    return (
+                      <th key={cat} className="px-3 py-3 text-right whitespace-nowrap">
+                        <span className="inline-flex items-center justify-end gap-1.5">
+                          {meta?.color && (
+                            <span
+                              className="w-2 h-2 rounded-full shrink-0"
+                              style={{ backgroundColor: meta.color }}
+                              aria-hidden="true"
+                            />
+                          )}
+                          <span aria-hidden="true">{meta?.icon || '🏷️'}</span>
+                          <span>{cat}</span>
+                        </span>
+                      </th>
+                    )
+                  })}
                   <th className="px-3 py-3 text-right font-bold">Total</th>
                 </tr>
               </thead>
@@ -782,25 +888,47 @@ function CashflowContent() {
             </div>
           </div>
 
-          {/* 12-Month Quick Switcher */}
+          {/* 12-Month Quick Switcher with positive/negative indicator dots */}
           <div className="flex items-center gap-1.5 flex-wrap">
-            {(data?.months || []).map((m) => (
-              <button
-                key={m.ym}
-                type="button"
-                onClick={() => {
-                  setSelectedYm(m.ym)
-                  setSelectedCategory(null)
-                }}
-                className={`px-2.5 py-1 rounded-full text-xs font-semibold transition border ${
-                  selectedYm === m.ym
-                    ? 'liquid-btn-primary border-transparent'
-                    : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300'
-                }`}
-              >
-                {m.short_label}
-              </button>
-            ))}
+            {(data?.months || []).map((m) => {
+              const isSelected = selectedYm === m.ym
+              const hasData = m.income > 0 || m.expenses > 0
+              const isPositive = m.net >= 0
+              return (
+                <button
+                  key={m.ym}
+                  type="button"
+                  title={
+                    hasData
+                      ? `${m.label} ${year} · Receitas: ${brl(m.income)} · Despesas: ${brl(m.expenses)} · Saldo: ${brl(m.net)}`
+                      : `${m.label} ${year}`
+                  }
+                  onClick={() => {
+                    setSelectedYm(m.ym)
+                    setSelectedCategory(null)
+                  }}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold transition border inline-flex items-center gap-1 ${
+                    isSelected
+                      ? 'liquid-btn-primary border-transparent shadow-sm'
+                      : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300 hover:bg-white/75 dark:hover:bg-white/15'
+                  }`}
+                >
+                  <span>{m.short_label}</span>
+                  {hasData && (
+                    <span
+                      aria-hidden="true"
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        isSelected
+                          ? 'bg-white/90'
+                          : isPositive
+                            ? 'bg-emerald-500'
+                            : 'bg-rose-500'
+                      }`}
+                    />
+                  )}
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -817,15 +945,29 @@ function CashflowContent() {
             accounts={accounts}
             categories={userCategories}
             loading={loadingMonthTxs}
+            defaultMonth={selectedYm}
+            exportFilename={`mony-cashflow-${selectedYm}.csv`}
             emptyLabel={`Nenhum lançamento encontrado em ${selectedYm}${selectedCategory ? ` para a categoria ${selectedCategory}` : ''}.`}
             onRefresh={async () => {
               await Promise.all([loadCashflow(), loadMonthTransactions(), fetchCategories()])
             }}
             onUpdateCategory={updateCategory}
             onOpenFullModal={(tx) => setEditingTx(tx)}
+            onDelete={(id) => setDeletingTxId(id)}
           />
         </div>
       </section>
+
+      <ConfirmDialog
+        open={Boolean(deletingTxId)}
+        title="Excluir este lançamento?"
+        description="Esta ação remove o lançamento e recalcula o fluxo de caixa (você poderá desfazer logo em seguida)."
+        confirmLabel="Excluir"
+        variant="danger"
+        loading={isDeleting}
+        onConfirm={executeDeleteTx}
+        onCancel={() => setDeletingTxId(null)}
+      />
 
       {editingTx && token && (
         <UniversalEditTransactionModal

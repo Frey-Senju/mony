@@ -180,6 +180,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     }
   }, [])
 
+  // Dynamic browser tab title for all workspace routes
+  useEffect(() => {
+    if (!pathname || pathname === '/dashboard' || pathname === '/dashboard/cashflow') return
+    const allItems = [...NAV_GROUPS.flatMap((g) => g.items), ...SECONDARY_ITEMS]
+    const matched = allItems.find((item) => pathname.startsWith(item.href) && item.href !== '/dashboard')
+    if (matched) {
+      document.title = `Mony · ${matched.label}`
+    }
+  }, [pathname])
+
   // Global keyboard shortcuts: Ctrl/Cmd+K, Shift+P, Shift+?
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
