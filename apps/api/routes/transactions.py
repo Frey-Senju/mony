@@ -1278,7 +1278,6 @@ async def preview_statement_import(
         db.query(CategoryRule)
         .filter(
             CategoryRule.user_id == uid,
-            CategoryRule.deleted_at.is_(None),
             CategoryRule.is_active.is_(True),
         )
         .order_by(CategoryRule.priority.desc())

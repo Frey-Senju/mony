@@ -24,6 +24,7 @@ import { FilterBar, PAYMENT_METHOD_LABELS } from '@/components/dashboard/FilterB
 import { Charts, type AnnualMonthPoint } from '@/components/dashboard/Charts'
 import { TransactionModal } from '@/components/dashboard/TransactionModal'
 import { StatementImportModal } from '@/components/transactions/StatementImportModal'
+import { VoiceQuickEntryButton } from '@/components/transactions/VoiceQuickEntryButton'
 import { UniversalEditTransactionModal } from '@/components/transactions/UniversalEditTransactionModal'
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
 import { dispatchToast } from '@/components/ui/ToastProvider'
@@ -590,6 +591,13 @@ function DashboardContent() {
                 <Wallet className="w-4 h-4" aria-hidden="true" />
                 Gerenciar Contas
               </Link>
+              <VoiceQuickEntryButton
+                token={accessToken}
+                onCreated={() => {
+                  fetchAccounts()
+                  fetchMonthSummary()
+                }}
+              />
               <button
                 type="button"
                 onClick={() => setImportModalOpen(true)}

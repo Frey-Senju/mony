@@ -73,6 +73,7 @@ function AccountsContent() {
   const [name, setName] = useState('')
   const [type, setType] = useState<Account['type']>('checking')
   const [balance, setBalance] = useState('0')
+  const [currency, setCurrency] = useState('BRL')
   const [color, setColor] = useState('#0071E3')
   const [icon, setIcon] = useState('🏦')
   const [isDefault, setIsDefault] = useState(false)
@@ -151,6 +152,7 @@ function AccountsContent() {
     setName('')
     setType('checking')
     setBalance('0')
+    setCurrency('BRL')
     setColor('#0071E3')
     setIcon('🏦')
     setIsDefault(accounts.length === 0)
@@ -162,6 +164,7 @@ function AccountsContent() {
     setName(acct.name)
     setType(acct.type)
     setBalance(String(acct.balance))
+    setCurrency(acct.currency || 'BRL')
     setColor(acct.color || '#0071E3')
     setIcon(acct.icon || '🏦')
     setIsDefault(acct.is_default)
@@ -178,7 +181,7 @@ function AccountsContent() {
         name: name.trim(),
         type,
         balance: parseFloat(balance) || 0,
-        currency: 'BRL',
+        currency,
         color,
         icon,
         is_default: isDefault,
@@ -969,6 +972,23 @@ function AccountsContent() {
                     className="input-base"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label htmlFor="acct-currency" className="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1">
+                  Moeda da conta (Multi-Moeda)
+                </label>
+                <select
+                  id="acct-currency"
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value)}
+                  className="input-base"
+                >
+                  <option value="BRL">🇧🇷 Real (BRL)</option>
+                  <option value="USD">🇺🇸 Dólar Americano (USD)</option>
+                  <option value="EUR">🇪🇺 Euro (EUR)</option>
+                  <option value="GBP">🇬🇧 Libra Esterlina (GBP)</option>
+                </select>
               </div>
 
               <div>

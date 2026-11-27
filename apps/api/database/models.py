@@ -1122,3 +1122,63 @@ class ValuerWatchlistItem(Base):
     )
 
     user = relationship("User")
+
+
+class ApiKey(Base):
+    """Personal API keys for Mony MCP Server, REST API & subscribable .ics Calendar feeds (EPIC-013)."""
+
+    __tablename__ = "api_keys"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(120), nullable=False)
+    key_prefix = Column(String(24), nullable=False)
+    key_hash = Column(String(64), nullable=False, unique=True)
+    scopes = Column(JSON, nullable=False, default=lambda: ["read", "mcp", "calendar_ics"])
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("idx_api_keys_user", "user_id"),)
+    user = relationship("User")
+
+
+class OutgoingWebhook(Base):
+    """User-defined outgoing webhooks for Zapier, Make, n8n, Slack & Discord (EPIC-013)."""
+
+    __tablename__ = "outgoing_webhooks"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(120), nullable=False)
+    url = Column(String(500), nullable=False)
+    secret = Column(String(120), nullable=False)
+    events = Column(JSON, nullable=False, default=lambda: ["transaction.created", "budget.alert", "valuer.target_hit"])
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_status_code = Column(Integer, nullable=True)
+    last_triggered_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (Index("idx_outgoing_webhooks_user", "user_id"),)
+    user = relationship("User")
+
+
+class IntegrationChannel(Base):
+    """Connected messaging / inbound receipt channels: WhatsApp, Telegram, Email (EPIC-013)."""
+
+    __tablename__ = "integration_channels"
+
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    user_id = Column(PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    provider = Column(String(32), nullable=False)  # whatsapp | telegram | email_receipt
+    identifier = Column(String(180), nullable=False)
+    webhook_token = Column(String(80), nullable=False, unique=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    config = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_integration_channel_user_provider"),
+        Index("idx_integration_channels_user", "user_id"),
+    )
+    user = relationship("User")

@@ -229,6 +229,14 @@ export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps)
         run: go('/dashboard/valuer'),
       },
       {
+        id: 'nav-integrations',
+        label: 'Integrações, Servidor MCP, WhatsApp, .ics & Webhooks',
+        group: 'Configurações',
+        keywords: 'integracoes mcp claude chatgpt whatsapp telegram google agenda ics webhooks zapier n8n multi moeda fx',
+        icon: <SlidersHorizontal className="w-4 h-4" aria-hidden="true" />,
+        run: go('/settings/integrations'),
+      },
+      {
         id: 'nav-debts',
         label: 'Dívidas, Financiamentos & Patrimônio Líquido',
         group: 'Navegação',

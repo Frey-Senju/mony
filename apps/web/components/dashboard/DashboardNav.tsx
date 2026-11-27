@@ -101,7 +101,8 @@ const NAV_GROUPS: NavGroup[] = [
 
 const SECONDARY_ITEMS: NavItem[] = [
   { href: '/settings/profile', label: 'Perfil & 2FA', testId: 'nav-profile', icon: <UserCircle className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
-  { href: '/settings/connections', label: 'Conexões', testId: 'nav-connections', badgeKey: 'openfinance', icon: <Landmark className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/settings/connections', label: 'Open Finance', testId: 'nav-connections', badgeKey: 'openfinance', icon: <Landmark className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+  { href: '/settings/integrations', label: 'Integrações & MCP', testId: 'nav-integrations', icon: <SlidersHorizontal className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
   { href: '/settings/appearance', label: 'Aparência', testId: 'nav-appearance', icon: <Palette className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
 ]
 
