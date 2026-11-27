@@ -83,6 +83,7 @@ const NAV_GROUPS: NavGroup[] = [
     title: 'Patrimônio & Futuro',
     items: [
       { href: '/dashboard/investments', label: 'Investimentos', testId: 'nav-investments', icon: <TrendingUp className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
+      { href: '/dashboard/valuer', label: 'Valuer B3', testId: 'nav-valuer', icon: <Sparkles className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
       { href: '/dashboard/debts', label: 'Dívidas & Patrimônio', testId: 'nav-debts', icon: <Scale className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
       { href: '/dashboard/goals', label: 'Metas', testId: 'nav-goals', icon: <Target className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },
       { href: '/dashboard/simulators', label: 'Simuladores', testId: 'nav-simulators', icon: <Calculator className="w-[18px] h-[18px] shrink-0" aria-hidden="true" /> },

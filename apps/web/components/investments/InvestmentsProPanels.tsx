@@ -191,6 +191,21 @@ export function RebalancePanel({ token }: { token: string }) {
   const [targets, setTargets] = useState<Record<string, number>>({})
   const [saving, setSaving] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
+  const [valuerTop, setValuerTop] = useState<
+    Array<{ ticker: string; name: string; price: number; consensus_price: number | null; margin_of_safety_pct: number; score: number }>
+  >([])
+
+  useEffect(() => {
+    if (!token) return
+    fetch(`${API_URL}/valuer/portfolio-valuation`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.top_buy_priority) setValuerTop(d.top_buy_priority)
+      })
+      .catch(() => undefined)
+  }, [token])
 
   const fetchPlan = useCallback(
     async (amt: number) => {
@@ -358,6 +373,42 @@ export function RebalancePanel({ token }: { token: string }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* EPIC-011 Valuer Mode: Prioritize Portfolio Holdings with Highest Margin of Safety */}
+      {valuerTop.length > 0 && (
+        <div className="glass-card p-4 space-y-2.5 border-emerald-400/35 bg-emerald-500/5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h4 className="text-xs font-bold text-emerald-800 dark:text-emerald-200 uppercase tracking-wider">
+              🎯 Modo Valuer · Ordem de Prioridade pelo Preço Teto (Maior Margem de Segurança)
+            </h4>
+            <span className="text-[11px] text-slate-500">Baseado em Consenso Bazin / Graham / Gordon</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+            {valuerTop.slice(0, 4).map((item, idx) => (
+              <div key={item.ticker} className="p-2.5 rounded-xl bg-white/65 dark:bg-white/5 border border-white/60 dark:border-white/10 text-xs space-y-0.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-slate-900 dark:text-white">
+                    #{idx + 1} {item.ticker}
+                  </span>
+                  <span
+                    className={`font-bold tabular-nums ${
+                      item.margin_of_safety_pct >= 0
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-rose-600 dark:text-rose-400'
+                    }`}
+                  >
+                    {item.margin_of_safety_pct >= 0 ? '+' : ''}
+                    {item.margin_of_safety_pct.toFixed(1)}%
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500 truncate">
+                  {brl(item.price)} vs Teto {item.consensus_price ? brl(item.consensus_price) : '—'} · Score {item.score}
+                </p>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import Link from 'next/link'
 import {
   ResponsiveContainer,
   PieChart,
@@ -39,6 +40,8 @@ import {
   DividendCalendarPanel,
   TaxReportPanel,
 } from '@/components/investments/InvestmentsProPanels'
+import { AssetDossierModal } from '@/components/valuer/AssetDossierModal'
+import { verdictBadgeClasses, type ValuerAsset } from '@/components/valuer/ValuerTypes'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -152,6 +155,8 @@ function InvestmentsContent() {
   const token = tokens?.access_token
 
   const [portfolio, setPortfolio] = useState<PortfolioData | null>(null)
+  const [valuationMap, setValuationMap] = useState<Record<string, ValuerAsset>>({})
+  const [dossierTicker, setDossierTicker] = useState<string | null>(null)
   const [trades, setTrades] = useState<TradeRow[]>([])
   const [dividends, setDividends] = useState<DividendRow[]>([])
   const [loading, setLoading] = useState(true)
@@ -211,14 +216,19 @@ function InvestmentsContent() {
     if (!token) return
     setLoading(true)
     try {
-      const [pRes, tRes, dRes] = await Promise.all([
+      const [pRes, tRes, dRes, vRes] = await Promise.all([
         fetch(`${API_URL}/investments/portfolio`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API_URL}/investments/trades`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`${API_URL}/investments/dividends`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`${API_URL}/valuer/portfolio-valuation`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null),
       ])
       if (pRes.ok) setPortfolio(await pRes.json())
       if (tRes.ok) setTrades(await tRes.json())
       if (dRes.ok) setDividends(await dRes.json())
+      if (vRes?.ok) {
+        const vd = await vRes.json()
+        setValuationMap(vd.by_ticker || {})
+      }
     } catch {
       setError('Falha ao carregar carteira de investimentos.')
     } finally {
@@ -527,6 +537,13 @@ function InvestmentsContent() {
                 e.target.value = ''
               }}
             />
+            <Link
+              href="/dashboard/valuer"
+              className="liquid-btn liquid-btn-primary inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-semibold"
+            >
+              <TrendingUp className="w-3.5 h-3.5" />
+              Mony Valuer B3
+            </Link>
             <button
               type="button"
               onClick={handleRefreshQuotes}
@@ -878,6 +895,7 @@ function InvestmentsContent() {
                     <th className="px-3 py-3 text-right">Saldo Atual</th>
                     <th className="px-3 py-3 text-right">Lucro / Prej.</th>
                     <th className="px-3 py-3 text-right">DY 12m</th>
+                    <th className="px-3 py-3 text-right">Preço Teto (Valuer)</th>
                     <th className="px-3 py-3 text-right">P/L · P/VP</th>
                     <th className="px-3 py-3 text-right">% Cart.</th>
                     <th className="px-3 py-3 text-right">Ações</th>
@@ -896,7 +914,18 @@ function InvestmentsContent() {
                           </span>
                           <div className="min-w-0">
                             <div className="flex items-center gap-1.5">
-                              <span className="font-bold text-slate-900 dark:text-white">{a.ticker}</span>
+                              {a.asset_class !== 'fixed_income' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setDossierTicker(a.ticker)}
+                                  title="Abrir Dossiê Valuer & Análise Técnica"
+                                  className="font-bold text-slate-900 dark:text-white hover:text-blue-600 dark:hover:text-blue-400 hover:underline"
+                                >
+                                  {a.ticker}
+                                </button>
+                              ) : (
+                                <span className="font-bold text-slate-900 dark:text-white">{a.ticker}</span>
+                              )}
                               <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-white/60 dark:bg-white/10 text-slate-600 dark:text-slate-300">
                                 {a.asset_class_label}
                               </span>
@@ -943,6 +972,26 @@ function InvestmentsContent() {
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums font-semibold text-emerald-600 dark:text-emerald-400">
                         {a.dy_12m != null ? `${a.dy_12m.toFixed(2)}%` : '—'}
+                      </td>
+                      <td className="px-3 py-3 text-right tabular-nums whitespace-nowrap">
+                        {(() => {
+                          const val = valuationMap[a.ticker.toUpperCase()]
+                          if (!val || !val.consensus_price) return <span className="text-slate-400">—</span>
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => setDossierTicker(a.ticker)}
+                              className="inline-flex flex-col items-end gap-0.5 hover:opacity-85"
+                              title="Clique para abrir Preço Teto Bazin/Graham/Gordon e RSI(14)"
+                            >
+                              <span className="font-bold text-slate-900 dark:text-white">{brl(val.consensus_price)}</span>
+                              <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border ${verdictBadgeClasses(val.verdict)}`}>
+                                {val.margin_of_safety_pct >= 0 ? '+' : ''}
+                                {val.margin_of_safety_pct.toFixed(1)}% · {val.verdict_label}
+                              </span>
+                            </button>
+                          )
+                        })()}
                       </td>
                       <td className="px-3 py-3 text-right tabular-nums text-slate-600 dark:text-slate-300">
                         {a.pe_ratio != null || a.pvp_ratio != null
@@ -1380,6 +1429,12 @@ function InvestmentsContent() {
         loading={deletingItem}
         onConfirm={executePendingDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+
+      <AssetDossierModal
+        ticker={dossierTicker}
+        token={token}
+        onClose={() => setDossierTicker(null)}
       />
     </div>
   )

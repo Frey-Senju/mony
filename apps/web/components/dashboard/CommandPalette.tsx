@@ -221,6 +221,14 @@ export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps)
         run: go('/dashboard/investments'),
       },
       {
+        id: 'nav-valuer',
+        label: 'Mony Valuer · Preço Teto, Radar B3 & Mata-Mata',
+        group: 'Navegação',
+        keywords: 'valuer adapta preco teto bazin graham gordon radar barganha dividendos mata-mata markets academy',
+        icon: <Sparkles className="w-4 h-4" aria-hidden="true" />,
+        run: go('/dashboard/valuer'),
+      },
+      {
         id: 'nav-debts',
         label: 'Dívidas, Financiamentos & Patrimônio Líquido',
         group: 'Navegação',

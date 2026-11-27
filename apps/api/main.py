@@ -29,6 +29,7 @@ from routes.recurring import router as recurring_router
 from routes.reports import router as reports_router
 from routes.rules import router as rules_router
 from routes.transactions import router as transactions_router
+from routes.valuer import router as valuer_router
 
 app = FastAPI(
     title="Mony API",
@@ -111,6 +112,7 @@ app.include_router(rules_router)
 app.include_router(cron_router)
 app.include_router(push_router)
 app.include_router(credit_cards_router)
+app.include_router(valuer_router)
 
 
 @app.get("/")
