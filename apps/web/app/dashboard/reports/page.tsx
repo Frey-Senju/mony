@@ -8,6 +8,7 @@ import { MonthlySummaryCard } from '@/components/reports/MonthlySummaryCard'
 import { CategoryBreakdownChart } from '@/components/reports/CategoryBreakdownChart'
 import { ReportsAnalyticsPro } from '@/components/reports/ReportsAnalyticsPro'
 import { shiftMonth, useReports } from '@/hooks/useReports'
+import { useCategories } from '@/hooks/useCategories'
 import { useAuth } from '@/stores/auth/useAuth'
 import { exportReportToCSV } from '@/utils/export'
 
@@ -32,6 +33,11 @@ const MONTH_LABELS_PT_BR = [
   'Outubro',
   'Novembro',
   'Dezembro',
+]
+
+const MONTH_SHORT_PT_BR = [
+  'Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun',
+  'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez',
 ]
 
 export default function ReportsPage() {
@@ -62,6 +68,35 @@ function ReportsContent() {
   const [rangeApplied, setRangeApplied] = useState(false)
 
   const { summary, breakdown, loading, error, fetchReports } = useReports(token)
+  const { categories: userCategories } = useCategories(token)
+
+  useEffect(() => {
+    document.title = `Mony · Relatórios (${MONTH_LABELS_PT_BR[month - 1]} ${year})`
+  }, [year, month])
+
+  useEffect(() => {
+    if (mode !== 'month') return
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) {
+        return
+      }
+      if (!e.altKey || e.ctrlKey || e.metaKey) return
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        const next = shiftMonth(year, month, -1)
+        setYear(next.year)
+        setMonth(next.month)
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        const next = shiftMonth(year, month, 1)
+        setYear(next.year)
+        setMonth(next.month)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mode, year, month])
 
   useEffect(() => {
     if (!token) return
@@ -197,38 +232,62 @@ function ReportsContent() {
           </div>
 
           {mode === 'month' && (
-            <div className="flex items-center gap-3 flex-wrap" data-testid="month-selector">
-              <button
-                type="button"
-                onClick={handlePrevMonth}
-                className="px-3 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                data-testid="month-prev"
-                aria-label="Mês anterior"
-              >
-                ← Anterior
-              </button>
-              <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
-                <span>Mês:</span>
-                <input
-                  type="month"
-                  value={monthInputValue}
-                  onChange={handleMonthInputChange}
-                  className="px-3 py-2 border border-slate-200 dark:border-slate-700 rounded-md bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100"
-                  data-testid="month-input"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={handleNextMonth}
-                className="px-3 py-2 text-sm rounded-md border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition"
-                data-testid="month-next"
-                aria-label="Próximo mês"
-              >
-                Próximo →
-              </button>
-              <span className="ml-auto text-sm text-slate-500 dark:text-slate-400" data-testid="selected-month-label">
-                {monthLabel}
-              </span>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 flex-wrap" data-testid="month-selector">
+                <button
+                  type="button"
+                  onClick={handlePrevMonth}
+                  className="liquid-btn liquid-btn-glass px-3 py-2 text-sm rounded-xl transition"
+                  data-testid="month-prev"
+                  aria-label="Mês anterior"
+                >
+                  ← Anterior
+                </button>
+                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                  <span>Mês:</span>
+                  <input
+                    type="month"
+                    value={monthInputValue}
+                    onChange={handleMonthInputChange}
+                    className="input-base py-1.5 w-auto text-sm"
+                    data-testid="month-input"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={handleNextMonth}
+                  className="liquid-btn liquid-btn-glass px-3 py-2 text-sm rounded-xl transition"
+                  data-testid="month-next"
+                  aria-label="Próximo mês"
+                >
+                  Próximo →
+                </button>
+                <span className="ml-auto text-sm font-semibold text-slate-600 dark:text-slate-300" data-testid="selected-month-label">
+                  {monthLabel}
+                </span>
+              </div>
+
+              {/* 12-Month Quick Picker Pills */}
+              <div className="flex items-center gap-1.5 flex-wrap pt-1" aria-label="Selecionar mês rapidamente">
+                {MONTH_SHORT_PT_BR.map((lbl, idx) => {
+                  const mNum = idx + 1
+                  const active = month === mNum
+                  return (
+                    <button
+                      key={lbl}
+                      type="button"
+                      onClick={() => setMonth(mNum)}
+                      className={`px-2.5 py-1 rounded-full text-xs font-semibold transition border ${
+                        active
+                          ? 'liquid-btn-primary border-transparent shadow-sm'
+                          : 'bg-white/45 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300 hover:bg-white/75 dark:hover:bg-white/15'
+                      }`}
+                    >
+                      {lbl}
+                    </button>
+                  )
+                })}
+              </div>
             </div>
           )}
 
@@ -372,6 +431,7 @@ function ReportsContent() {
           <CategoryBreakdownChart
             items={breakdown?.items ?? []}
             totalExpenses={breakdown?.total_expenses ?? 0}
+            categories={userCategories}
             loading={loading}
           />
         </section>

@@ -91,8 +91,33 @@ function RecurringContent() {
   const [detecting, setDetecting] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<RecurringRule | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [filterTab, setFilterTab] = useState<'all' | 'income' | 'expense' | 'pending'>('all')
   const [banner, setBanner] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const catMetaByName = React.useMemo(() => {
+    const map: Record<string, { color: string; icon?: string }> = {}
+    for (const c of categories) {
+      map[c.name.toLowerCase()] = { color: c.color, icon: c.icon }
+    }
+    return map
+  }, [categories])
+
+  const filteredRules = React.useMemo(() => {
+    return rules.filter((r) => {
+      if (filterTab === 'income') return r.type === 'income'
+      if (filterTab === 'expense') return r.type === 'expense'
+      if (filterTab === 'pending') return r.is_active && !r.generated_this_month
+      return true
+    })
+  }, [rules, filterTab])
+
+  const annualizedCost = (r: RecurringRule): number => {
+    const amt = Number(r.amount) || 0
+    if (r.frequency === 'weekly') return amt * 52
+    if (r.frequency === 'yearly') return amt
+    return amt * 12
+  }
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false)
@@ -415,8 +440,11 @@ function RecurringContent() {
         </div>
         <div className="glass-card p-5">
           <p className="text-xs font-medium text-slate-500 dark:text-slate-400">Despesas Fixas / mês</p>
-          <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1">
+          <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1 money-value">
             {formatBRL(summary.monthly_fixed_expenses)}
+          </p>
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 money-value">
+            {formatBRL(summary.monthly_fixed_expenses * 12)} / ano
           </p>
         </div>
         <div className="glass-card p-5">
@@ -432,6 +460,33 @@ function RecurringContent() {
           </p>
         </div>
       </div>
+
+      {/* Quick Filter Pills */}
+      {!loading && rules.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Filtrar recorrências">
+          {(
+            [
+              ['all', `Todas (${rules.length})`],
+              ['expense', `Despesas Fixas (${rules.filter((r) => r.type === 'expense').length})`],
+              ['income', `Receitas Fixas (${rules.filter((r) => r.type === 'income').length})`],
+              ['pending', `Pendentes no mês (${rules.filter((r) => r.is_active && !r.generated_this_month).length})`],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setFilterTab(key)}
+              className={`px-3 py-1.5 rounded-full text-xs font-semibold transition border ${
+                filterTab === key
+                  ? 'liquid-btn-primary border-transparent shadow-sm'
+                  : 'bg-white/50 dark:bg-white/5 border-white/60 dark:border-white/10 text-slate-700 dark:text-slate-300 hover:bg-white/75 dark:hover:bg-white/15'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Rules List */}
       {loading ? (
@@ -458,9 +513,18 @@ function RecurringContent() {
             Cadastrar primeira recorrência
           </button>
         </div>
+      ) : filteredRules.length === 0 ? (
+        <div className="glass-card p-8 text-center text-sm text-slate-500 dark:text-slate-400">
+          Nenhuma recorrência neste filtro.
+        </div>
       ) : (
         <div className="space-y-3">
-          {rules.map((rule) => (
+          {filteredRules.map((rule) => {
+            const catMeta = catMetaByName[(rule.category_name || '').toLowerCase()]
+            const catColor = catMeta?.color || '#64748b'
+            const catIcon = catMeta?.icon || '🏷️'
+            const annual = annualizedCost(rule)
+            return (
             <div
               key={rule.id}
               className={`glass-card p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-opacity ${
@@ -486,6 +550,17 @@ function RecurringContent() {
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white truncate">
                       {rule.description}
                     </h3>
+                    <span
+                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+                      style={{
+                        backgroundColor: `${catColor}20`,
+                        color: catColor,
+                        border: `1px solid ${catColor}45`,
+                      }}
+                    >
+                      <span aria-hidden="true">{catIcon}</span>
+                      <span>{rule.category_name}</span>
+                    </span>
                     {rule.source === 'ai_detected' && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-violet-100/80 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300">
                         <Sparkles className="w-3 h-3" aria-hidden="true" />
@@ -509,7 +584,7 @@ function RecurringContent() {
                     )}
                   </div>
                   <p className="text-xs text-slate-600 dark:text-slate-300 mt-1">
-                    Todo dia <strong>{rule.day_of_month}</strong> · {rule.category_name} ·{' '}
+                    Todo dia <strong>{rule.day_of_month}</strong> ·{' '}
                     {PAYMENT_METHOD_LABELS[rule.payment_method] || rule.payment_method}
                     {rule.account_name ? ` · ${rule.account_name}` : ''}
                   </p>
@@ -517,15 +592,20 @@ function RecurringContent() {
               </div>
 
               <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
-                <span
-                  className={`text-base font-bold ${
-                    rule.type === 'income'
-                      ? 'text-emerald-600 dark:text-emerald-400'
-                      : 'text-rose-600 dark:text-rose-400'
-                  }`}
-                >
-                  {rule.type === 'income' ? '+' : '-'} {formatBRL(rule.amount)}
-                </span>
+                <div className="text-right">
+                  <span
+                    className={`block text-base font-bold tabular-nums money-value ${
+                      rule.type === 'income'
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : 'text-rose-600 dark:text-rose-400'
+                    }`}
+                  >
+                    {rule.type === 'income' ? '+' : '-'} {formatBRL(rule.amount)}
+                  </span>
+                  <span className="block text-[11px] text-slate-500 dark:text-slate-400 tabular-nums money-value">
+                    {formatBRL(annual)}/ano
+                  </span>
+                </div>
 
                 <div className="flex items-center gap-1">
                   {rule.is_active && !rule.generated_this_month && (
@@ -565,7 +645,8 @@ function RecurringContent() {
                 </div>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
 

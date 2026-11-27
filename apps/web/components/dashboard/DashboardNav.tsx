@@ -206,6 +206,11 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         setCmdOpen((prev) => !prev)
         return
       }
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'i') {
+        e.preventDefault()
+        setAiOpen((prev) => !prev)
+        return
+      }
       if (inEditable) return
 
       if (e.shiftKey && !e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'p') {

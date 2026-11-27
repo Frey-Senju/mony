@@ -766,9 +766,14 @@ main > * {
   animation: monySavedFlash 1700ms ease-out both;
 }
 
+.mony-month-fade {
+  animation: monyFadeInUp 200ms var(--ease-spring) both;
+}
+
 :root[data-motion="off"] main > *,
 :root[data-motion="off"] .mony-check-pop,
-:root[data-motion="off"] .mony-saved-flash {
+:root[data-motion="off"] .mony-saved-flash,
+:root[data-motion="off"] .mony-month-fade {
   animation: none !important;
 }
 

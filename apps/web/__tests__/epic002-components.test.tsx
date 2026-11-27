@@ -63,7 +63,7 @@ describe('BudgetCard', () => {
   it('renders category name and amounts', () => {
     render(<BudgetCard budget={makeBudget()} onEdit={noop} onDelete={noop} />)
     expect(screen.getByText('Alimentação')).toBeInTheDocument()
-    expect(screen.getByText(/R\$\s*250/)).toBeInTheDocument()
+    expect(screen.getAllByText(/R\$\s*250/).length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText(/500/)).toBeInTheDocument()
   })
 

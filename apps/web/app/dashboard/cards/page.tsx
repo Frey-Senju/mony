@@ -16,7 +16,7 @@ import {
   Trash2,
   Edit3,
   Sparkles,
-  CheckCircle2,
+  Copy,
   AlertCircle,
   Calendar,
   DollarSign,
@@ -27,6 +27,8 @@ import {
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
 import { AISuggestionsBanner } from '@/components/ai/AISuggestionsBanner'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -110,6 +112,18 @@ function fmtDate(iso: string): string {
   return `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`
 }
 
+function daysUntilLabel(iso: string, verb: 'Fecha' | 'Vence'): string {
+  if (!iso || iso.length < 10) return ''
+  const target = new Date(`${iso.slice(0, 10)}T12:00:00`)
+  const today = new Date()
+  today.setHours(12, 0, 0, 0)
+  const diff = Math.round((target.getTime() - today.getTime()) / 86400000)
+  if (diff === 0) return `${verb} hoje`
+  if (diff === 1) return `${verb} amanhã`
+  if (diff > 1) return `${verb} em ${diff}d`
+  return ''
+}
+
 export default function CardsPage() {
   return (
     <PrivateRoute>
@@ -126,7 +140,8 @@ function CardsContent() {
   const [checkingAccounts, setCheckingAccounts] = useState<CheckingAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [banner, setBanner] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<CardItem | null>(null)
+  const [deletingCard, setDeletingCard] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Modal Create/Edit Card
@@ -242,7 +257,10 @@ function CardsContent() {
         throw new Error(errBody.detail || 'Erro ao salvar cartão')
       }
       setModalOpen(false)
-      setBanner(editingId ? 'Cartão atualizado com sucesso!' : 'Cartão cadastrado e pronto para controlar faturas!')
+      dispatchToast(
+        editingId ? 'Cartão atualizado com sucesso!' : 'Cartão cadastrado e pronto para controlar faturas!',
+        'success'
+      )
       await loadAll()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao salvar cartão')
@@ -251,14 +269,20 @@ function CardsContent() {
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!token || !confirm('Remover este cartão? Os lançamentos históricos serão preservados.')) return
-    await fetch(`${API_URL}/credit-cards/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    setBanner('Cartão removido.')
-    await loadAll()
+  const executeDeleteCard = async () => {
+    if (!token || !deleteTarget) return
+    setDeletingCard(true)
+    try {
+      await fetch(`${API_URL}/credit-cards/${deleteTarget.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      dispatchToast(`Cartão "${deleteTarget.name}" removido.`, 'info')
+      setDeleteTarget(null)
+      await loadAll()
+    } finally {
+      setDeletingCard(false)
+    }
   }
 
   const handlePayInvoice = async (e: React.FormEvent) => {
@@ -284,7 +308,7 @@ function CardsContent() {
         throw new Error(body.detail || 'Erro ao registrar pagamento')
       }
       setPayCard(null)
-      setBanner('Pagamento de fatura registrado como Transferência Interna (sem duplicar despesas)!')
+      dispatchToast('Pagamento de fatura registrado como Transferência Interna!', 'success')
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new Event('mony:transactions-updated'))
       }
@@ -329,17 +353,6 @@ function CardsContent() {
         </button>
       </header>
 
-      {banner && (
-        <div className="glass-card p-3.5 border-emerald-400/50 flex items-center justify-between text-sm text-emerald-700 dark:text-emerald-300">
-          <span className="flex items-center gap-2">
-            <CheckCircle2 className="w-4 h-4 shrink-0" />
-            {banner}
-          </span>
-          <button type="button" onClick={() => setBanner(null)} aria-label="Fechar">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
       {error && (
         <div className="glass-card p-3.5 border-rose-400/50 flex items-center gap-2 text-sm text-rose-700 dark:text-rose-300">
           <AlertCircle className="w-4 h-4 shrink-0" />
@@ -445,41 +458,61 @@ function CardsContent() {
             return (
               <section key={card.id} className="glass-panel p-5 space-y-4">
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-center">
-                  {/* Visual Liquid Glass Card */}
+                  {/* Visual Liquid Glass Physical Card with specular sheen */}
                   <div
-                    className="lg:col-span-4 rounded-2xl p-5 text-white shadow-lg relative overflow-hidden"
+                    className="lg:col-span-4 rounded-2xl p-5 text-white shadow-xl relative overflow-hidden border border-white/25 transition-transform duration-300 hover:-translate-y-0.5"
                     style={{
-                      background: `linear-gradient(135deg, ${card.color} 0%, #0f172a 100%)`,
+                      background: `radial-gradient(circle at 18% 12%, rgba(255,255,255,0.28) 0%, transparent 48%), linear-gradient(135deg, ${card.color} 0%, #0f172a 100%)`,
                     }}
                   >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="text-xs uppercase tracking-widest opacity-80 font-semibold">
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute -top-12 -right-12 w-36 h-36 rounded-full bg-white/15 blur-2xl"
+                    />
+                    <div className="relative flex items-center justify-between gap-1">
+                      <span className="text-xs uppercase tracking-widest opacity-85 font-semibold">
                         {card.brand}
                       </span>
                       <div className="flex items-center gap-1">
                         {card.external_account_id && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20 text-white">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-white/20 text-white backdrop-blur-sm">
                             Open Finance
                           </span>
                         )}
                         {card.is_best_buy_window && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-400/25 text-emerald-200 border border-emerald-300/30">
-                            Melhor janela!
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-400/30 text-emerald-100 border border-emerald-300/40 shadow-sm">
+                            ✨ Melhor dia!
                           </span>
                         )}
                       </div>
                     </div>
-                    <p className="text-lg font-extrabold mt-4 tracking-tight">{card.name}</p>
-                    <p className="font-mono text-xs opacity-80 mt-1">
+                    <p className="relative text-lg font-extrabold mt-4 tracking-tight">{card.name}</p>
+                    <p className="relative font-mono text-xs opacity-80 mt-1 tracking-wider">
                       •••• •••• •••• {card.last4 || '0000'}
                     </p>
-                    <div className="mt-5 flex items-end justify-between text-xs">
+                    <div className="relative mt-5 flex items-end justify-between text-xs gap-2">
                       <div>
-                        <span className="opacity-70 block text-[10px]">Fatura Aberta ({card.open_invoice_month})</span>
-                        <span className="text-lg font-extrabold">{brl(card.open_invoice_total)}</span>
+                        <span className="opacity-75 block text-[10px]">Fatura Aberta ({card.open_invoice_month})</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-lg font-extrabold tabular-nums money-value">{brl(card.open_invoice_total)}</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const formatted = brl(card.open_invoice_total)
+                              navigator.clipboard?.writeText(formatted).then(() => {
+                                dispatchToast(`Fatura ${card.name} copiada: ${formatted}`, 'info', { durationMs: 2500 })
+                              }).catch(() => undefined)
+                            }}
+                            title="Copiar total da fatura"
+                            aria-label={`Copiar valor da fatura de ${card.name}`}
+                            className="p-1 rounded-lg bg-white/15 hover:bg-white/25 text-white/90 transition"
+                          >
+                            <Copy className="w-3 h-3" aria-hidden="true" />
+                          </button>
+                        </div>
                       </div>
                       <div className="text-right">
-                        <span className="opacity-70 block text-[10px]">Melhor dia</span>
+                        <span className="opacity-75 block text-[10px]">Melhor dia</span>
                         <span className="font-bold">Dia {card.best_buy_day}</span>
                       </div>
                     </div>
@@ -488,15 +521,25 @@ function CardsContent() {
                   {/* Limit & Cycle Metrics */}
                   <div className="lg:col-span-8 space-y-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600 dark:text-slate-300">
+                      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
                         <span className="inline-flex items-center gap-1">
                           <Calendar className="w-3.5 h-3.5 text-[var(--accent)]" />
                           Fecha dia <strong>{card.closing_day}</strong> ({fmtDate(card.next_closing_date)})
                         </span>
+                        {daysUntilLabel(card.next_closing_date, 'Fecha') && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-500/15 text-blue-700 dark:text-blue-300">
+                            {daysUntilLabel(card.next_closing_date, 'Fecha')}
+                          </span>
+                        )}
                         <span>·</span>
                         <span>
                           Vence dia <strong>{card.due_day}</strong> ({fmtDate(card.next_due_date)})
                         </span>
+                        {daysUntilLabel(card.next_due_date, 'Vence') && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-800 dark:text-amber-300">
+                            {daysUntilLabel(card.next_due_date, 'Vence')}
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5">
@@ -524,7 +567,7 @@ function CardsContent() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => handleDelete(card.id)}
+                          onClick={() => setDeleteTarget(card)}
                           className="p-2 rounded-xl text-rose-500 hover:bg-rose-500/10"
                           aria-label="Excluir cartão"
                         >
@@ -841,6 +884,16 @@ function CardsContent() {
           </form>
         </div>
       )}
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Remover o cartão "${deleteTarget?.name || ''}"?`}
+        description="Os lançamentos históricos permanecerão salvos nas suas transações."
+        confirmLabel="Remover"
+        variant="danger"
+        loading={deletingCard}
+        onConfirm={executeDeleteCard}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

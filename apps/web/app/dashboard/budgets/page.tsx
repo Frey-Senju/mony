@@ -5,7 +5,10 @@ import { Plus, AlertTriangle, Sparkles, Check, RefreshCw, PieChart } from 'lucid
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { BudgetCard } from '@/components/budgets/BudgetCard'
 import { BudgetFormModal } from '@/components/budgets/BudgetFormModal'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 import { useBudgets, type Budget } from '@/hooks/useBudgets'
+import { useCategories } from '@/hooks/useCategories'
 import { useAuth } from '@/stores/auth/useAuth'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -48,13 +51,22 @@ function BudgetsContent() {
   const auth = useAuth()
   const token = auth.tokens?.access_token
   const { budgets, loading, error, addBudget, editBudget, removeBudget } = useBudgets(token)
+  const { categories: userCategories } = useCategories(token)
   const [modalOpen, setModalOpen] = useState(false)
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null)
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<Budget | null>(null)
+  const [deleting, setDeleting] = useState(false)
   const [aiPlan, setAiPlan] = useState<BudgetAISuggestionsPayload | null>(null)
   const [loadingAI, setLoadingAI] = useState(false)
   const [applyingCat, setApplyingCat] = useState<string | null>(null)
-  const [aiBanner, setAiBanner] = useState<string | null>(null)
+
+  const catMetaByName = React.useMemo(() => {
+    const map: Record<string, { color: string; icon?: string }> = {}
+    for (const c of userCategories) {
+      map[c.name.toLowerCase()] = { color: c.color, icon: c.icon }
+    }
+    return map
+  }, [userCategories])
 
   const loadAISuggestions = useCallback(async () => {
     if (!token) return
@@ -91,32 +103,51 @@ function BudgetsContent() {
   const handleSubmit = async (data: { category: string; limit_amount: number }) => {
     if (editingBudget) {
       await editBudget(editingBudget.id, { limit_amount: data.limit_amount })
+      dispatchToast(`Budget de ${editingBudget.category} atualizado!`, 'success')
     } else {
       await addBudget(data)
+      dispatchToast(`Budget de ${data.category} criado!`, 'success')
     }
     await loadAISuggestions()
   }
 
-  const handleDelete = async (id: string) => {
-    if (deleteConfirm !== id) {
-      setDeleteConfirm(id)
-      return
+  const handleRequestDelete = (id: string) => {
+    const found = budgets.find((b) => b.id === id)
+    if (found) setDeleteTarget(found)
+  }
+
+  const executeDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    const removed = deleteTarget
+    try {
+      await removeBudget(removed.id)
+      setDeleteTarget(null)
+      await loadAISuggestions()
+      dispatchToast(`Budget "${removed.category}" removido.`, 'info', {
+        action: {
+          label: 'Desfazer',
+          onClick: async () => {
+            await addBudget({ category: removed.category, limit_amount: Number(removed.limit_amount) })
+            await loadAISuggestions()
+            dispatchToast(`Budget "${removed.category}" restaurado!`, 'success')
+          },
+        },
+      })
+    } finally {
+      setDeleting(false)
     }
-    await removeBudget(id)
-    setDeleteConfirm(null)
-    await loadAISuggestions()
   }
 
   const applyRecommendation = async (rec: BudgetRecommendation) => {
     setApplyingCat(rec.category)
-    setAiBanner(null)
     try {
       if (rec.action === 'adjust' && rec.budget_id) {
         await editBudget(rec.budget_id, { limit_amount: rec.suggested_limit })
       } else {
         await addBudget({ category: rec.category, limit_amount: rec.suggested_limit })
       }
-      setAiBanner(`Budget de ${rec.category} configurado para ${brl(rec.suggested_limit)}!`)
+      dispatchToast(`Budget de ${rec.category} configurado para ${brl(rec.suggested_limit)}!`, 'success')
       await loadAISuggestions()
     } finally {
       setApplyingCat(null)
@@ -134,7 +165,7 @@ function BudgetsContent() {
           await addBudget({ category: rec.category, limit_amount: rec.suggested_limit })
         }
       }
-      setAiBanner(`${aiPlan.recommendations.length} sugestões da Mony IA aplicadas aos seus budgets!`)
+      dispatchToast(`${aiPlan.recommendations.length} sugestões da Mony IA aplicadas aos seus budgets!`, 'success')
       await loadAISuggestions()
     } finally {
       setApplyingCat(null)
@@ -238,12 +269,6 @@ function BudgetsContent() {
           </div>
         </div>
 
-        {aiBanner && (
-          <div className="glass-card p-3 border-emerald-400/50 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-            {aiBanner}
-          </div>
-        )}
-
         {loadingAI && !aiPlan ? (
           <p className="text-xs text-slate-500">Analisando sua renda média e histórico de gastos...</p>
         ) : !aiPlan || aiPlan.recommendations.length === 0 ? (
@@ -335,14 +360,19 @@ function BudgetsContent() {
 
       {!loading && budgets.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {budgets.map((budget) => (
-            <BudgetCard
-              key={budget.id}
-              budget={budget}
-              onEdit={handleOpenEdit}
-              onDelete={handleDelete}
-            />
-          ))}
+          {budgets.map((budget) => {
+            const meta = catMetaByName[budget.category.toLowerCase()]
+            return (
+              <BudgetCard
+                key={budget.id}
+                budget={budget}
+                categoryColor={meta?.color}
+                categoryIcon={meta?.icon}
+                onEdit={handleOpenEdit}
+                onDelete={handleRequestDelete}
+              />
+            )
+          })}
         </div>
       )}
 
@@ -351,6 +381,17 @@ function BudgetsContent() {
         editingBudget={editingBudget}
         onClose={() => setModalOpen(false)}
         onSubmit={handleSubmit}
+      />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Excluir budget de ${deleteTarget?.category || ''}?`}
+        description="Seus lançamentos permanecem intactos e você poderá desfazer logo após excluir."
+        confirmLabel="Excluir"
+        variant="danger"
+        loading={deleting}
+        onConfirm={executeDelete}
+        onCancel={() => setDeleteTarget(null)}
       />
     </div>
   )

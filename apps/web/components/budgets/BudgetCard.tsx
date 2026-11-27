@@ -6,25 +6,30 @@ import type { Budget } from '@/hooks/useBudgets'
 
 interface BudgetCardProps {
   budget: Budget
+  categoryColor?: string
+  categoryIcon?: string
   onEdit: (budget: Budget) => void
   onDelete: (id: string) => void
 }
 
 const PROGRESS_COLORS = {
   ok: {
-    bar: 'bg-green-500',
-    text: 'text-green-700 dark:text-green-400',
-    bg: 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800',
+    bar: 'bg-gradient-to-r from-emerald-500 to-teal-400',
+    text: 'text-emerald-700 dark:text-emerald-300',
+    badge: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/25',
+    border: 'border-emerald-500/25',
   },
   warning: {
-    bar: 'bg-yellow-500',
-    text: 'text-yellow-700 dark:text-yellow-400',
-    bg: 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800',
+    bar: 'bg-gradient-to-r from-amber-500 to-orange-400',
+    text: 'text-amber-700 dark:text-amber-300',
+    badge: 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30',
+    border: 'border-amber-500/35',
   },
   exceeded: {
-    bar: 'bg-red-500',
-    text: 'text-red-700 dark:text-red-400',
-    bg: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+    bar: 'bg-gradient-to-r from-rose-500 to-red-500',
+    text: 'text-rose-700 dark:text-rose-300',
+    badge: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30',
+    border: 'border-rose-500/40',
   },
 }
 
@@ -32,52 +37,110 @@ function formatBRL(value: number): string {
   return value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-export function BudgetCard({ budget, onEdit, onDelete }: BudgetCardProps) {
+function getDaysRemainingInMonth(): number {
+  const now = new Date()
+  const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  return Math.max(1, lastDay - now.getDate() + 1)
+}
+
+export function BudgetCard({
+  budget,
+  categoryColor,
+  categoryIcon,
+  onEdit,
+  onDelete,
+}: BudgetCardProps) {
   const color = PROGRESS_COLORS[budget.alert_level]
-  const pct = Math.min(Number(budget.percentage), 100)
+  const pct = Math.min(Number(budget.percentage) || 0, 100)
+  const spent = Number(budget.spent_amount) || 0
+  const limit = Number(budget.limit_amount) || 0
+  const remaining = limit - spent
+  const daysLeft = getDaysRemainingInMonth()
+  const dailySafe = remaining > 0 ? remaining / daysLeft : 0
 
   return (
-    <div className={`border rounded-lg p-4 ${color.bg}`}>
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <p className="font-semibold text-slate-900 dark:text-slate-100">{budget.category}</p>
-          <p className={`text-xs mt-0.5 ${color.text}`}>
-            {budget.alert_level === 'exceeded' ? 'Limite ultrapassado' :
-             budget.alert_level === 'warning' ? 'Próximo do limite' : 'Dentro do limite'}
-          </p>
+    <div className={`glass-card p-5 border ${color.border} transition-all hover:shadow-lg`}>
+      <div className="flex items-start justify-between gap-2 mb-3.5">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <span
+            className="w-10 h-10 rounded-xl flex items-center justify-center text-lg shrink-0 border"
+            style={
+              categoryColor
+                ? {
+                    backgroundColor: `${categoryColor}20`,
+                    borderColor: `${categoryColor}45`,
+                  }
+                : undefined
+            }
+            aria-hidden="true"
+          >
+            {categoryIcon || '🏷️'}
+          </span>
+          <div className="min-w-0">
+            <p className="font-bold text-slate-900 dark:text-white truncate">{budget.category}</p>
+            <span
+              className={`inline-flex items-center px-2 py-0.5 mt-0.5 rounded-full text-[11px] font-semibold border ${color.badge}`}
+            >
+              {budget.alert_level === 'exceeded'
+                ? 'Limite ultrapassado'
+                : budget.alert_level === 'warning'
+                  ? 'Próximo do limite'
+                  : 'Dentro do limite'}
+            </span>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 shrink-0">
           <button
+            type="button"
             onClick={() => onEdit(budget)}
-            className="p-1.5 rounded hover:bg-black/10 transition-colors"
+            className="p-1.5 rounded-xl hover:bg-white/60 dark:hover:bg-white/10 transition-colors"
             aria-label="Editar budget"
           >
-            <Pencil className="w-4 h-4 text-slate-500" />
+            <Pencil className="w-4 h-4 text-slate-500 dark:text-slate-300" />
           </button>
           <button
+            type="button"
             onClick={() => onDelete(budget.id)}
-            className="p-1.5 rounded hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
+            className="p-1.5 rounded-xl hover:bg-rose-500/15 transition-colors"
             aria-label="Excluir budget"
           >
-            <Trash2 className="w-4 h-4 text-red-500" />
+            <Trash2 className="w-4 h-4 text-rose-500" />
           </button>
         </div>
       </div>
 
-      <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-2 mb-2">
+      <div className="w-full bg-slate-200/75 dark:bg-white/10 rounded-full h-2.5 mb-3 overflow-hidden">
         <div
-          className={`${color.bar} h-2 rounded-full transition-all`}
+          className={`${color.bar} h-full rounded-full transition-all duration-500 ease-out`}
           style={{ width: `${pct}%` }}
         />
       </div>
 
-      <div className="flex justify-between text-sm">
-        <span className="text-slate-600 dark:text-slate-400">
-          {formatBRL(Number(budget.spent_amount))} gastos
+      <div className="flex justify-between items-baseline text-sm gap-2">
+        <span className="text-slate-700 dark:text-slate-300 font-medium tabular-nums money-value">
+          {formatBRL(spent)} gastos
         </span>
-        <span className={`font-medium ${color.text}`}>
-          {Number(budget.percentage).toFixed(1)}% de {formatBRL(Number(budget.limit_amount))}
+        <span className={`font-bold tabular-nums money-value ${color.text}`}>
+          {Number(budget.percentage).toFixed(1)}% de {formatBRL(limit)}
         </span>
+      </div>
+
+      {/* Daily safe allowance indicator */}
+      <div className="mt-2.5 pt-2.5 border-t border-white/40 dark:border-white/10 flex items-center justify-between text-[11px]">
+        {remaining >= 0 ? (
+          <>
+            <span className="text-slate-500 dark:text-slate-400">
+              Restam <strong className="text-slate-700 dark:text-slate-200 money-value">{formatBRL(remaining)}</strong> ({daysLeft}d no mês)
+            </span>
+            <span className="font-semibold text-emerald-700 dark:text-emerald-300 tabular-nums money-value">
+              {formatBRL(dailySafe)}/dia
+            </span>
+          </>
+        ) : (
+          <span className="text-rose-600 dark:text-rose-400 font-semibold money-value">
+            Excedido em {formatBRL(Math.abs(remaining))} neste mês
+          </span>
+        )}
       </div>
     </div>
   )

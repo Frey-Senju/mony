@@ -2,7 +2,8 @@
 
 import React from 'react'
 import Link from 'next/link'
-import { TrendingDown, TrendingUp, Wallet, Target } from 'lucide-react'
+import { Copy, TrendingDown, TrendingUp, Wallet, Target } from 'lucide-react'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 
 interface SummaryCard {
   title: string
@@ -119,18 +120,37 @@ export function SummaryCards({
       {cards.map((card) => {
         const inner = (
           <>
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-start justify-between gap-3 group">
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
                   {card.title}
                 </p>
-                <p
-                  className={`text-2xl font-bold text-slate-900 dark:text-white mt-2 truncate ${
-                    card.isMoney ? 'money-value' : ''
-                  }`}
-                >
-                  {card.value}
-                </p>
+                <div className="flex items-center gap-1.5 mt-2">
+                  <p
+                    className={`text-2xl font-bold text-slate-900 dark:text-white truncate ${
+                      card.isMoney ? 'money-value' : ''
+                    }`}
+                  >
+                    {card.value}
+                  </p>
+                  {card.isMoney && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        navigator.clipboard?.writeText(String(card.value)).then(() => {
+                          dispatchToast(`${card.title} copiado: ${card.value}`, 'info', { durationMs: 2500 })
+                        }).catch(() => undefined)
+                      }}
+                      title="Copiar valor"
+                      aria-label={`Copiar ${card.title}`}
+                      className="no-print p-1 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-slate-900 dark:hover:text-white transition shrink-0"
+                    >
+                      <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
                 {card.subtitle && (
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
                     {card.subtitle}

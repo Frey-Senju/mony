@@ -1,14 +1,8 @@
 'use client'
 
 import React from 'react'
-import { TrendingDown, TrendingUp, Wallet } from 'lucide-react'
-
-/**
- * MonthlySummaryCard — three-card grid showing income, expenses, and net
- * balance for a selected month. Visual tokens match
- * ``components/dashboard/SummaryCards.tsx`` (Story 1.5) for consistency
- * across the dashboard.
- */
+import { Copy, TrendingDown, TrendingUp, Wallet } from 'lucide-react'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 
 export interface MonthlySummaryCardProps {
   totalIncome: number
@@ -18,10 +12,19 @@ export interface MonthlySummaryCardProps {
 }
 
 function formatBRL(value: number): string {
-  return value.toLocaleString('pt-BR', {
+  return (Number(value) || 0).toLocaleString('pt-BR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })
+}
+
+async function copyAmount(label: string, formatted: string) {
+  try {
+    await navigator.clipboard.writeText(formatted)
+    dispatchToast(`${label} copiado: ${formatted}`, 'info', { durationMs: 2500 })
+  } catch {
+    // clipboard unavailable
+  }
 }
 
 export function MonthlySummaryCard({
@@ -37,16 +40,17 @@ export function MonthlySummaryCard({
         data-testid="monthly-summary-loading"
       >
         {[0, 1, 2].map((i) => (
-          <div
-            key={i}
-            className="h-28 bg-slate-200 dark:bg-slate-700 rounded-lg animate-pulse"
-          />
+          <div key={i} className="h-32 glass-card animate-pulse" />
         ))}
       </div>
     )
   }
 
   const balancePositive = netBalance >= 0
+  const incomeFormatted = `R$ ${formatBRL(totalIncome)}`
+  const expenseFormatted = `-R$ ${formatBRL(totalExpenses)}`
+  const netFormatted = `${balancePositive ? '' : '-'}R$ ${formatBRL(Math.abs(netBalance))}`
+  const savingsRate = totalIncome > 0 ? Math.round((netBalance / totalIncome) * 100) : null
 
   return (
     <div
@@ -54,83 +58,112 @@ export function MonthlySummaryCard({
       data-testid="monthly-summary"
     >
       <div
-        className="border rounded-lg p-6 transition-all hover:shadow-md bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800"
+        className="glass-card p-6 border border-emerald-500/25 transition-all hover:shadow-lg group"
         data-testid="summary-income"
       >
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
-              Receitas
-            </p>
-            <p className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-2">
-              R$ {formatBRL(totalIncome)}
-            </p>
-            <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Receitas</p>
+            <div className="flex items-center gap-1.5 mt-2">
+              <p className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400 tabular-nums money-value truncate">
+                {incomeFormatted}
+              </p>
+              <button
+                type="button"
+                onClick={() => copyAmount('Receitas', incomeFormatted)}
+                title="Copiar valor"
+                aria-label="Copiar total de receitas"
+                className="no-print p-1 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-slate-900 dark:hover:text-white transition"
+              >
+                <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Total de entradas no mês
             </p>
           </div>
-          <div className="text-green-600 dark:text-green-400 flex-shrink-0">
-            <TrendingUp className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/15 border border-emerald-500/25 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+            <TrendingUp className="w-5 h-5" aria-hidden="true" />
           </div>
         </div>
       </div>
 
       <div
-        className="border rounded-lg p-6 transition-all hover:shadow-md bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800"
+        className="glass-card p-6 border border-rose-500/25 transition-all hover:shadow-lg group"
         data-testid="summary-expenses"
       >
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
-              Despesas
-            </p>
-            <p className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-2">
-              -R$ {formatBRL(totalExpenses)}
-            </p>
-            <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Despesas</p>
+            <div className="flex items-center gap-1.5 mt-2">
+              <p className="text-2xl font-extrabold text-rose-600 dark:text-rose-400 tabular-nums money-value truncate">
+                {expenseFormatted}
+              </p>
+              <button
+                type="button"
+                onClick={() => copyAmount('Despesas', expenseFormatted)}
+                title="Copiar valor"
+                aria-label="Copiar total de despesas"
+                className="no-print p-1 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-slate-900 dark:hover:text-white transition"
+              >
+                <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Total de saídas no mês
             </p>
           </div>
-          <div className="text-red-600 dark:text-red-400 flex-shrink-0">
-            <TrendingDown className="w-6 h-6" />
+          <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-600 dark:text-rose-400 flex items-center justify-center shrink-0">
+            <TrendingDown className="w-5 h-5" aria-hidden="true" />
           </div>
         </div>
       </div>
 
       <div
-        className={`border rounded-lg p-6 transition-all hover:shadow-md ${
-          balancePositive
-            ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
-            : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+        className={`glass-card p-6 border transition-all hover:shadow-lg group ${
+          balancePositive ? 'border-blue-500/25' : 'border-rose-500/35'
         }`}
         data-testid="summary-net-balance"
       >
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
-            <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
-              Saldo líquido
-            </p>
-            <p
-              className={`text-2xl font-bold mt-2 ${
-                balancePositive
-                  ? 'text-blue-700 dark:text-blue-300'
-                  : 'text-red-700 dark:text-red-300'
-              }`}
-            >
-              {balancePositive ? '' : '-'}R$ {formatBRL(Math.abs(netBalance))}
-            </p>
-            <p className="text-xs text-slate-500 dark:text-slate-500 mt-1">
-              Receitas − despesas
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Saldo líquido</p>
+            <div className="flex items-center gap-1.5 mt-2">
+              <p
+                className={`text-2xl font-extrabold tabular-nums money-value truncate ${
+                  balancePositive
+                    ? 'text-blue-600 dark:text-blue-400'
+                    : 'text-rose-600 dark:text-rose-400'
+                }`}
+              >
+                {netFormatted}
+              </p>
+              <button
+                type="button"
+                onClick={() => copyAmount('Saldo líquido', netFormatted)}
+                title="Copiar valor"
+                aria-label="Copiar saldo líquido"
+                className="no-print p-1 rounded-lg text-slate-400 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-slate-900 dark:hover:text-white transition"
+              >
+                <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              {savingsRate !== null
+                ? savingsRate >= 0
+                  ? `Taxa de economia: ${savingsRate}% da renda`
+                  : `Gastos ${Math.abs(savingsRate)}% acima da renda`
+                : 'Receitas menos despesas'}
             </p>
           </div>
           <div
-            className={`flex-shrink-0 ${
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${
               balancePositive
-                ? 'text-blue-600 dark:text-blue-400'
-                : 'text-red-600 dark:text-red-400'
+                ? 'bg-blue-500/15 border-blue-500/25 text-blue-600 dark:text-blue-400'
+                : 'bg-rose-500/15 border-rose-500/25 text-rose-600 dark:text-rose-400'
             }`}
           >
-            <Wallet className="w-6 h-6" />
+            <Wallet className="w-5 h-5" aria-hidden="true" />
           </div>
         </div>
       </div>

@@ -1,6 +1,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { usePathname } from 'next/navigation'
 import {
   Sparkles,
   Paperclip,
@@ -17,10 +18,13 @@ import {
   Camera,
   Mic,
   Square,
+  Copy,
+  RotateCcw,
 } from 'lucide-react'
 import { useAuth } from '@/stores/auth/useAuth'
 import { useCategories } from '@/hooks/useCategories'
 import { SpreadsheetImporterTab } from '@/components/ai/SpreadsheetImporterTab'
+import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -91,6 +95,50 @@ const QUICK_PROMPTS = [
   'Como estão minhas metas financeiras?',
 ]
 
+function getContextualPrompts(pathname: string | null): string[] {
+  if (!pathname) return QUICK_PROMPTS
+  if (pathname.startsWith('/dashboard/cards')) {
+    return [
+      'Qual cartão é melhor usar hoje?',
+      'Quanto tenho comprometido em parcelas futuras?',
+      'Resumo das minhas faturas abertas',
+      ...QUICK_PROMPTS.slice(0, 2),
+    ]
+  }
+  if (pathname.startsWith('/dashboard/budgets')) {
+    return [
+      'Onde posso economizar este mês?',
+      'Algum budget está em alerta?',
+      'Sugira limites ideais pela regra 60/30/10',
+      ...QUICK_PROMPTS.slice(0, 2),
+    ]
+  }
+  if (pathname.startsWith('/dashboard/investments')) {
+    return [
+      'Analise minha carteira B3 e proventos',
+      'Como está minha diversificação por setor?',
+      'Quanto recebi de dividendos este ano?',
+      ...QUICK_PROMPTS.slice(2, 4),
+    ]
+  }
+  if (pathname.startsWith('/dashboard/cashflow')) {
+    return [
+      'Qual mês teve maior sobra neste ano?',
+      'Qual categoria mais cresceu nos últimos meses?',
+      'Como está minha reserva de emergência?',
+      ...QUICK_PROMPTS.slice(0, 2),
+    ]
+  }
+  if (pathname.startsWith('/dashboard/debts')) {
+    return [
+      'Qual dívida devo quitar primeiro (Avalanche vs Bola de Neve)?',
+      'Como está evoluindo meu patrimônio líquido?',
+      ...QUICK_PROMPTS.slice(0, 3),
+    ]
+  }
+  return QUICK_PROMPTS
+}
+
 export interface MonyAIDrawerProps {
   open: boolean
   initialTab?: 'chat' | 'import'
@@ -108,6 +156,9 @@ function renderFormattedText(text: string): React.ReactNode {
 }
 
 export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawerProps) {
+  const pathname = usePathname()
+  const contextualPrompts = getContextualPrompts(pathname)
+  const [isDraggingFile, setIsDraggingFile] = useState(false)
   const { tokens, refreshToken } = useAuth()
   const token = tokens?.access_token
   const { categories } = useCategories(token)
@@ -610,14 +661,30 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Fechar Mony IA"
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-white/10"
-          >
-            <X className="w-5 h-5" aria-hidden="true" />
-          </button>
+          <div className="flex items-center gap-1">
+            {tab === 'chat' && messages.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMessages((prev) => prev.slice(0, 1))
+                  dispatchToast('Conversa limpa!', 'info', { durationMs: 2200 })
+                }}
+                title="Iniciar nova conversa"
+                aria-label="Limpar conversa"
+                className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-white/10 transition"
+              >
+                <RotateCcw className="w-4 h-4" aria-hidden="true" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Fechar Mony IA"
+              className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-white/10"
+            >
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         {/* Segmented tabs */}
@@ -779,13 +846,31 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                   className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm whitespace-pre-line leading-relaxed ${
+                    className={`group relative max-w-[85%] rounded-2xl px-4 py-3 text-sm whitespace-pre-line leading-relaxed ${
                       msg.role === 'user'
                         ? 'liquid-btn-primary rounded-br-md'
                         : 'glass-card rounded-bl-md text-slate-800 dark:text-slate-100'
                     }`}
                   >
                     {renderFormattedText(msg.content)}
+                    {msg.role === 'assistant' && idx > 0 && (
+                      <div className="mt-2 pt-1.5 border-t border-white/30 dark:border-white/10 flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard?.writeText(msg.content).then(() => {
+                              dispatchToast('Resposta copiada!', 'info', { durationMs: 2200 })
+                            }).catch(() => undefined)
+                          }}
+                          title="Copiar resposta"
+                          aria-label="Copiar resposta da Mony IA"
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-blue-600 dark:hover:text-blue-400 transition"
+                        >
+                          <Copy className="w-3 h-3" aria-hidden="true" />
+                          Copiar
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -800,9 +885,9 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               <div ref={chatEndRef} />
             </div>
 
-            {/* Quick prompt pills */}
+            {/* Contextual Quick prompt pills */}
             <div className="px-6 py-2 flex flex-wrap gap-1.5 border-t border-white/30 dark:border-white/10">
-              {QUICK_PROMPTS.map((qp) => (
+              {contextualPrompts.map((qp) => (
                 <button
                   key={qp}
                   type="button"
@@ -976,14 +1061,35 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
               </div>
 
               <div
-                onDragOver={(e) => e.preventDefault()}
+                onDragEnter={(e) => {
+                  e.preventDefault()
+                  setIsDraggingFile(true)
+                }}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  if (!isDraggingFile) setIsDraggingFile(true)
+                }}
+                onDragLeave={(e) => {
+                  e.preventDefault()
+                  setIsDraggingFile(false)
+                }}
                 onDrop={(e) => {
                   e.preventDefault()
+                  setIsDraggingFile(false)
                   const f = e.dataTransfer.files?.[0]
                   if (f) handleFileUpload(f)
                 }}
-                className="border-2 border-dashed border-slate-300/80 dark:border-white/20 rounded-2xl p-6 text-center hover:border-primary-500 transition-colors"
+                className={`border-2 border-dashed rounded-2xl p-6 text-center transition-all duration-200 ${
+                  isDraggingFile
+                    ? 'border-blue-500 bg-blue-500/12 scale-[1.01] shadow-inner'
+                    : 'border-slate-300/80 dark:border-white/20 hover:border-primary-500'
+                }`}
               >
+                {isDraggingFile && (
+                  <p className="text-xs font-bold text-blue-600 dark:text-blue-400 mb-2 animate-pulse">
+                    Solte o arquivo aqui para a Mony IA analisar!
+                  </p>
+                )}
                 <input
                   ref={fileInputRef}
                   type="file"

@@ -463,11 +463,42 @@ function DashboardContent() {
         <header className="glass-panel flex flex-col gap-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
-                Dashboard Financeiro
-              </h1>
+              <div className="flex items-center flex-wrap gap-2.5">
+                <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white tracking-tight">
+                  Dashboard Financeiro
+                </h1>
+                {totalIncome > 0 && (() => {
+                  const netMonth = totalIncome - totalSpent
+                  const rate = Math.round((netMonth / totalIncome) * 100)
+                  const healthy = rate >= 10
+                  const ok = rate >= 0 && rate < 10
+                  return (
+                    <Link
+                      href="/dashboard/insights"
+                      title="Ver diagnóstico completo em Insights & Saúde"
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition hover:scale-[1.02] ${
+                        healthy
+                          ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
+                          : ok
+                            ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300 border-amber-500/30'
+                            : 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border-rose-500/30'
+                      }`}
+                    >
+                      <span
+                        className={`w-1.5 h-1.5 rounded-full ${
+                          healthy ? 'bg-emerald-500' : ok ? 'bg-amber-500' : 'bg-rose-500'
+                        }`}
+                        aria-hidden="true"
+                      />
+                      {rate >= 0
+                        ? `Economizando ${rate}% da renda`
+                        : `Despesas ${Math.abs(rate)}% acima da renda`}
+                    </Link>
+                  )
+                })()}
+              </div>
               <p className="text-slate-600 dark:text-slate-300 mt-1">
-                {greeting}, {user?.full_name || 'Usuário'} · pressione <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-white/60 dark:bg-white/10">N</kbd> para novo lançamento
+                {greeting}, {user?.full_name || 'Usuário'} · <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-white/60 dark:bg-white/10">N</kbd> lançar · <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-white/60 dark:bg-white/10">Ctrl+I</kbd> Mony IA · <kbd className="px-1.5 py-0.5 text-[10px] font-mono rounded bg-white/60 dark:bg-white/10">Alt+←/→</kbd> mês
               </p>
             </div>
             <div className="flex items-center gap-2.5 flex-wrap">
@@ -790,6 +821,7 @@ function DashboardContent() {
             )
           })()}
 
+          <div key={allMonthsMode ? 'all' : selectedMonth} className="mony-month-fade">
           <EditableSpreadsheetTable
             token={accessToken || ''}
             transactions={transactions}
@@ -820,6 +852,7 @@ function DashboardContent() {
             selectedIds={selectedIds}
             onSelectionChange={setSelectedIds}
           />
+          </div>
         </section>
       </div>
 

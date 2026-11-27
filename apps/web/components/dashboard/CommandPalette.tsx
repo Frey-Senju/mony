@@ -426,6 +426,7 @@ export function ShortcutsHelpModal({ open, onClose }: { open: boolean; onClose: 
   if (!open) return null
   const shortcuts = [
     { keys: 'Ctrl + K / ⌘ + K', desc: 'Abrir busca rápida e comandos (Command Palette)' },
+    { keys: 'Ctrl + I / ⌘ + I', desc: 'Abrir / fechar a Mony IA de qualquer tela' },
     { keys: 'N', desc: 'Criar novo lançamento no Dashboard' },
     { keys: 'Shift + P', desc: 'Alternar Modo Privacidade (ocultar todos os valores R$)' },
     { keys: 'Alt + ← / →', desc: 'Navegar para o mês anterior ou próximo mês' },
