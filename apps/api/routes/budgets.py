@@ -16,7 +16,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
@@ -123,8 +123,8 @@ class BudgetResponse(BaseModel):
     created_at: str
     updated_at: str
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "id": "550e8400-e29b-41d4-a716-446655440000",
                 "category": "Alimentação",
@@ -136,6 +136,7 @@ class BudgetResponse(BaseModel):
                 "period": {"month": 5, "year": 2026},
             }
         }
+    )
 
 
 # ============ Endpoints ============

@@ -20,7 +20,7 @@ from uuid import UUID
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from database.base import get_db
@@ -61,8 +61,7 @@ class InstitutionResponse(BaseModel):
     logo_url: Optional[str] = None
     authorization_server_url: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ConsentInitiateRequest(BaseModel):
@@ -92,8 +91,7 @@ class LinkedAccountResponse(BaseModel):
     external_item_id: Optional[str] = None
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============ Helpers ============

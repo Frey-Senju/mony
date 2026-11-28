@@ -28,9 +28,20 @@ import { dispatchToast } from '@/components/ui/ToastProvider'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+interface ChatActionProposal {
+  action_type: string
+  summary: string
+  preview_details: string[]
+  payload: Record<string, unknown>
+  executed?: boolean
+  cancelled?: boolean
+  resultMessage?: string
+}
+
 interface ChatItem {
   role: 'user' | 'assistant'
   content: string
+  proposal?: ChatActionProposal
 }
 
 interface ExtractedItem {
@@ -309,6 +320,35 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
       setInput('')
       setChatLoading(true)
       try {
+        // EPIC-016 Mony IA Agente 2.0: auto-detect actionable commands right in Chat!
+        const actionHint = /(criar budget|novo budget|orçamento|orcamento|criar meta|nova meta|mudar todas|recategoriz|criar regra|monitorar|watchlist|preço-teto|preco-teto|amortizar|gastei|paguei|comprei|recebi|lança|lanca)/i
+        if (actionHint.test(trimmed)) {
+          const planRes = await authFetch(`${API_URL}/ai/copilot/plan`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt: trimmed }),
+          }).catch(() => null)
+          if (planRes && planRes.ok) {
+            const pdata = await planRes.json()
+            if (pdata?.requires_confirmation && pdata?.action_type && pdata.action_type !== 'answer_only') {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: 'assistant',
+                  content: `Preparei esta ação para você — confirme abaixo para eu executar com segurança:`,
+                  proposal: {
+                    action_type: pdata.action_type,
+                    summary: pdata.summary,
+                    preview_details: pdata.preview_details || [],
+                    payload: pdata.payload || {},
+                  },
+                },
+              ])
+              return
+            }
+          }
+        }
+
         const res = await authFetch(`${API_URL}/ai/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -765,7 +805,8 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                 {[
                   'Criar budget de R$ 900 para Alimentação',
                   'Criar meta Viagem de R$ 8000',
-                  'Mudar todas as compras da Uber para Trabalho',
+                  'Monitorar BBAS3 na watchlist com preço-teto de R$ 28',
+                  'Amortizar R$ 500 na dívida',
                   'Paguei R$ 145 no PIX no mercado',
                 ].map((ex) => (
                   <button
@@ -853,6 +894,75 @@ export function MonyAIDrawer({ open, initialTab = 'chat', onClose }: MonyAIDrawe
                     }`}
                   >
                     {renderFormattedText(msg.content)}
+                    {msg.proposal && (
+                      <div className="mt-2.5 p-3 rounded-xl bg-white/75 dark:bg-slate-900/60 border border-blue-400/40 space-y-2 text-xs">
+                        <p className="font-bold text-slate-900 dark:text-white">{msg.proposal.summary}</p>
+                        {msg.proposal.preview_details.length > 0 && (
+                          <ul className="space-y-0.5 text-[11px] text-slate-600 dark:text-slate-300">
+                            {msg.proposal.preview_details.map((d, di) => (
+                              <li key={di}>• {d}</li>
+                            ))}
+                          </ul>
+                        )}
+                        {msg.proposal.executed ? (
+                          <p className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            {msg.proposal.resultMessage || 'Executado com sucesso!'}
+                          </p>
+                        ) : msg.proposal.cancelled ? (
+                          <p className="text-slate-400 italic">Ação cancelada.</p>
+                        ) : (
+                          <div className="flex justify-end gap-2 pt-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setMessages((prev) =>
+                                  prev.map((m, mi) =>
+                                    mi === idx && m.proposal
+                                      ? { ...m, proposal: { ...m.proposal, cancelled: true } }
+                                      : m
+                                  )
+                                )
+                              }
+                              className="liquid-btn liquid-btn-glass px-3 py-1.5 rounded-lg text-[11px] font-medium"
+                            >
+                              Cancelar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (!msg.proposal) return
+                                const r = await authFetch(`${API_URL}/ai/copilot/execute`, {
+                                  method: 'POST',
+                                  headers: { 'Content-Type': 'application/json' },
+                                  body: JSON.stringify({
+                                    action_type: msg.proposal.action_type,
+                                    payload: msg.proposal.payload,
+                                  }),
+                                })
+                                const d = await r.json().catch(() => ({}))
+                                if (r.ok && d.ok) {
+                                  dispatchToast(d.message || 'Ação executada!', 'success')
+                                  window.dispatchEvent(new CustomEvent('mony:transactions-updated'))
+                                  setMessages((prev) =>
+                                    prev.map((m, mi) =>
+                                      mi === idx && m.proposal
+                                        ? { ...m, proposal: { ...m.proposal, executed: true, resultMessage: d.message } }
+                                        : m
+                                    )
+                                  )
+                                } else {
+                                  dispatchToast(d.detail || 'Não foi possível executar esta ação.', 'error')
+                                }
+                              }}
+                              className="liquid-btn liquid-btn-primary px-3 py-1.5 rounded-lg text-[11px] font-semibold"
+                            >
+                              Confirmar e Executar
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                     {msg.role === 'assistant' && idx > 0 && (
                       <div className="mt-2 pt-1.5 border-t border-white/30 dark:border-white/10 flex justify-end">
                         <button

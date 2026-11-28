@@ -36,6 +36,7 @@ from database.models import (
     Transaction,
     TransactionCategory,
     TransactionType,
+    ValuerWatchlistItem,
 )
 from utils.auth import get_current_user_from_header
 from utils.uuid_utils import parse_uuid
@@ -221,6 +222,47 @@ async def plan_copilot_action(
                 "day_of_month": day,
             },
         }
+
+    # 6.5 Add ticker to Mony Valuer Watchlist with ceiling price (EPIC-016)
+    if any(w in low for w in ("watchlist", "monitorar", "preço-teto", "preco-teto", "preco teto", "preço teto", "teto")):
+        m_tkr = re.search(r"\b([A-Za-z]{4}\d{1,2})\b", text)
+        if m_tkr:
+            tkr = m_tkr.group(1).upper()
+            amt = _extract_brl(text) or 25.0
+            return {
+                "action_type": "add_valuer_watchlist",
+                "requires_confirmation": True,
+                "summary": f"Monitorar {tkr} na Watchlist Valuer com teto de R$ {amt:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                "preview_details": [
+                    f"Ticker B3: {tkr}",
+                    f"Preço-Teto alvo: R$ {amt:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                    "Você receberá alerta automático (Push/E-mail/Webhook) quando negociar abaixo do teto.",
+                ],
+                "payload": {"ticker": tkr, "target_price": amt},
+            }
+
+    # 6.6 Amortize active debt (EPIC-016)
+    if any(w in low for w in ("amortizar", "abater dívida", "abater divida", "pagar parcela da dívida")):
+        amt = _extract_brl(text)
+        if amt and amt > 0:
+            active_debt = (
+                db.query(Debt)
+                .filter(Debt.user_id == uid, Debt.deleted_at.is_(None), Debt.is_active.is_(True), Debt.current_balance > 0)
+                .order_by(Debt.interest_rate_monthly.desc())
+                .first()
+            )
+            debt_name = active_debt.name if active_debt else "Dívida de maior juros"
+            return {
+                "action_type": "amortize_debt",
+                "requires_confirmation": True,
+                "summary": f"Amortizar R$ {amt:,.2f} em \"{debt_name}\"".replace(",", "X").replace(".", ",").replace("X", "."),
+                "preview_details": [
+                    f"Dívida alvo (Avalanche): {debt_name}",
+                    f"Valor da amortização: R$ {amt:,.2f}".replace(",", "X").replace(".", ",").replace("X", "."),
+                    "Reduz imediatamente o saldo devedor e antecipa sua Debt-Free Date.",
+                ],
+                "payload": {"debt_id": str(active_debt.id) if active_debt else None, "amount": amt},
+            }
 
     # 6. Register quick transaction
     if any(w in low for w in ("gastei", "paguei", "comprei", "recebi", "lança", "lanca", "registrar")):
@@ -414,6 +456,56 @@ async def execute_copilot_action(
             db.add(TransactionCategory(transaction_id=tx.id, category_id=cat.id, percentage=Decimal("100.00")))
         db.commit()
         return {"ok": True, "message": f"Lançamento \"{tx.description}\" (R$ {float(amt):,.2f}) salvo em {acct.name}!", "entity_id": str(tx.id)}
+
+    if act == "add_valuer_watchlist":
+        tkr = str(p.get("ticker") or "").strip().upper()[:24]
+        target = float(p.get("target_price") or 0)
+        if not tkr or target <= 0:
+            raise HTTPException(status_code=400, detail="Informe ticker e preço-teto positivo.")
+        existing = (
+            db.query(ValuerWatchlistItem)
+            .filter(ValuerWatchlistItem.user_id == uid, ValuerWatchlistItem.ticker == tkr)
+            .first()
+        )
+        if existing:
+            existing.target_price = Decimal(str(target))
+            db.commit()
+            return {"ok": True, "message": f"Preço-teto de {tkr} atualizado para R$ {target:,.2f} na Watchlist Valuer!", "entity_id": str(existing.id)}
+        item = ValuerWatchlistItem(
+            id=uuid4(),
+            user_id=uid,
+            ticker=tkr,
+            name=tkr,
+            target_price=Decimal(str(target)),
+            notes="Adicionado via Mony IA Copiloto",
+        )
+        db.add(item)
+        db.commit()
+        return {"ok": True, "message": f"{tkr} adicionado à Watchlist Valuer (teto R$ {target:,.2f})!", "entity_id": str(item.id)}
+
+    if act == "amortize_debt":
+        amt = Decimal(str(p.get("amount") or 0))
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="Valor da amortização deve ser positivo.")
+        debt_id = p.get("debt_id")
+        debt = None
+        if debt_id:
+            debt = db.query(Debt).filter(Debt.id == parse_uuid(str(debt_id), "debt_id"), Debt.user_id == uid, Debt.deleted_at.is_(None)).first()
+        if not debt:
+            debt = (
+                db.query(Debt)
+                .filter(Debt.user_id == uid, Debt.deleted_at.is_(None), Debt.is_active.is_(True), Debt.current_balance > 0)
+                .order_by(Debt.interest_rate_monthly.desc())
+                .first()
+            )
+        if not debt:
+            raise HTTPException(status_code=404, detail="Nenhuma dívida ativa encontrada para amortizar.")
+        next_bal = max(Decimal("0.00"), Decimal(str(debt.current_balance or 0)) - amt)
+        debt.current_balance = next_bal
+        if next_bal <= 0:
+            debt.is_active = False
+        db.commit()
+        return {"ok": True, "message": f"Amortização de R$ {float(amt):,.2f} registrada em \"{debt.name}\" (saldo: R$ {float(next_bal):,.2f})!", "entity_id": str(debt.id)}
 
     raise HTTPException(status_code=400, detail=f"Ação não suportada: {act}")
 

@@ -253,6 +253,14 @@ export function CommandPalette({ open, onClose, onOpenAI }: CommandPaletteProps)
         run: go('/dashboard/workspaces'),
       },
       {
+        id: 'nav-tax',
+        label: 'IRPF & Calculadora DARF B3 Automática',
+        group: 'Navegação',
+        keywords: 'irpf imposto renda darf 6015 bens direitos dividendos jcp receita federal isencao 20k',
+        icon: <Receipt className="w-4 h-4" aria-hidden="true" />,
+        run: go('/dashboard/tax'),
+      },
+      {
         id: 'nav-cards',
         label: 'Cartões de Crédito',
         group: 'Navegação',

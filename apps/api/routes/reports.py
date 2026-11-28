@@ -17,7 +17,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, extract, func, or_
 from sqlalchemy.orm import Session, joinedload
 
@@ -82,12 +82,12 @@ def _resolve_date_range(
     if start_date is not None or end_date is not None:
         if start_date is None or end_date is None:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="start_date and end_date must both be provided together",
             )
         if start_date > end_date:
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail="start_date must be less than or equal to end_date",
             )
         period = ReportPeriod(
@@ -99,7 +99,7 @@ def _resolve_date_range(
     # Fall back to year/month (required when no date range given)
     if year is None or month is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Provide either year+month or start_date+end_date",
         )
     start, end = _validate_year_month(year, month)
@@ -128,8 +128,8 @@ class MonthlySummaryResponse(BaseModel):
     total_expenses: Decimal = Field(..., description="Sum of expense-type transactions")
     net_balance: Decimal = Field(..., description="total_income - total_expenses")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "year": 2026,
                 "month": 4,
@@ -138,6 +138,7 @@ class MonthlySummaryResponse(BaseModel):
                 "net_balance": "1800.00",
             }
         }
+    )
 
 
 class CategoryBreakdownItem(BaseModel):
@@ -160,8 +161,8 @@ class CategoryBreakdownResponse(BaseModel):
     total_expenses: Decimal
     items: List[CategoryBreakdownItem]
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "year": 2026,
                 "month": 4,
@@ -176,6 +177,7 @@ class CategoryBreakdownResponse(BaseModel):
                 ],
             }
         }
+    )
 
 
 # ============ Endpoint: Monthly Summary ============

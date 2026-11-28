@@ -18,6 +18,8 @@ import {
   CheckCircle2,
   Terminal,
   Undo2,
+  BellRing,
+  RefreshCw,
 } from 'lucide-react'
 import { PrivateRoute } from '@/components/auth/PrivateRoute'
 import { useAuth } from '@/stores/auth/useAuth'
@@ -113,24 +115,72 @@ function IntegrationsHub() {
   const [convAmount, setConvAmount] = useState('100')
   const [convFrom, setConvFrom] = useState('USD')
 
+  // Track 3: Automation Diagnostics, Manual Watchlist/Alerts Scan & Browser Push
+  const [diag, setDiag] = useState<Record<string, boolean> | null>(null)
+  const [scanningNow, setScanningNow] = useState(false)
+  const [pushPerm, setPushPerm] = useState<string>('default')
+
   useEffect(() => {
     document.title = 'Mony · Integrações, MCP, WhatsApp & Webhooks'
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setPushPerm(Notification.permission)
+    }
   }, [])
 
   const loadAll = useCallback(async () => {
     if (!token) return
     const h = { Authorization: `Bearer ${token}` }
-    const [kRes, cRes, wRes, fRes] = await Promise.all([
+    const [kRes, cRes, wRes, fRes, dRes] = await Promise.all([
       fetch(`${API_URL}/integrations/api-keys`, { headers: h }).catch(() => null),
       fetch(`${API_URL}/integrations/channels`, { headers: h }).catch(() => null),
       fetch(`${API_URL}/integrations/webhooks`, { headers: h }).catch(() => null),
       fetch(`${API_URL}/integrations/fx-rates`, { headers: h }).catch(() => null),
+      fetch(`${API_URL}/health/diagnostics`).catch(() => null),
     ])
     if (kRes?.ok) setApiKeys((await kRes.json()).items || [])
     if (cRes?.ok) setChannels((await cRes.json()).items || [])
     if (wRes?.ok) setWebhooks((await wRes.json()).items || [])
     if (fRes?.ok) setFx(await fRes.json())
+    if (dRes?.ok) {
+      const dd = await dRes.json()
+      setDiag(dd.channels || null)
+    }
   }, [token])
+
+  const triggerAutomationScan = async () => {
+    if (!token || scanningNow) return
+    setScanningNow(true)
+    try {
+      const res = await fetch(`${API_URL}/cron/run-my-scan`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const d = await res.json()
+        const hits = d.watchlist?.hits?.length || 0
+        dispatchToast(
+          hits > 0
+            ? `Varredura concluída! ${hits} ativo(s) da Watchlist abaixo do Preço-Teto + alertas sincronizados.`
+            : `Varredura concluída! Alertas financeiros e ${d.watchlist?.checked || 0} ativo(s) da Watchlist verificados.`,
+          'success'
+        )
+      }
+    } finally {
+      setScanningNow(false)
+    }
+  }
+
+  const enableBrowserPush = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) {
+      dispatchToast('Este navegador não suporta notificações Web Push.', 'error')
+      return
+    }
+    const perm = await Notification.requestPermission()
+    setPushPerm(perm)
+    if (perm === 'granted') {
+      dispatchToast('Notificações do navegador ativadas para alertas do Mony!', 'success')
+    }
+  }
 
   useEffect(() => {
     loadAll()
@@ -365,6 +415,48 @@ function IntegrationsHub() {
           })}
         </div>
       </header>
+
+      {/* Track 3: Automações Cron Diário (07h BRT), Watchlist Valuer, E-mail Resend & Web Push */}
+      <section className="glass-card p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+        <div className="space-y-1.5">
+          <p className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+            <BellRing className="w-4 h-4 text-[var(--accent)]" />
+            Motor de Automações Ativo (Cron Diário 07h BRT · Watchlist Preço-Teto · E-mail Resend · Web Push)
+          </p>
+          <div className="flex flex-wrap gap-1.5 text-[10px] font-semibold">
+            <span className={`px-2 py-0.5 rounded-full ${diag?.cron_secret_configured ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : 'bg-slate-200/70 dark:bg-white/10 text-slate-600 dark:text-slate-300'}`}>
+              Cron Diário: {diag?.cron_secret_configured ? 'Ativo' : 'Pronto (aguarda CRON_SECRET)'}
+            </span>
+            <span className={`px-2 py-0.5 rounded-full ${diag?.email_resend_configured ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : 'bg-slate-200/70 dark:bg-white/10 text-slate-600 dark:text-slate-300'}`}>
+              E-mail Resend: {diag?.email_resend_configured ? 'Ativo' : 'Modo Dry-Run'}
+            </span>
+            <span className={`px-2 py-0.5 rounded-full ${pushPerm === 'granted' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : 'bg-amber-500/15 text-amber-700 dark:text-amber-300'}`}>
+              Push Navegador: {pushPerm === 'granted' ? 'Autorizado' : 'Pendente'}
+            </span>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
+          {pushPerm !== 'granted' && (
+            <button
+              type="button"
+              onClick={enableBrowserPush}
+              className="liquid-btn liquid-btn-glass px-3 py-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5"
+            >
+              <BellRing className="w-3.5 h-3.5" />
+              Ativar Web Push
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={triggerAutomationScan}
+            disabled={scanningNow}
+            className="liquid-btn liquid-btn-primary px-3.5 py-1.5 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${scanningNow ? 'animate-spin' : ''}`} />
+            {scanningNow ? 'Varrendo...' : 'Disparar Varredura Agora'}
+          </button>
+        </div>
+      </section>
 
       {/* TAB 1: MCP SERVER & API KEYS */}
       {tab === 'mcp' && (

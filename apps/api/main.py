@@ -1,10 +1,23 @@
 import os
+import time
+from uuid import uuid4
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
+
+# Optional Sentry observability when SENTRY_DSN is configured in production
+_sentry_dsn = os.getenv("SENTRY_DSN", "").strip()
+if _sentry_dsn:
+    try:
+        import sentry_sdk  # type: ignore
+
+        sentry_sdk.init(dsn=_sentry_dsn, traces_sample_rate=0.1)
+    except Exception:  # noqa: BLE001
+        pass
 
 from routes.accounts import router as accounts_router
 from routes.ai import router as ai_router
@@ -19,6 +32,7 @@ from routes.cron import router as cron_router
 from routes.debts import router as debts_router
 from routes.goals import router as goals_router
 from routes.insights import router as insights_router
+from routes.integrations import router as integrations_router
 from routes.investments import router as investments_router
 from routes.notifications import router as notifications_router
 from routes.open_finance import router as open_finance_router
@@ -28,15 +42,18 @@ from routes.push import router as push_router
 from routes.recurring import router as recurring_router
 from routes.reports import router as reports_router
 from routes.rules import router as rules_router
+from routes.tax import router as tax_router
 from routes.transactions import router as transactions_router
 from routes.valuer import router as valuer_router
-from routes.integrations import router as integrations_router
 from routes.workspaces import router as workspaces_router
+from services.email_service import is_email_configured
+from services.pluggy_client import is_pluggy_configured
+from services.push_service import is_push_configured
 
 app = FastAPI(
     title="Mony API",
-    description="Money management API",
-    version="0.2.0",
+    description="Money management, B3 Investments, Valuer, IRPF/DARF & MCP API",
+    version="0.3.0",
 )
 
 # Rate limiting (slowapi) — active in production, relaxed in automated tests
@@ -77,20 +94,27 @@ app.add_middleware(
     allow_origins=list(dict.fromkeys(_default_origins + _extra_origins)),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Webhook-Signature"],
+    allow_headers=["Content-Type", "Authorization", "X-Webhook-Signature", "X-Request-ID"],
 )
 
 
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next):
+async def add_security_and_observability_headers(request: Request, call_next):
+    req_id = request.headers.get("X-Request-ID") or uuid4().hex[:16]
+    t0 = time.perf_counter()
     response = await call_next(request)
+    elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    response.headers.setdefault("Permissions-Policy", "geolocation=(), payment=(), usb=()")
+    response.headers["X-Request-ID"] = req_id
+    response.headers["X-Process-Time-Ms"] = str(elapsed_ms)
     return response
 
 
-# Register routers (ai_review_router before accounts/budgets so static paths like /accounts/audit & /budgets/ai-suggestions resolve first)
+# Register routers (ai_review_router before accounts/budgets so static paths resolve first)
 app.include_router(auth_router)
 app.include_router(ai_review_router)
 app.include_router(calendar_router)
@@ -117,11 +141,12 @@ app.include_router(credit_cards_router)
 app.include_router(valuer_router)
 app.include_router(integrations_router)
 app.include_router(workspaces_router)
+app.include_router(tax_router)
 
 
 @app.get("/")
 async def root():
-    return {"message": "Mony API is running", "version": "0.2.0"}
+    return {"message": "Mony API is running", "version": "0.3.0"}
 
 
 @app.get("/health")
@@ -129,6 +154,29 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/health/diagnostics")
+async def health_diagnostics():
+    """Safe non-sensitive production readiness & channel diagnostics."""
+    return {
+        "status": "healthy",
+        "version": "0.3.0",
+        "channels": {
+            "email_resend_configured": is_email_configured(),
+            "web_push_vapid_configured": is_push_configured(),
+            "open_finance_pluggy_configured": is_pluggy_configured(),
+            "cron_secret_configured": bool(os.getenv("CRON_SECRET", "").strip()),
+            "llm_configured": bool(
+                os.getenv("GEMINI_API_KEY", "").strip()
+                or os.getenv("OPENAI_API_KEY", "").strip()
+                or os.getenv("GROQ_API_KEY", "").strip()
+            ),
+            "sentry_configured": bool(_sentry_dsn),
+        },
+        "security_headers": ["X-Content-Type-Options", "X-Frame-Options", "Referrer-Policy", "Strict-Transport-Security", "Permissions-Policy"],
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
